@@ -1,0 +1,14 @@
+{% extends "layouts/base.html" %}
+{% block title %}{{ title }} | NSS College Rajakumari{% endblock %}
+{% block description %}{{ lede }}{% endblock %}
+{% block content %}
+{% include "partials/page_header.html" %}
+<section class="mx-auto max-w-3xl px-4 py-14 md:py-16">
+  <div id="notice-list"
+       hx-get="/fragments/notices"
+       hx-trigger="every 60s [document.visibilityState === 'visible']"
+       hx-swap="innerHTML">
+    {% include "partials/notice_list.html" %}
+  </div>
+</section>
+{% endblock %}

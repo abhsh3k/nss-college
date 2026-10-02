@@ -1,0 +1,21 @@
+{% extends "layouts/base.html" %}
+{% block title %}{{ title }} | NSS College Rajakumari{% endblock %}
+{% block description %}{{ lede }}{% endblock %}
+{% block content %}
+{% include "partials/page_header.html" %}
+<section class="mx-auto max-w-6xl px-4 py-14 md:py-16">
+  <ul class="grid gap-10 md:grid-cols-2 lg:grid-cols-3">
+    {% for n in news %}
+    <li class="relative">
+      {% if let Some(img) = n.image %}
+      <img src="{{ img }}" alt="" width="480" height="320" loading="lazy" class="aspect-[3/2] w-full rounded object-cover">
+      {% endif %}
+      <p class="mt-4 text-sm text-brand">{{ n.date }}</p>
+      <h2 class="mt-1 font-display text-2xl font-semibold leading-snug">
+        <a href="{{ n.href }}" class="after:absolute after:inset-0 hover:underline">{{ n.title }}</a>
+      </h2>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

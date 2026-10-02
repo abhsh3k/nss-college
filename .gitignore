@@ -1,0 +1,5 @@
+/target
+.env
+/uploads/*
+!/uploads/.gitkeep
+/static/css/tailwind.css

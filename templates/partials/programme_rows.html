@@ -1,0 +1,11 @@
+<ul class="border-b border-ink/15">
+  {% for p in programmes %}
+  <li class="relative grid gap-2 border-t border-ink/15 py-6 hover:bg-mist md:grid-cols-12 md:gap-8 md:px-3">
+    <h2 class="font-display text-2xl font-semibold leading-snug md:col-span-5">
+      <a href="{{ p.href }}" class="after:absolute after:inset-0 hover:underline">{{ p.name }}</a>
+    </h2>
+    <p class="text-sm text-ink/70 md:col-span-3">{{ p.department }}<br>{{ p.level }}</p>
+    <p class="md:col-span-4">{{ p.summary }}</p>
+  </li>
+  {% endfor %}
+</ul>

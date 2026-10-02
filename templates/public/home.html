@@ -1,0 +1,232 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}NSS College Rajakumari | Degree programmes in the High Ranges of Idukki{% endblock %}
+{% block og_title %}NSS College Rajakumari{% endblock %}
+
+{% block content %}
+
+{# ---------- Hero ---------- #}
+<section class="relative overflow-hidden bg-ink text-chalk">
+  <div class="absolute right-8 top-10 hidden h-20 w-20 rounded-full bg-accent sm:block lg:right-32 lg:h-28 lg:w-28" aria-hidden="true"></div>
+  <div class="relative mx-auto max-w-6xl px-4 pb-16 pt-16 md:pb-28 md:pt-24">
+    <h1 class="max-w-3xl font-display text-4xl font-semibold leading-tight sm:text-5xl md:text-7xl md:leading-[1.05]">Learning on the hill above Rajakumari</h1>
+    <p class="mt-6 max-w-xl text-lg leading-relaxed text-chalk/85">Five undergraduate programmes, a postgraduate programme in electronics and research in computer applications, on a hilltop campus near Kulapparachal.</p>
+    <div class="mt-9 flex flex-wrap gap-3">
+      <a href="/admissions" class="rounded bg-accent px-6 py-3 font-semibold text-ink hover:bg-chalk">Apply for 2026–30</a>
+      <a href="/academics" class="rounded border border-chalk/50 px-6 py-3 font-semibold hover:bg-chalk hover:text-ink">Browse programmes</a>
+    </div>
+  </div>
+  <svg class="block h-28 w-full md:h-44" viewBox="0 0 1440 220" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+    <path fill="#D9531E" d="M0 120 L120 80 L240 110 L400 40 L560 100 L720 60 L900 120 L1080 50 L1240 100 L1440 70 L1440 220 L0 220 Z"/>
+    <path fill="#FFFAF6" fill-opacity="0.12" d="M0 140 L1440 100 L1440 150 L0 170 Z"/>
+    <path fill="#A3231C" d="M0 160 L160 120 L320 150 L520 90 L700 140 L900 100 L1100 150 L1300 110 L1440 140 L1440 220 L0 220 Z"/>
+    <path fill="#5E1A14" d="M0 190 L200 165 L420 185 L640 150 L860 180 L1100 155 L1440 185 L1440 220 L0 220 Z"/>
+  </svg>
+  <div class="bg-deep">
+    <dl class="mx-auto grid max-w-6xl gap-6 px-4 pb-12 sm:grid-cols-3">
+      <div>
+        <dt class="text-sm text-chalk/70">Founded</dt>
+        <dd class="font-display text-xl">June 1995, by the Nair Service Society</dd>
+      </div>
+      <div>
+        <dt class="text-sm text-chalk/70">Accreditation</dt>
+        <dd class="font-display text-xl">NAAC B+ grade (2.70)</dd>
+      </div>
+      <div>
+        <dt class="text-sm text-chalk/70">Affiliation</dt>
+        <dd class="font-display text-xl">Mahatma Gandhi University, Kottayam</dd>
+      </div>
+    </dl>
+  </div>
+</section>
+
+{# ---------- Notices + news ---------- #}
+<section class="mx-auto max-w-6xl px-4 py-16 md:py-20" aria-labelledby="latest-heading">
+  <h2 id="latest-heading" class="font-display text-3xl font-semibold md:text-4xl">What's happening on campus</h2>
+  <div class="mt-10 grid gap-12 lg:grid-cols-12">
+    <div class="lg:col-span-5">
+      <div class="border-l-4 border-accent bg-mist p-6">
+        <h3 class="font-display text-2xl font-semibold">Notice board</h3>
+        <div id="notice-list" class="mt-3"
+             hx-get="/fragments/notices"
+             hx-trigger="every 60s [document.visibilityState === 'visible']"
+             hx-swap="innerHTML">
+          {% include "partials/notice_list.html" %}
+        </div>
+        <a href="/notices" class="mt-4 inline-block font-semibold text-brand underline underline-offset-4 hover:text-ink">See all notices</a>
+      </div>
+    </div>
+
+    <div class="lg:col-span-7">
+      <ul class="space-y-8">
+        {% for n in news %}
+        <li class="relative grid gap-4 sm:grid-cols-5">
+          {% if let Some(img) = n.image %}
+          <img src="{{ img }}" alt="" width="400" height="260" loading="lazy" class="aspect-[3/2] w-full rounded object-cover sm:col-span-2">
+          {% endif %}
+          <div class="sm:col-span-3">
+            <p class="text-sm text-brand">{{ n.date }}</p>
+            <h3 class="mt-1 font-display text-2xl font-semibold leading-snug">
+              <a href="{{ n.href }}" class="after:absolute after:inset-0 hover:underline">{{ n.title }}</a>
+            </h3>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      <a href="/news" class="mt-8 inline-block font-semibold text-brand underline underline-offset-4 hover:text-ink">More news and events</a>
+    </div>
+  </div>
+</section>
+
+{# ---------- Programmes ---------- #}
+<section class="bg-mist" aria-labelledby="programmes-heading">
+  <div class="mx-auto max-w-6xl px-4 py-16 md:py-20">
+    <h2 id="programmes-heading" class="font-display text-3xl font-semibold md:text-4xl">Degree programmes</h2>
+    <p class="mt-3 max-w-2xl text-lg text-ink/80">All programmes are affiliated to Mahatma Gandhi University, Kottayam, and follow the four-year honours structure at undergraduate level.</p>
+    <ul class="mt-10 border-b border-ink/15">
+      {% for p in programmes %}
+      <li class="relative grid gap-2 border-t border-ink/15 py-6 hover:bg-chalk md:grid-cols-12 md:gap-8 md:px-3">
+        <h3 class="font-display text-2xl font-semibold leading-snug md:col-span-5">
+          <a href="{{ p.href }}" class="after:absolute after:inset-0 hover:underline">{{ p.name }}</a>
+        </h3>
+        <p class="text-sm text-ink/70 md:col-span-3">{{ p.department }}<br>{{ p.level }}</p>
+        <p class="md:col-span-4">{{ p.summary }}</p>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="mt-6 text-ink/80">Research programmes are also offered in electronics and in computer applications.</p>
+  </div>
+</section>
+
+{# ---------- Admissions ---------- #}
+<section class="bg-accent text-ink" aria-labelledby="admissions-heading">
+  <div class="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-14 md:flex-row md:items-center md:justify-between">
+    <div class="max-w-2xl">
+      <h2 id="admissions-heading" class="font-display text-3xl font-semibold md:text-4xl">Admissions are open for 2026–30</h2>
+      <p class="mt-3 text-lg">Ask the admission office about eligibility, fees and scholarships before you apply.</p>
+    </div>
+    <div class="flex flex-wrap gap-3">
+      <a href="/admissions" class="rounded bg-ink px-6 py-3 font-semibold text-chalk hover:bg-brand">See admission details</a>
+      <a href="/contact" class="rounded border border-ink px-6 py-3 font-semibold hover:bg-ink hover:text-chalk">Contact the office</a>
+    </div>
+  </div>
+</section>
+
+{# ---------- Rank holders ---------- #}
+<section class="mx-auto max-w-6xl px-4 py-16 md:py-20" aria-labelledby="ranks-heading">
+  <h2 id="ranks-heading" class="font-display text-3xl font-semibold md:text-4xl">University rank holders, 2025</h2>
+  <ul class="mt-10 grid gap-8 md:grid-cols-3">
+    {% for r in rank_holders %}
+    <li class="flex items-center gap-5">
+      {% if let Some(photo) = r.photo %}
+      <img src="{{ photo }}" alt="{{ r.name }}" width="96" height="96" loading="lazy" class="h-24 w-24 shrink-0 rounded-full bg-mist object-cover">
+      {% else %}
+      <span class="flex h-24 w-24 shrink-0 items-center justify-center rounded-full bg-brand font-display text-2xl text-chalk" aria-hidden="true">{{ r.initials() }}</span>
+      {% endif %}
+      <div>
+        <p class="font-display text-3xl font-semibold">Rank {{ r.rank }}</p>
+        <p class="font-medium">{{ r.name }}</p>
+        <p class="text-sm text-ink/70">{% if let Some(dep) = r.department %}{{ dep }}, {% endif %}MG University {{ r.year }}</p>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  <a href="/academics/rank-holders" class="mt-8 inline-block font-semibold text-brand underline underline-offset-4 hover:text-ink">See all rank holders</a>
+</section>
+
+{# ---------- NCC and NSS ---------- #}
+<section class="bg-ink text-chalk" aria-labelledby="units-heading">
+  <div class="mx-auto max-w-6xl px-4 py-16 md:py-20">
+    <h2 id="units-heading" class="font-display text-3xl font-semibold md:text-4xl">Service and discipline beyond the classroom</h2>
+    <div class="mt-12 space-y-16">
+      {% for u in units %}
+      <article class="grid items-center gap-8 md:grid-cols-2 md:gap-14">
+        {% if let Some(img) = u.image %}
+        <img src="{{ img }}" alt="{{ u.full_name }} unit of the college" width="640" height="420" loading="lazy" class="aspect-[3/2] w-full rounded object-cover {% if loop.index0 % 2 == 1 %}md:order-last{% endif %}">
+        {% endif %}
+        <div>
+          <h3 class="font-display text-3xl font-semibold">{{ u.full_name }} ({{ u.name }})</h3>
+          <p class="mt-4 text-lg leading-relaxed text-chalk/85">{{ u.text }}</p>
+          <p class="mt-4 text-chalk/70">{{ u.values }}</p>
+          <a href="{{ u.href }}" class="mt-6 inline-block font-semibold text-accent underline underline-offset-4 hover:text-chalk">About {{ u.name }} at the college</a>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+{# ---------- History, vision, mission ---------- #}
+<section class="mx-auto max-w-6xl px-4 py-16 md:py-20" aria-labelledby="history-heading">
+  <div class="grid gap-14 lg:grid-cols-2">
+    <div>
+      <h2 id="history-heading" class="font-display text-3xl font-semibold md:text-4xl">A college for the High Ranges</h2>
+      <p class="mt-5 max-w-prose text-lg leading-relaxed">The Nair Service Society, founded by Padma Bhushan Bharatha Kesari Mannathu Padmanabhan, opened this college to bring higher education to a region that had little of it. The campus looks out over the hills and valleys of Kerala's High Ranges.</p>
+      <h3 class="mt-10 font-display text-2xl font-semibold">Our vision</h3>
+      <p class="mt-2 max-w-prose leading-relaxed">To uplift the socio-economic backwardness of the High Ranges through job-oriented education in electronics, computer science, business administration and commerce.</p>
+      <h3 class="mt-8 font-display text-2xl font-semibold">Our mission</h3>
+      <ul class="mt-2 max-w-prose list-disc space-y-1 pl-5 leading-relaxed">
+        <li>Help students of every programme excel in their professions.</li>
+        <li>Build community awareness through extension activities.</li>
+        <li>Nurture each student's ability through curricular and co-curricular work.</li>
+        <li>Give practical expertise through well-equipped laboratories and in-house projects.</li>
+        <li>Turn laboratories into active research centres.</li>
+      </ul>
+    </div>
+    <div>
+      <h3 class="font-display text-2xl font-semibold">Milestones</h3>
+      <ol class="mt-6 border-l-2 border-brand">
+        {% for m in milestones %}
+        <li class="relative pb-8 pl-6 last:pb-0">
+          <span class="absolute -left-[7px] top-2 h-3 w-3 rounded-full bg-accent ring-2 ring-chalk" aria-hidden="true"></span>
+          <p class="font-display text-xl font-semibold">{{ m.when }}</p>
+          <p class="mt-1 max-w-prose text-ink/80">{{ m.text }}</p>
+        </li>
+        {% endfor %}
+      </ol>
+    </div>
+  </div>
+</section>
+
+{# ---------- Facilities ---------- #}
+<section class="bg-mist" aria-labelledby="facilities-heading">
+  <div class="mx-auto max-w-6xl px-4 py-16 md:py-20">
+    <h2 id="facilities-heading" class="font-display text-3xl font-semibold md:text-4xl">Campus facilities</h2>
+    <dl class="mt-10 grid gap-x-14 md:grid-cols-2">
+      {% for f in facilities %}
+      <div class="border-t border-ink/15 py-4">
+        <dt class="font-semibold">{{ f.name }}</dt>
+        <dd class="mt-1 text-ink/80">{{ f.text }}</dd>
+      </div>
+      {% endfor %}
+    </dl>
+  </div>
+</section>
+
+{# ---------- Contact ---------- #}
+<section class="mx-auto max-w-6xl px-4 py-16 md:py-20" aria-labelledby="contact-heading">
+  <div class="grid gap-10 lg:grid-cols-2">
+    <div>
+      <h2 id="contact-heading" class="font-display text-3xl font-semibold md:text-4xl">Visit or write to us</h2>
+      <p class="mt-4 max-w-prose text-lg">The campus is on a hilltop near Kulapparachal, 2 km east of Rajakumari town, in Idukki district.</p>
+      <dl class="mt-8 space-y-5">
+        <div>
+          <dt class="font-semibold">Address</dt>
+          <dd>{{ contact.address }}</dd>
+        </div>
+        <div>
+          <dt class="font-semibold">Telephone</dt>
+          <dd>{% for p in contact.phones %}{% if !loop.first %} or {% endif %}<a class="underline underline-offset-4 hover:text-brand" href="tel:{{ p.tel }}">{{ p.display }}</a>{% endfor %}</dd>
+        </div>
+        <div>
+          <dt class="font-semibold">Email</dt>
+          <dd><a class="underline underline-offset-4 hover:text-brand" href="mailto:{{ contact.email }}">{{ contact.email }}</a></dd>
+        </div>
+      </dl>
+    </div>
+    <iframe title="Map showing NSS College Rajakumari" class="h-80 w-full rounded border-0 lg:h-full" loading="lazy" referrerpolicy="no-referrer-when-downgrade"
+      src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3929.654177138351!2d77.16909861428178!3d9.96270327641009!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3b07a0f52b1a501d%3A0x5e52b98bfcc0d3e7!2sNSS+College!5e0!3m2!1sen!2sin!4v1544351228773"></iframe>
+  </div>
+</section>
+
+{% endblock %}

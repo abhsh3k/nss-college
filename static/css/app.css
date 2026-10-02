@@ -1,0 +1,6 @@
+/* Small hand-written layer that works with or without Tailwind. */
+:focus-visible { outline: 3px solid #F28C28; outline-offset: 2px; }
+html { -webkit-text-size-adjust: 100%; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

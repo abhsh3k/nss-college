@@ -1,0 +1,13 @@
+{% extends "layouts/base.html" %}
+{% block title %}{{ title }} | NSS College Rajakumari{% endblock %}
+{% block description %}{{ lede }}{% endblock %}
+{% block content %}
+{% include "partials/page_header.html" %}
+<section class="mx-auto max-w-6xl px-4 py-14 md:py-16">
+  <h2 class="font-display text-2xl font-semibold">Programmes</h2>
+  <div class="mt-6">
+    {% include "partials/programme_rows.html" %}
+  </div>
+  <p class="mt-10"><a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/departments">All departments</a></p>
+</section>
+{% endblock %}

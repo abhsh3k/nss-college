@@ -1,0 +1,24 @@
+{% extends "layouts/base.html" %}
+{% block title %}{{ title }} | NSS College Rajakumari{% endblock %}
+{% block description %}{{ lede }}{% endblock %}
+{% block content %}
+{% include "partials/page_header.html" %}
+<section class="mx-auto max-w-6xl px-4 py-14 md:py-16">
+  <ul class="grid gap-8 md:grid-cols-3">
+    {% for r in rank_holders %}
+    <li class="flex items-center gap-5">
+      {% if let Some(photo) = r.photo %}
+      <img src="{{ photo }}" alt="{{ r.name }}" width="96" height="96" loading="lazy" class="h-24 w-24 shrink-0 rounded-full bg-mist object-cover">
+      {% else %}
+      <span class="flex h-24 w-24 shrink-0 items-center justify-center rounded-full bg-brand font-display text-2xl text-chalk" aria-hidden="true">{{ r.initials() }}</span>
+      {% endif %}
+      <div>
+        <p class="font-display text-3xl font-semibold">Rank {{ r.rank }}</p>
+        <p class="font-medium">{{ r.name }}</p>
+        <p class="text-sm text-ink/70">{% if let Some(dep) = r.department %}{{ dep }}, {% endif %}MG University {{ r.year }}</p>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}
