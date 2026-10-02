@@ -4,6 +4,7 @@ pub struct Config {
     pub addr: SocketAddr,
     pub upload_dir: String,
     pub database_url: String,
+    pub cookie_secure: bool,
 }
 
 impl Config {
@@ -16,10 +17,14 @@ impl Config {
         let upload_dir = env::var("UPLOAD_DIR").unwrap_or_else(|_| "uploads".into());
         let database_url =
             env::var("DATABASE_URL").expect("DATABASE_URL must be set (copy .env.example to .env)");
+        let cookie_secure = env::var("COOKIE_SECURE")
+            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .unwrap_or(false);
         Self {
             addr,
             upload_dir,
             database_url,
+            cookie_secure,
         }
     }
 }

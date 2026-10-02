@@ -1,0 +1,28 @@
+{% extends "layouts/base.html" %}
+{% block title %}Sign in | NSS College Rajakumari{% endblock %}
+{% block description %}Sign in to the NSS College Rajakumari Student Hub, teacher tools or administration.{% endblock %}
+{% block content %}
+<section class="mx-auto max-w-md px-4 py-16 md:py-24">
+  <h1 class="font-display text-4xl font-semibold">Sign in</h1>
+  <p class="mt-3 text-ink/80">For students, teachers and college staff. Students can use their admission number.</p>
+
+  {% if let Some(msg) = error %}
+  <p role="alert" class="mt-6 border-l-4 border-brand bg-mist px-4 py-3 font-medium">{{ msg }}</p>
+  {% endif %}
+
+  <form method="post" action="/login" class="mt-8 space-y-5">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <div>
+      <label for="identifier" class="block font-semibold">Email or admission number</label>
+      <input id="identifier" name="identifier" type="text" value="{{ identifier }}" required autofocus autocomplete="username" autocapitalize="none" spellcheck="false" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+    <div>
+      <label for="password" class="block font-semibold">Password</label>
+      <input id="password" name="password" type="password" required autocomplete="current-password" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+    <button type="submit" class="w-full rounded bg-brand px-5 py-3 font-semibold text-chalk hover:bg-ink">Sign in</button>
+  </form>
+  <p class="mt-6 text-sm text-ink/70">Forgotten your password? Ask the college IT admin to issue a new one.</p>
+</section>
+{% endblock %}

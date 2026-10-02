@@ -1,24 +1,3 @@
-{# Dev: Tailwind Play CDN. Production: replace this file's contents with
-   <link rel="stylesheet" href="/static/css/tailwind.css"> after running the Tailwind CLI (see README). #}
+{# Compiled Tailwind CSS. Build it with build-css.ps1 (Windows) or the tailwindcss CLI; see README. #}
+<link rel="stylesheet" href="/static/css/tailwind.css">
 <link rel="stylesheet" href="/static/css/app.css">
-<script src="https://cdn.tailwindcss.com"></script>
-<script>
-  tailwind.config = {
-    theme: {
-      extend: {
-        colors: {
-          ink: "#2A1410",
-          deep: "#5E1A14",
-          brand: "#B3261E",
-          mist: "#FBEAE0",
-          chalk: "#FFFAF6",
-          accent: "#F28C28"
-        },
-        fontFamily: {
-          display: ['"Fraunces"', "Georgia", "serif"],
-          sans: ['"Public Sans"', "system-ui", "sans-serif"]
-        }
-      }
-    }
-  };
-</script>

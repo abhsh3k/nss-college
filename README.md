@@ -21,7 +21,59 @@ Rust + Axum + Askama + HTMX (+ PostgreSQL/SQLx from Layer 3). Styling: Tailwind 
 
 On start-up the app connects using `DATABASE_URL`, applies every file in `migrations/`, and the site renders from the database. The first run loads starter content copied from the live site (programmes, departments, news, rank holders, pages, contact details).
 
-Dev styling uses the Tailwind Play CDN (see `templates/partials/styles.html`), so no Node step is needed yet.
+Styling is compiled Tailwind CSS. Build it once before the first run (see the next section).
+
+## Sign in and accounts (Phase 4a)
+
+Create the first IT administrator (you will be asked for a password at a hidden prompt):
+
+    cargo run -- create-user admin you@example.com "Your Name"
+
+Create test accounts for the other roles. These must choose a new password at first sign-in:
+
+    cargo run -- create-user staff office@example.com "Office Staff"
+    cargo run -- create-user faculty teacher@example.com "Test Teacher"
+    cargo run -- create-user student 1001@college.local "Test Student"
+
+Then run `cargo run` and open http://127.0.0.1:3000/login. Each role lands on its own dashboard:
+IT admin and office staff on `/admin`, teachers on `/teacher`, students on `/hub`.
+
+Rules built in: five wrong passwords lock an account for 15 minutes; sessions last 8 hours of inactivity;
+every form carries a CSRF token; passwords are stored with Argon2.
+In production set `COOKIE_SECURE=true` and serve the site over HTTPS.
+
+## Building the CSS
+
+Windows (PowerShell, from the project folder):
+
+    powershell -ExecutionPolicy Bypass -File .\build-css.ps1          # one-off build
+    powershell -ExecutionPolicy Bypass -File .\build-css.ps1 -Watch   # rebuild while you edit templates
+
+The script downloads the standalone Tailwind CLI (v3.4.17, no Node needed) on first use and writes `static/css/tailwind.css`.
+Rebuild whenever you add new Tailwind classes to a template. Colours and fonts live in `tailwind.config.js`.
+
+On Linux or macOS, download the matching `tailwindcss` v3.4.17 binary from the Tailwind releases page and run:
+
+    ./tailwindcss -c tailwind.config.js -i assets/input.css -o static/css/tailwind.css --minify
+
+## Sign in and accounts (Phase 4a)
+
+Create the first IT administrator (you will be asked for a password at a hidden prompt):
+
+    cargo run -- create-user admin you@example.com "Your Name"
+
+Create test accounts for the other roles. These must choose a new password at first sign-in:
+
+    cargo run -- create-user staff office@example.com "Office Staff"
+    cargo run -- create-user faculty teacher@example.com "Test Teacher"
+    cargo run -- create-user student 1001@college.local "Test Student"
+
+Then run `cargo run` and open http://127.0.0.1:3000/login. Each role lands on its own dashboard:
+IT admin and office staff on `/admin`, teachers on `/teacher`, students on `/hub`.
+
+Rules built in: five wrong passwords lock an account for 15 minutes; sessions last 8 hours of inactivity;
+every form carries a CSRF token; passwords are stored with Argon2.
+In production set `COOKIE_SECURE=true` and serve the site over HTTPS.
 
 ## Production CSS
 
@@ -51,7 +103,11 @@ Keep the colours and fonts in `tailwind.config.js` and `styles.html` identical.
 1. Design system and templates (done)
 2. Routing structure for all public pages (done: pages registry, programme/department/news/notice routes, sitemap.xml, robots.txt)
 3. PostgreSQL schema, migrations, SQLx services (done)
-4. Authentication, Student Hub, admin
+4. Authentication, Student Hub, teacher tools, admin
+   - 4a (done): sign-in, sessions, CSRF, roles, dashboard shells, `create-user` command
+   - 4b: admin tools (people, courses, timetable, publishing)
+   - 4c: teacher attendance
+   - 4d: student views
 5. HTMX interactions and polling, ETag caching
 6. Security, performance, tests, deployment
 

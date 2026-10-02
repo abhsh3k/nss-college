@@ -3,3 +3,6 @@
 /uploads/*
 !/uploads/.gitkeep
 /static/css/tailwind.css
+
+/tailwindcss.exe
+/tailwindcss

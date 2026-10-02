@@ -1,15 +1,24 @@
+mod auth;
+mod cli;
 mod config;
 mod error;
 mod models;
 mod routes;
 mod seo;
 mod services;
+mod shell;
 mod state;
 
 use std::time::Duration;
 
+use axum::http::{header, HeaderValue};
 use sqlx::postgres::PgPoolOptions;
-use tower_http::{compression::CompressionLayer, services::ServeDir, trace::TraceLayer};
+use tower_http::{
+    compression::CompressionLayer, services::ServeDir, set_header::SetResponseHeaderLayer,
+    trace::TraceLayer,
+};
+use tower_sessions::{cookie::{time::Duration as CookieDuration, SameSite}, Expiry, SessionManagerLayer};
+use tower_sessions_sqlx_store::PostgresStore;
 use tracing_subscriber::EnvFilter;
 
 use crate::state::AppState;
@@ -40,12 +49,42 @@ async fn main() {
         .expect("database migrations failed");
     tracing::info!("database ready");
 
+    // Command-line helpers (e.g. creating the first admin) run instead of the server.
+    let cli_args: Vec<String> = std::env::args().skip(1).collect();
+    if cli::run(&cli_args, &db).await {
+        return;
+    }
+
+    let session_store = PostgresStore::new(db.clone());
+    session_store
+        .migrate()
+        .await
+        .expect("could not create the sessions table");
+    let session_layer = SessionManagerLayer::new(session_store)
+        .with_name("nss_session")
+        .with_secure(cfg.cookie_secure)
+        .with_same_site(SameSite::Lax)
+        .with_expiry(Expiry::OnInactivity(CookieDuration::hours(8)));
+
     let state = AppState { db };
 
     // App assets (css/js/img) and user uploads live in separate directories.
     let app = routes::router()
         .nest_service("/static", ServeDir::new("static"))
         .nest_service("/uploads", ServeDir::new(&cfg.upload_dir))
+        .layer(session_layer)
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .with_state(state);

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}Dashboard{% endblock %} | NSS College Rajakumari</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  {% include "partials/styles.html" %}
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+</head>
+<body class="bg-chalk font-sans text-ink antialiased">
+  <a href="#app-main" class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-accent focus:px-4 focus:py-2 focus:font-semibold focus:text-ink">Skip to main content</a>
+
+  <div class="min-h-screen md:flex">
+    <aside class="bg-ink text-chalk md:sticky md:top-0 md:h-screen md:w-64 md:shrink-0 md:overflow-y-auto">
+      <div class="flex items-center justify-between px-4 py-4 md:block">
+        <a href="/" class="block leading-tight">
+          <span class="block font-display text-lg font-semibold">NSS College Rajakumari</span>
+          <span class="block text-sm text-chalk/70">{{ shell.role_label }}</span>
+        </a>
+        <button id="menu-toggle" type="button" class="rounded border border-chalk/40 px-3 py-2 text-sm font-medium md:hidden" aria-expanded="false" aria-controls="primary-nav">Menu</button>
+      </div>
+
+      <div id="primary-nav" class="hidden px-2 pb-4 md:block">
+        <nav aria-label="Dashboard" hx-boost="true" hx-target="#app-main" hx-select="#app-main" hx-swap="outerHTML" hx-push-url="true">
+          <ul class="space-y-1">
+            {% for item in shell.nav %}
+            <li>
+              {% if item.soon %}
+              <span class="flex items-center justify-between rounded px-3 py-2 text-chalk/50" aria-disabled="true">{{ item.label }} <span class="rounded bg-chalk/10 px-1.5 py-0.5 text-xs">Soon</span></span>
+              {% else %}
+              <a data-nav href="{{ item.href }}" class="block rounded px-3 py-2 font-medium hover:bg-chalk/10 aria-[current=page]:bg-accent aria-[current=page]:text-ink">{{ item.label }}</a>
+              {% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        </nav>
+
+        <div class="mt-6 border-t border-chalk/15 px-3 pt-4">
+          <p class="text-sm text-chalk/70">Signed in as</p>
+          <p class="font-medium">{{ shell.user_name }}</p>
+          <ul class="mt-3 space-y-1 text-sm">
+            <li><a class="underline underline-offset-4 hover:text-accent" href="/account/password">Change password</a></li>
+            <li><a class="underline underline-offset-4 hover:text-accent" href="/">Public website</a></li>
+          </ul>
+          <form method="post" action="/logout" class="mt-4">
+            <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+            <button type="submit" class="rounded border border-chalk/50 px-4 py-2 text-sm font-semibold hover:bg-chalk hover:text-ink">Sign out</button>
+          </form>
+        </div>
+      </div>
+    </aside>
+
+    <div class="min-w-0 flex-1">
+      <main id="app-main" tabindex="-1" class="mx-auto max-w-5xl px-4 py-8 focus:outline-none md:px-8 md:py-12">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js" defer></script>
+</body>
+</html>

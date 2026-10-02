@@ -1,0 +1,30 @@
+{% extends "layouts/app.html" %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Welcome, {{ shell.user_name }}</h1>
+<p class="mt-2 text-lg text-ink/80">{{ shell.role_label }}</p>
+
+{% if is_admin %}
+<dl class="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+  <div class="border-t-4 border-accent pt-3">
+    <dt class="text-sm text-ink/70">Active students</dt>
+    <dd class="font-display text-4xl font-semibold">{{ counts.students }}</dd>
+  </div>
+  <div class="border-t-4 border-accent pt-3">
+    <dt class="text-sm text-ink/70">Teachers</dt>
+    <dd class="font-display text-4xl font-semibold">{{ counts.teachers }}</dd>
+  </div>
+  <div class="border-t-4 border-accent pt-3">
+    <dt class="text-sm text-ink/70">Programmes</dt>
+    <dd class="font-display text-4xl font-semibold">{{ counts.programmes }}</dd>
+  </div>
+  <div class="border-t-4 border-accent pt-3">
+    <dt class="text-sm text-ink/70">Published news items</dt>
+    <dd class="font-display text-4xl font-semibold">{{ counts.news }}</dd>
+  </div>
+</dl>
+<p class="mt-10 max-w-2xl text-lg leading-relaxed">Account management, courses, timetables and publishing tools are the next phase. The items marked "Soon" in the menu will switch on as they are built.</p>
+{% else %}
+<p class="mt-10 max-w-2xl text-lg leading-relaxed">You will publish notices, news, events and documents from here. Those tools are being built next; they appear in the menu once ready.</p>
+{% endif %}
+{% endblock %}

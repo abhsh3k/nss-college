@@ -8,7 +8,7 @@ fn site_url() -> String {
 
 pub async fn robots() -> impl IntoResponse {
     let body = format!(
-        "User-agent: *\nAllow: /\nDisallow: /hub/\nDisallow: /admin/\nDisallow: /fragments/\n\nSitemap: {}/sitemap.xml\n",
+        "User-agent: *\nAllow: /\nDisallow: /hub\nDisallow: /admin\nDisallow: /teacher\nDisallow: /login\nDisallow: /account\nDisallow: /fragments/\n\nSitemap: {}/sitemap.xml\n",
         site_url()
     );
     ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], body)
@@ -29,7 +29,7 @@ pub async fn sitemap(State(s): State<AppState>) -> Result<impl IntoResponse, App
         content::sitemap_paths(&s.db)
             .await?
             .into_iter()
-            .filter(|p| !p.starts_with("/hub")),
+            .filter(|p| !p.starts_with("/hub") && !p.starts_with("/admin")),
     );
 
     let mut xml = String::from(

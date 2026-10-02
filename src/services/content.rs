@@ -23,8 +23,7 @@ pub async fn notices(db: &PgPool, limit: i64) -> Res<Vec<Notice>> {
     .await
 }
 
-const NEWS_COLUMNS: &str = r#"id,
-       title,
+const NEWS_COLUMNS: &str = r#"title,
        to_char(published_at, 'DD Mon YYYY') AS date,
        '/news/' || id::text AS href,
        image_path AS image,

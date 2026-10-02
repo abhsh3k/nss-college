@@ -1,0 +1,7 @@
+{% extends "layouts/app.html" %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Welcome, {{ shell.user_name }}</h1>
+<p class="mt-2 text-lg text-ink/80">{{ shell.role_label }}</p>
+<p class="mt-10 max-w-2xl text-lg leading-relaxed">Your courses, timetable and attendance will appear here once your department has set them up for your semester.</p>
+{% endblock %}

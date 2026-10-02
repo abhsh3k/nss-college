@@ -6,8 +6,13 @@
 {% block content %}
 
 {# ---------- Hero ---------- #}
-<section class="relative overflow-hidden bg-ink text-chalk">
+{# ---------- Hero ---------- #}
+<section class="relative overflow-hidden bg-cover bg-center text-chalk" style="background-image: url('/path/to/your-image.jpg');">
+  <!-- Dark overlay to ensure text contrast over the photo -->
+  <div class="absolute inset-0 bg-black/50" aria-hidden="true"></div>
+
   <div class="absolute right-8 top-10 hidden h-20 w-20 rounded-full bg-accent sm:block lg:right-32 lg:h-28 lg:w-28" aria-hidden="true"></div>
+  
   <div class="relative mx-auto max-w-6xl px-4 pb-16 pt-16 md:pb-28 md:pt-24">
     <h1 class="max-w-3xl font-display text-4xl font-semibold leading-tight sm:text-5xl md:text-7xl md:leading-[1.05]">Learning on the hill above Rajakumari</h1>
     <p class="mt-6 max-w-xl text-lg leading-relaxed text-chalk/85">Five undergraduate programmes, a postgraduate programme in electronics and research in computer applications, on a hilltop campus near Kulapparachal.</p>
@@ -16,13 +21,15 @@
       <a href="/academics" class="rounded border border-chalk/50 px-6 py-3 font-semibold hover:bg-chalk hover:text-ink">Browse programmes</a>
     </div>
   </div>
-  <svg class="block h-28 w-full md:h-44" viewBox="0 0 1440 220" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+
+  <svg class="relative block h-28 w-full md:h-44" viewBox="0 0 1440 220" preserveAspectRatio="none" aria-hidden="true" focusable="false">
     <path fill="#D9531E" d="M0 120 L120 80 L240 110 L400 40 L560 100 L720 60 L900 120 L1080 50 L1240 100 L1440 70 L1440 220 L0 220 Z"/>
     <path fill="#FFFAF6" fill-opacity="0.12" d="M0 140 L1440 100 L1440 150 L0 170 Z"/>
     <path fill="#A3231C" d="M0 160 L160 120 L320 150 L520 90 L700 140 L900 100 L1100 150 L1300 110 L1440 140 L1440 220 L0 220 Z"/>
     <path fill="#5E1A14" d="M0 190 L200 165 L420 185 L640 150 L860 180 L1100 155 L1440 185 L1440 220 L0 220 Z"/>
   </svg>
-  <div class="bg-deep">
+
+  <div class="relative bg-deep">
     <dl class="mx-auto grid max-w-6xl gap-6 px-4 pb-12 sm:grid-cols-3">
       <div>
         <dt class="text-sm text-chalk/70">Founded</dt>

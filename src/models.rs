@@ -13,7 +13,6 @@ pub struct Notice {
 
 #[derive(Debug, FromRow)]
 pub struct NewsItem {
-    pub id: i64,
     pub title: String,
     pub date: String,
     pub href: String,
