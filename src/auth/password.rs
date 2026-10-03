@@ -10,7 +10,7 @@ use argon2::{
 
 use crate::error::{internal, AppError};
 
-pub const MIN_LENGTH: usize = 10;
+pub const MIN_LENGTH: usize = 8;
 
 pub fn hash(password: &str) -> Result<String, AppError> {
     let salt = SaltString::generate(&mut OsRng);
