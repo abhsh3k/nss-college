@@ -1,0 +1,56 @@
+{% extends "layouts/app.html" %}
+{% block title %}People{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-end justify-between gap-4">
+  <h1 class="font-display text-3xl font-semibold md:text-4xl">People</h1>
+  <div class="flex flex-wrap gap-2">
+    <a href="/admin/people/new?kind=student" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Add student</a>
+    <a href="/admin/people/new?kind=teacher" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Add teacher</a>
+    <a href="/admin/people/new?kind=staff" class="rounded border border-ink px-4 py-2 font-semibold hover:bg-ink hover:text-chalk">Add office staff</a>
+    <a href="/admin/people/import" class="rounded border border-ink px-4 py-2 font-semibold hover:bg-ink hover:text-chalk">Import students</a>
+  </div>
+</div>
+
+<nav aria-label="Filter by role" class="mt-6 flex flex-wrap gap-2 text-sm">
+  <a href="/admin/people" class="rounded px-3 py-1.5 font-medium {% if role == "" %}bg-ink text-chalk{% else %}bg-mist hover:bg-ink hover:text-chalk{% endif %}">Everyone</a>
+  <a href="/admin/people?role=student" class="rounded px-3 py-1.5 font-medium {% if role == "student" %}bg-ink text-chalk{% else %}bg-mist hover:bg-ink hover:text-chalk{% endif %}">Students</a>
+  <a href="/admin/people?role=faculty" class="rounded px-3 py-1.5 font-medium {% if role == "faculty" %}bg-ink text-chalk{% else %}bg-mist hover:bg-ink hover:text-chalk{% endif %}">Teachers</a>
+  <a href="/admin/people?role=staff" class="rounded px-3 py-1.5 font-medium {% if role == "staff" %}bg-ink text-chalk{% else %}bg-mist hover:bg-ink hover:text-chalk{% endif %}">Office staff</a>
+  <a href="/admin/people?role=admin" class="rounded px-3 py-1.5 font-medium {% if role == "admin" %}bg-ink text-chalk{% else %}bg-mist hover:bg-ink hover:text-chalk{% endif %}">IT admins</a>
+</nav>
+
+<form method="get" action="/admin/people" class="mt-4 flex max-w-xl gap-2" role="search">
+  <input type="hidden" name="role" value="{{ role }}">
+  <label for="q" class="sr-only">Search by name, email or admission number</label>
+  <input id="q" name="q" type="search" value="{{ q }}" placeholder="Search name, email or admission number" class="w-full rounded border border-ink/40 bg-white px-3 py-2">
+  <button type="submit" class="rounded border border-ink px-4 py-2 font-semibold hover:bg-ink hover:text-chalk">Search</button>
+</form>
+
+<div class="mt-6 overflow-x-auto">
+  <table class="w-full min-w-[40rem] text-left">
+    <thead>
+      <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+        <th scope="col" class="py-2 pr-4 font-medium">Name</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Sign-in</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Role</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Details</th>
+        <th scope="col" class="py-2 font-medium"><span class="sr-only">Actions</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in people %}
+      <tr class="border-b border-ink/10 align-top">
+        <td class="py-3 pr-4 font-medium">{{ p.full_name }}{% if !p.is_active %} <span class="ml-1 rounded bg-brand px-1.5 py-0.5 text-xs text-chalk">Inactive</span>{% endif %}</td>
+        <td class="py-3 pr-4 text-sm">{% if p.admission_no != "" %}{{ p.admission_no }}{% else %}{{ p.email }}{% endif %}</td>
+        <td class="py-3 pr-4 text-sm">{% if p.role == "faculty" %}Teacher{% else if p.role == "student" %}Student{% else if p.role == "staff" %}Office staff{% else if p.role == "admin" %}IT admin{% else %}{{ p.role }}{% endif %}</td>
+        <td class="py-3 pr-4 text-sm text-ink/80">{{ p.detail }}</td>
+        <td class="py-3 text-right"><a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/people/{{ p.id }}">Open<span class="sr-only"> {{ p.full_name }}</span></a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if people.is_empty() %}
+  <p class="py-8 text-ink/70">No one matches. Add a student or teacher with the buttons above.</p>
+  {% endif %}
+</div>
+{% endblock %}

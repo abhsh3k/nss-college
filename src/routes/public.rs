@@ -2,6 +2,7 @@ use askama::Template;
 use axum::{
     extract::{Path, State},
     http::Uri,
+    response::{IntoResponse, Response},
 };
 
 use crate::{
@@ -88,10 +89,12 @@ pub struct ProgrammeTemplate {
 pub async fn programme(
     State(s): State<AppState>,
     Path(slug): Path<String>,
-) -> Result<ProgrammeTemplate, AppError> {
-    let programme = svc::programme_by_slug(&s.db, &slug)
-        .await?
-        .ok_or(AppError::NotFound)?;
+) -> Result<Response, AppError> {
+    let Some(programme) = svc::programme_by_slug(&s.db, &slug).await? else {
+        // `/academics/syllabus` and similar are informational pages, not programmes.
+        let path = format!("/academics/{slug}");
+        return Ok(page_for_path(&s, &path).await?.into_response());
+    };
     let related = svc::programmes_in_department(&s.db, &programme.department_slug)
         .await?
         .into_iter()
@@ -102,7 +105,8 @@ pub async fn programme(
         lede: programme.summary.clone(),
         programme,
         related,
-    })
+    }
+    .into_response())
 }
 
 // ---------- Departments ----------
@@ -247,9 +251,7 @@ pub struct PageTemplate {
     sections: Vec<PageSection>,
 }
 
-/// Fallback: any other path is looked up in the `pages` table, otherwise 404.
-pub async fn page_or_404(State(s): State<AppState>, uri: Uri) -> Result<PageTemplate, AppError> {
-    let path = uri.path().trim_end_matches('/');
+async fn page_for_path(s: &AppState, path: &str) -> Result<PageTemplate, AppError> {
     let page = svc::page_by_path(&s.db, path)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -259,4 +261,9 @@ pub async fn page_or_404(State(s): State<AppState>, uri: Uri) -> Result<PageTemp
         lede: page.lede,
         sections,
     })
+}
+
+/// Fallback: any other path is looked up in the `pages` table, otherwise 404.
+pub async fn page_or_404(State(s): State<AppState>, uri: Uri) -> Result<PageTemplate, AppError> {
+    page_for_path(&s, uri.path().trim_end_matches('/')).await
 }

@@ -54,3 +54,19 @@ impl IntoResponse for AppError {
         }
     }
 }
+
+/// True when an INSERT/UPDATE broke a UNIQUE constraint (duplicate email, admission number, ...).
+pub fn is_unique_violation(e: &sqlx::Error) -> bool {
+    e.as_database_error()
+        .and_then(|d| d.code())
+        .map(|c| c == "23505")
+        .unwrap_or(false)
+}
+
+/// True when a DELETE was blocked because other rows still refer to it.
+pub fn is_foreign_key_violation(e: &sqlx::Error) -> bool {
+    e.as_database_error()
+        .and_then(|d| d.code())
+        .map(|c| c == "23503")
+        .unwrap_or(false)
+}

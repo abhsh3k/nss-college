@@ -66,7 +66,10 @@ async fn main() {
         .with_same_site(SameSite::Lax)
         .with_expiry(Expiry::OnInactivity(CookieDuration::hours(8)));
 
-    let state = AppState { db };
+    let state = AppState {
+        db,
+        upload_dir: cfg.upload_dir.clone(),
+    };
 
     // App assets (css/js/img) and user uploads live in separate directories.
     let app = routes::router()

@@ -1,0 +1,37 @@
+{% extends "layouts/app.html" %}
+{% block title %}Timetable{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Timetable</h1>
+<p class="mt-3 max-w-2xl text-ink/80">Pick a programme and semester, then add the periods for each day. The builder warns you if a teacher, room or class would be double-booked.</p>
+
+<form method="get" action="/admin/timetable" class="mt-6 flex flex-wrap items-end gap-4">
+  <div>
+    <label for="programme" class="block font-semibold">Programme</label>
+    <select id="programme" name="programme" required class="mt-1 rounded border border-ink/40 bg-white px-3 py-2">
+      <option value="">Choose a programme</option>
+      {% for p in programmes %}<option value="{{ p.id }}" {% if p.id == sel_programme %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="semester" class="block font-semibold">Semester</label>
+    <select id="semester" name="semester" class="mt-1 rounded border border-ink/40 bg-white px-3 py-2">
+      <option value="1" {% if sel_semester == 1 %}selected{% endif %}>Semester 1</option>
+        <option value="2" {% if sel_semester == 2 %}selected{% endif %}>Semester 2</option>
+        <option value="3" {% if sel_semester == 3 %}selected{% endif %}>Semester 3</option>
+        <option value="4" {% if sel_semester == 4 %}selected{% endif %}>Semester 4</option>
+        <option value="5" {% if sel_semester == 5 %}selected{% endif %}>Semester 5</option>
+        <option value="6" {% if sel_semester == 6 %}selected{% endif %}>Semester 6</option>
+        <option value="7" {% if sel_semester == 7 %}selected{% endif %}>Semester 7</option>
+        <option value="8" {% if sel_semester == 8 %}selected{% endif %}>Semester 8</option>
+        
+    </select>
+  </div>
+  <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Show timetable</button>
+</form>
+
+<div class="mt-10">
+  {% if panel.programme_id != 0 %}
+  {% include "partials/timetable_panel.html" %}
+  {% endif %}
+</div>
+{% endblock %}

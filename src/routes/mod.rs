@@ -1,3 +1,4 @@
+mod admin;
 mod auth;
 mod dashboards;
 mod htmx;
@@ -24,6 +25,7 @@ pub fn router() -> Router<AppState> {
         .route("/admin", get(dashboards::admin))
         .route("/teacher", get(dashboards::teacher))
         .route("/hub", get(dashboards::student))
+        .merge(admin::routes())
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),

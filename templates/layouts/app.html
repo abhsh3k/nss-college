@@ -56,6 +56,9 @@
 
     <div class="min-w-0 flex-1">
       <main id="app-main" tabindex="-1" class="mx-auto max-w-5xl px-4 py-8 focus:outline-none md:px-8 md:py-12">
+        {% if let Some(m) = shell.flash %}
+        <p role="status" class="mb-6 border-l-4 border-accent bg-mist px-4 py-3 font-medium">{{ m }}</p>
+        {% endif %}
         {% block content %}{% endblock %}
       </main>
     </div>

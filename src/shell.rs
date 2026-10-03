@@ -4,7 +4,7 @@ use tower_sessions::Session;
 
 use crate::{
     auth::{csrf, AuthUser, Role},
-    error::AppError,
+    error::{internal, AppError},
 };
 
 pub struct NavItem {
@@ -19,6 +19,7 @@ pub struct Shell {
     pub role_label: &'static str,
     pub nav: Vec<NavItem>,
     pub csrf_token: String,
+    pub flash: Option<String>,
 }
 
 fn item(label: &'static str, href: &'static str, soon: bool) -> NavItem {
@@ -29,9 +30,9 @@ fn nav_for(role: Role) -> Vec<NavItem> {
     match role {
         Role::Admin => vec![
             item("Overview", "/admin", false),
-            item("People", "/admin/people", true),
-            item("Courses and programmes", "/admin/academics", true),
-            item("Timetable", "/admin/timetable", true),
+            item("People", "/admin/people", false),
+            item("Courses and programmes", "/admin/academics", false),
+            item("Timetable", "/admin/timetable", false),
             item("Attendance reports", "/admin/attendance", true),
             item("Notices", "/admin/notices", true),
             item("News", "/admin/news", true),
@@ -75,6 +76,15 @@ impl Shell {
             role_label: user.role.label(),
             nav: nav_for(user.role),
             csrf_token: csrf::token(session).await?,
+            flash: session.remove::<String>("flash").await.map_err(internal)?,
         })
     }
+}
+
+/// Queue a one-time message shown at the top of the next dashboard page.
+pub async fn flash(session: &Session, message: impl Into<String>) -> Result<(), AppError> {
+    session
+        .insert("flash", message.into())
+        .await
+        .map_err(internal)
 }

@@ -1,0 +1,56 @@
+{% extends "layouts/app.html" %}
+{% block title %}Edit course{% endblock %}
+{% block content %}
+<p class="text-sm"><a class="underline underline-offset-4 hover:text-brand" href="/admin/academics/programmes/{{ course.programme_id }}">Back to {{ course.programme }}</a></p>
+<h1 class="mt-2 font-display text-3xl font-semibold md:text-4xl">Edit {{ course.code }}</h1>
+
+<form method="post" action="/admin/academics/courses/{{ course.id }}" class="mt-8 max-w-xl space-y-5">
+  <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+  <div class="grid gap-5 sm:grid-cols-3">
+    <div>
+      <label for="semester" class="block font-semibold">Semester</label>
+      <select id="semester" name="semester" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        <option value="1" {% if course.semester == 1 %}selected{% endif %}>Semester 1</option>
+        <option value="2" {% if course.semester == 2 %}selected{% endif %}>Semester 2</option>
+        <option value="3" {% if course.semester == 3 %}selected{% endif %}>Semester 3</option>
+        <option value="4" {% if course.semester == 4 %}selected{% endif %}>Semester 4</option>
+        <option value="5" {% if course.semester == 5 %}selected{% endif %}>Semester 5</option>
+        <option value="6" {% if course.semester == 6 %}selected{% endif %}>Semester 6</option>
+        <option value="7" {% if course.semester == 7 %}selected{% endif %}>Semester 7</option>
+        <option value="8" {% if course.semester == 8 %}selected{% endif %}>Semester 8</option>
+        
+      </select>
+    </div>
+    <div>
+      <label for="code" class="block font-semibold">Course code</label>
+      <input id="code" name="code" type="text" value="{{ course.code }}" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+    <div>
+      <label for="credits" class="block font-semibold">Credits</label>
+      <input id="credits" name="credits" type="number" min="0" max="40" value="{{ course.credits }}" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+  </div>
+  <div>
+    <label for="title" class="block font-semibold">Course title</label>
+    <input id="title" name="title" type="text" value="{{ course.title }}" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+  </div>
+  <div>
+    <label for="faculty_id" class="block font-semibold">Teacher</label>
+    <select id="faculty_id" name="faculty_id" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+      <option value="">Not assigned</option>
+      {% for t in teachers %}<option value="{{ t.id }}" {% if t.id == course.faculty_id %}selected{% endif %}>{{ t.name }}{% if t.department != "" %} ({{ t.department }}){% endif %}</option>{% endfor %}
+    </select>
+    <p class="mt-1 text-sm text-ink/70">New timetable periods for this course use this teacher unless you pick another for a period.</p>
+  </div>
+  <div class="flex flex-wrap gap-3">
+    <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Save course</button>
+    <a href="/admin/academics/programmes/{{ course.programme_id }}" class="rounded border border-ink px-4 py-2 font-semibold hover:bg-ink hover:text-chalk">Cancel</a>
+  </div>
+</form>
+
+<form method="post" action="/admin/academics/courses/{{ course.id }}/delete" class="mt-12 max-w-xl border-t border-ink/15 pt-6" onsubmit="return confirm('Delete this course? This also removes its timetable periods and enrollments.')">
+  <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+  <button type="submit" class="rounded border border-brand px-4 py-2 font-semibold text-brand hover:bg-brand hover:text-chalk">Delete course</button>
+  <p class="mt-2 text-sm text-ink/70">Courses with attendance records can't be deleted.</p>
+</form>
+{% endblock %}

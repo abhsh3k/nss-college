@@ -1,0 +1,87 @@
+<section id="timetable-panel" aria-labelledby="tt-heading">
+  <h2 id="tt-heading" class="font-display text-2xl font-semibold">{{ panel.programme_name }}, semester {{ panel.semester }}</h2>
+
+  {% if let Some(msg) = panel.notice %}
+  <p role="status" class="mt-4 max-w-3xl border-l-4 border-accent bg-mist px-4 py-3 font-medium">{{ msg }}</p>
+  {% endif %}
+  {% if let Some(msg) = panel.error %}
+  <p role="alert" class="mt-4 max-w-3xl border-l-4 border-brand bg-mist px-4 py-3 font-medium">{{ msg }}</p>
+  {% endif %}
+
+  {% if panel.courses.is_empty() %}
+  <p class="mt-4 max-w-3xl">There are no courses in this semester yet. <a class="underline underline-offset-4 hover:text-brand" href="/admin/academics/programmes/{{ panel.programme_id }}">Add courses first</a>.</p>
+  {% else %}
+  <form hx-post="/admin/timetable/slots" hx-target="#timetable-panel" hx-swap="outerHTML" class="mt-5 grid max-w-4xl gap-4 border border-ink/15 bg-mist p-5 sm:grid-cols-6">
+    <input type="hidden" name="csrf_token" value="{{ panel.csrf_token }}">
+    <input type="hidden" name="programme_id" value="{{ panel.programme_id }}">
+    <input type="hidden" name="semester" value="{{ panel.semester }}">
+    <div class="sm:col-span-2">
+      <label for="tt-weekday" class="block font-semibold">Day</label>
+      <select id="tt-weekday" name="weekday" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        {% for d in panel.days %}<option value="{{ d.number }}">{{ d.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="sm:col-span-2">
+      <label for="tt-start" class="block font-semibold">Starts</label>
+      <input id="tt-start" name="start_at" type="time" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+    <div class="sm:col-span-2">
+      <label for="tt-end" class="block font-semibold">Ends</label>
+      <input id="tt-end" name="end_at" type="time" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+    <div class="sm:col-span-3">
+      <label for="tt-course" class="block font-semibold">Course</label>
+      <select id="tt-course" name="course_id" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        {% for c in panel.courses %}<option value="{{ c.id }}">{{ c.code }} {{ c.title }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="sm:col-span-3">
+      <label for="tt-teacher" class="block font-semibold">Teacher</label>
+      <select id="tt-teacher" name="faculty_id" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        <option value="">The course's teacher</option>
+        {% for t in panel.teachers %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="sm:col-span-3">
+      <label for="tt-room" class="block font-semibold">Room <span class="font-normal text-ink/70">(optional)</span></label>
+      <input id="tt-room" name="room" type="text" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+    <div class="flex items-end sm:col-span-3">
+      <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Add period</button>
+    </div>
+  </form>
+  {% endif %}
+
+  {% for d in panel.days %}
+  <div class="mt-8">
+    <h3 class="font-display text-xl font-semibold">{{ d.name }}</h3>
+    {% if d.slots.is_empty() %}
+    <p class="mt-1 text-sm text-ink/70">No periods.</p>
+    {% else %}
+    <div class="mt-2 overflow-x-auto">
+      <table class="w-full min-w-[34rem] text-left">
+        <thead class="sr-only"><tr><th scope="col">Time</th><th scope="col">Course</th><th scope="col">Teacher</th><th scope="col">Room</th><th scope="col">Actions</th></tr></thead>
+        <tbody>
+          {% for s in d.slots %}
+          <tr class="border-b border-ink/10">
+            <td class="py-2 pr-4 font-medium">{{ s.start_at }}–{{ s.end_at }}</td>
+            <td class="py-2 pr-4">{{ s.code }} {{ s.course }}</td>
+            <td class="py-2 pr-4 text-sm">{% if s.teacher != "" %}{{ s.teacher }}{% else %}<span class="text-brand">No teacher</span>{% endif %}</td>
+            <td class="py-2 pr-4 text-sm">{{ s.room }}</td>
+            <td class="py-2 text-right">
+              <form hx-post="/admin/timetable/slots/{{ s.id }}/delete" hx-target="#timetable-panel" hx-swap="outerHTML" hx-confirm="Remove this period?">
+                <input type="hidden" name="csrf_token" value="{{ panel.csrf_token }}">
+                <input type="hidden" name="programme_id" value="{{ panel.programme_id }}">
+                <input type="hidden" name="semester" value="{{ panel.semester }}">
+                <button type="submit" class="text-sm font-semibold text-brand underline underline-offset-4 hover:text-ink">Remove<span class="sr-only"> {{ s.start_at }} {{ s.course }}</span></button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>

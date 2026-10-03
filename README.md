@@ -23,6 +23,23 @@ On start-up the app connects using `DATABASE_URL`, applies every file in `migrat
 
 Styling is compiled Tailwind CSS. Build it once before the first run (see the next section).
 
+## Admin tools (Phase 4b-1)
+
+Sign in as the IT admin, then use the sidebar:
+
+- **People**: add students, teachers and office staff; edit them; issue a new temporary password; deactivate an account.
+  "Import students" accepts a pasted class list (comma- or tab-separated, so Excel rows work).
+  Temporary passwords are shown once on a printable page.
+- **Courses and programmes**: add the courses of each semester and assign a teacher. New students are enrolled in their
+  semester's courses automatically; use "Enroll students" after adding courses later.
+- **Timetable**: choose programme and semester, then add periods per day. Clashes (same teacher, room or class at overlapping
+  times) are refused with an explanation. Everything updates without reloading the page.
+
+After pulling this update, rebuild the CSS (new classes were added) and restart:
+
+    powershell -ExecutionPolicy Bypass -File .\build-css.ps1
+    cargo run
+
 ## Sign in and accounts (Phase 4a)
 
 Create the first IT administrator (you will be asked for a password at a hidden prompt):
@@ -105,7 +122,8 @@ Keep the colours and fonts in `tailwind.config.js` and `styles.html` identical.
 3. PostgreSQL schema, migrations, SQLx services (done)
 4. Authentication, Student Hub, teacher tools, admin
    - 4a (done): sign-in, sessions, CSRF, roles, dashboard shells, `create-user` command
-   - 4b: admin tools (people, courses, timetable, publishing)
+   - 4b-1 (done): admin tools for people, programmes/courses, enrollment and the timetable builder
+   - 4b-2: publishing tools (notices, news, events, documents, pages, settings) for IT admin and office staff
    - 4c: teacher attendance
    - 4d: student views
 5. HTMX interactions and polling, ETag caching

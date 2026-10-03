@@ -1,7 +1,10 @@
 use std::sync::OnceLock;
 
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{
+        rand_core::{OsRng, RngCore},
+        PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
+    },
     Argon2,
 };
 
@@ -49,4 +52,27 @@ pub async fn hash_blocking(password: String) -> Result<String, AppError> {
     tokio::task::spawn_blocking(move || hash(&password))
         .await
         .map_err(internal)?
+}
+
+/// A readable one-time password for new accounts (no 0/O/1/l/I lookalikes).
+pub fn temp_password() -> String {
+    use argon2::password_hash::rand_core::{OsRng, RngCore};
+    const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let mut bytes = [0u8; 12];
+    OsRng.fill_bytes(&mut bytes);
+    bytes
+        .iter()
+        .map(|b| ALPHABET[(*b as usize) % ALPHABET.len()] as char)
+        .collect()
+}
+
+/// A readable one-time password for new or reset accounts (no look-alike characters).
+pub fn temporary() -> String {
+    const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let mut bytes = [0u8; 12];
+    OsRng.fill_bytes(&mut bytes);
+    bytes
+        .iter()
+        .map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char)
+        .collect()
 }

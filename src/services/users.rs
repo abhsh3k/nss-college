@@ -142,3 +142,15 @@ pub async fn overview_counts(db: &PgPool) -> Res<Counts> {
     .fetch_one(db)
     .await
 }
+
+/// Reset: new temporary password, forced change at next sign-in, lock cleared.
+pub async fn set_temp_password(db: &PgPool, id: i64, new_hash: &str) -> Res<()> {
+    sqlx::query(
+        "UPDATE users SET password_hash = $2, must_change_password = true, failed_logins = 0, locked_until = NULL WHERE id = $1",
+    )
+    .bind(id)
+    .bind(new_hash)
+    .execute(db)
+    .await?;
+    Ok(())
+}
