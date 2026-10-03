@@ -3,6 +3,7 @@ mod auth;
 mod dashboards;
 mod htmx;
 mod public;
+mod teacher;
 
 use axum::{
     http::{header, HeaderValue},
@@ -25,6 +26,9 @@ pub fn router() -> Router<AppState> {
         .route("/admin", get(dashboards::admin))
         .route("/teacher", get(dashboards::teacher))
         .route("/hub", get(dashboards::student))
+        // Add these alongside your existing dashboard routes:
+        .route("/dashboard/teacher/session/:entry_id/attendance", axum::routing::get(teacher::get_attendance_sheet))
+        .route("/dashboard/teacher/session/:session_id/toggle", axum::routing::post(teacher::toggle_attendance_status))
         .merge(admin::routes())
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
