@@ -1,0 +1,23 @@
+<div class="space-y-8">
+  {% for g in groups %}
+  <section aria-labelledby="day-{{ loop.index }}">
+    <h2 id="day-{{ loop.index }}" class="text-lg font-bold text-gray-900">{{ g.label }}</h2>
+    <ul class="mt-2 divide-y divide-gray-100">
+      {% for p in g.periods %}
+      <li class="flex flex-wrap items-center justify-between gap-3 py-4">
+        <div>
+          <p class="font-medium text-gray-900">{{ p.start_at }}–{{ p.end_at }} &nbsp;{{ p.code }} {{ p.course }}
+            {% if p.is_substitute %}<span class="ml-1 rounded bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-800">Covering</span>{% endif %}
+          </p>
+          <p class="text-sm text-gray-600">{{ p.programme }}, semester {{ p.semester }}{% if p.room != "" %} · Room {{ p.room }}{% endif %}</p>
+          <p class="mt-1 text-sm">
+            {% if p.marked %}<span class="text-gray-500">Taken: {{ p.present }} present, {{ p.absent }} absent, {{ p.on_leave }} on leave</span>{% else %}<span class="font-semibold text-amber-600">Not taken yet</span>{% endif %}
+          </p>
+        </div>
+        <a href="/teacher/attendance/{{ p.entry_id }}/{{ p.on_date }}" class="rounded-md {% if p.marked %}border border-gray-300 text-gray-700 hover:bg-gray-100{% else %}bg-indigo-600 text-white hover:bg-indigo-700{% endif %} px-4 py-2 text-sm font-semibold transition">{% if p.marked %}Change attendance{% else %}Take attendance{% endif %}<span class="sr-only"> for {{ p.code }} on {{ p.day_label }} at {{ p.start_at }}</span></a>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
+</div>

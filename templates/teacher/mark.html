@@ -1,0 +1,46 @@
+{% extends "layouts/app.html" %}
+{% block title %}Attendance{% endblock %}
+{% block content %}
+<p class="text-sm"><a class="font-semibold text-indigo-600 underline underline-offset-4 hover:text-indigo-800" href="/teacher/attendance">All recent periods</a></p>
+<h1 class="mt-2 font-display text-3xl font-semibold md:text-4xl text-gray-900">{{ period.code }} {{ period.course }}</h1>
+<p class="mt-2 text-lg text-gray-600">{{ period.day_label }}, {{ period.start_at }}–{{ period.end_at }}. {{ period.programme }}, semester {{ period.semester }}.
+  {% if period.is_substitute %}<span class="rounded bg-amber-200 px-2 py-0.5 text-sm font-semibold text-amber-800">You are covering this period</span>{% endif %}
+</p>
+{% if period.marked %}
+<p class="mt-2 text-sm text-gray-500">Attendance was already taken. You can change it up to {{ window_days }} days after the class date.</p>
+{% endif %}
+
+{% if roster.is_empty() %}
+<p class="mt-8 text-gray-500 py-6 text-center border-2 border-dashed border-gray-100 rounded-lg max-w-2xl">No students are enrolled in this course yet. The IT admin can enroll them from Courses and programmes.</p>
+{% else %}
+<form hx-post="/teacher/attendance/{{ period.entry_id }}/{{ period.on_date }}" hx-target="#save-result" hx-swap="innerHTML" class="mt-8 max-w-3xl bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+  <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+
+  <div class="flex flex-wrap gap-2">
+    <button type="button" data-mark-all="present" class="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100 transition">Mark everyone present</button>
+    <button type="button" data-mark-all="absent" class="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100 transition">Mark everyone absent</button>
+  </div>
+
+  <ul class="mt-4 divide-y divide-gray-100 border-y border-gray-100">
+    {% for st in roster %}
+    <li class="py-3">
+      <fieldset class="m-0 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-0 p-0">
+        <legend class="sr-only">Attendance for {{ st.name }}</legend>
+        <span class="font-medium text-gray-900">{{ st.name }} <span class="text-sm font-normal text-gray-500">{{ st.admission_no }}</span></span>
+        <span class="flex gap-5">
+          <label class="flex items-center gap-2 text-gray-700"><input type="radio" class="h-5 w-5" name="status_{{ st.student_id }}" value="present" {% if st.status == "present" %}checked{% endif %}> Present</label>
+          <label class="flex items-center gap-2 text-gray-700"><input type="radio" class="h-5 w-5" name="status_{{ st.student_id }}" value="absent" {% if st.status == "absent" %}checked{% endif %}> Absent</label>
+          <label class="flex items-center gap-2 text-gray-700"><input type="radio" class="h-5 w-5" name="status_{{ st.student_id }}" value="leave" {% if st.status == "leave" %}checked{% endif %}> Leave</label>
+        </span>
+      </fieldset>
+    </li>
+    {% endfor %}
+  </ul>
+
+  <div class="mt-6 flex flex-wrap items-center gap-4">
+    <button type="submit" class="rounded-md bg-indigo-600 px-6 py-3 font-semibold text-white hover:bg-indigo-700 transition">Save attendance</button>
+    <div id="save-result" role="status" aria-live="polite" class="min-w-0 flex-1"></div>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

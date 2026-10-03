@@ -126,6 +126,137 @@ pub async fn course_attendance(db: &PgPool, student_id: i64) -> Res<Vec<CourseAt
     .await
 }
 
+/// Totals for the student's whole record: sessions held for their enrolled
+/// courses, and how each of them was marked.
+#[derive(Debug, FromRow)]
+pub struct AttendanceSummary {
+    pub held: i64,
+    pub marked: i64,
+    pub present: i64,
+    pub absent: i64,
+    pub leave: i64,
+}
+
+pub async fn attendance_summary(db: &PgPool, student_id: i64) -> Res<AttendanceSummary> {
+    sqlx::query_as::<_, AttendanceSummary>(
+        r#"SELECT COUNT(s.id) AS held,
+                  COUNT(ar.id) AS marked,
+                  COUNT(ar.id) FILTER (WHERE ar.status = 'present') AS present,
+                  COUNT(ar.id) FILTER (WHERE ar.status = 'absent')  AS absent,
+                  COUNT(ar.id) FILTER (WHERE ar.status = 'leave')   AS leave
+           FROM enrollments e
+           LEFT JOIN attendance_sessions s ON s.course_id = e.course_id
+           LEFT JOIN attendance_records ar ON ar.session_id = s.id
+                                          AND ar.student_id = e.student_id
+           WHERE e.student_id = $1 AND e.status = 'active'"#,
+    )
+    .bind(student_id)
+    .fetch_one(db)
+    .await
+}
+
+/// The same tally, split by course, for the student's attendance breakdown.
+#[derive(Debug, FromRow)]
+pub struct CourseAttendanceDetail {
+    pub code: String,
+    pub title: String,
+    pub marked: i64,
+    pub attended: i64,
+    pub absent: i64,
+    pub leave: i64,
+}
+
+pub async fn course_attendance_detail(
+    db: &PgPool,
+    student_id: i64,
+) -> Res<Vec<CourseAttendanceDetail>> {
+    sqlx::query_as::<_, CourseAttendanceDetail>(
+        r#"SELECT c.code,
+                  c.title,
+                  COUNT(ar.id) AS marked,
+                  COUNT(ar.id) FILTER (WHERE ar.status IN ('present', 'leave')) AS attended,
+                  COUNT(ar.id) FILTER (WHERE ar.status = 'absent') AS absent,
+                  COUNT(ar.id) FILTER (WHERE ar.status = 'leave')  AS leave
+           FROM enrollments e
+           JOIN courses c ON c.id = e.course_id
+           LEFT JOIN attendance_sessions s ON s.course_id = e.course_id
+           LEFT JOIN attendance_records ar ON ar.session_id = s.id
+                                          AND ar.student_id = e.student_id
+           WHERE e.student_id = $1 AND e.status = 'active'
+           GROUP BY c.id, c.code, c.title
+           ORDER BY c.code"#,
+    )
+    .bind(student_id)
+    .fetch_all(db)
+    .await
+}
+
+/// One row per month of the student's record, newest first.
+#[derive(Debug, FromRow)]
+pub struct MonthAttendance {
+    pub month_label: String,
+    pub marked: i64,
+    pub attended: i64,
+}
+
+pub async fn month_attendance(
+    db: &PgPool,
+    student_id: i64,
+    limit: i64,
+) -> Res<Vec<MonthAttendance>> {
+    sqlx::query_as::<_, MonthAttendance>(
+        r#"SELECT to_char(date_trunc('month', s.on_date), 'FMMon YYYY') AS month_label,
+                  COUNT(ar.id) AS marked,
+                  COUNT(ar.id) FILTER (WHERE ar.status IN ('present', 'leave')) AS attended
+           FROM attendance_records ar
+           JOIN attendance_sessions s ON s.id = ar.session_id
+           WHERE ar.student_id = $1
+           GROUP BY date_trunc('month', s.on_date)
+           ORDER BY date_trunc('month', s.on_date) DESC
+           LIMIT $2"#,
+    )
+    .bind(student_id)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+/// The student's most recently marked sessions, newest first.
+#[derive(Debug, FromRow)]
+pub struct RecentSession {
+    pub date_label: String,
+    pub time_label: String,
+    pub code: String,
+    pub title: String,
+    pub status: String,
+}
+
+pub async fn recent_sessions(
+    db: &PgPool,
+    student_id: i64,
+    limit: i64,
+) -> Res<Vec<RecentSession>> {
+    sqlx::query_as::<_, RecentSession>(
+        r#"SELECT to_char(s.on_date, 'Dy, DD Mon') AS date_label,
+                  COALESCE(to_char(te.start_time, 'HH24:MI') || ' – ' || to_char(te.end_time, 'HH24:MI'),
+                           'Time to be announced') AS time_label,
+                  c.code,
+                  c.title,
+                  ar.status
+           FROM attendance_records ar
+           JOIN attendance_sessions s ON s.id = ar.session_id
+           JOIN courses c ON c.id = s.course_id
+           LEFT JOIN timetable_entries te ON te.id = s.timetable_entry_id
+           WHERE ar.student_id = $1
+           ORDER BY s.on_date DESC, te.start_time DESC NULLS LAST
+           LIMIT $2"#,
+    )
+    .bind(student_id)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 /// Current-month totals across every enrolled course; used for the e-grants check.
 #[derive(Debug, FromRow)]
 pub struct MonthlyAttendance {

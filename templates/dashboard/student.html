@@ -18,31 +18,6 @@
   </section>
   {% endif %}
 
-  <!-- Latest announcements, straight from the notice board -->
-  <section class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-xl font-bold text-gray-900">Latest Announcements</h2>
-      <a href="/notices" class="text-sm font-semibold text-indigo-600 hover:text-indigo-800">View all</a>
-    </div>
-    {% if feed.is_empty() %}
-    <p class="text-gray-500 py-6 text-center border-2 border-dashed border-gray-100 rounded-lg">
-      No announcements right now. New notices appear here as soon as they are published.
-    </p>
-    {% else %}
-    <ul class="divide-y divide-gray-100">
-      {% for n in feed %}
-      <li class="py-3">
-        <div class="flex items-center gap-2">
-          <span class="text-xs font-bold font-mono px-2 py-0.5 rounded bg-gray-100 text-gray-600 uppercase">{{ n.category }}</span>
-          {% if n.is_new %}<span class="text-xs font-bold text-emerald-600">NEW</span>{% endif %}
-        </div>
-        <a href="{{ n.href }}" class="mt-1 block font-medium text-gray-900 hover:text-indigo-600">{{ n.title }}</a>
-      </li>
-      {% endfor %}
-    </ul>
-    {% endif %}
-  </section>
-
   <!-- E-grants attendance warning: high priority, only when below the threshold -->
   {% if let Some(a) = alert %}
   <section class="rounded-xl border-2 border-rose-300 bg-rose-50 p-6 shadow-sm" role="alert">
@@ -99,7 +74,7 @@
   </section>
 
   <!-- Weekly matrix -->
-  <section class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+  <section id="timetable" class="scroll-mt-6 bg-white rounded-xl border border-gray-200 shadow-sm p-6">
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-xl font-bold text-gray-900">Weekly Timetable</h2>
     </div>
@@ -143,7 +118,7 @@
   </section>
 
   <!-- Enrolled courses with live attendance -->
-  <section class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+  <section id="courses" class="scroll-mt-6 bg-white rounded-xl border border-gray-200 shadow-sm p-6">
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-xl font-bold text-gray-900">My Courses</h2>
       <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -197,6 +172,177 @@
     </div>
     {% endif %}
   </section>
+
+  <!-- Detailed attendance: overall standing, per course, month trend, recent sessions -->
+  <section id="attendance" class="scroll-mt-6 bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+      <h2 class="text-xl font-bold text-gray-900">Attendance</h2>
+      {% if let Some(a) = attendance %}
+      {% if a.has_data %}
+      <span class="text-xs font-semibold px-2.5 py-1 rounded-full border {% if a.is_low %}bg-rose-50 text-rose-700 border-rose-200{% else %}bg-emerald-50 text-emerald-700 border-emerald-200{% endif %}">
+        {{ a.percent_label }} overall &bull; {{ min_percent }}% required
+      </span>
+      {% endif %}
+      {% endif %}
+    </div>
+
+    {% if let Some(a) = attendance %}
+
+    {% if a.has_data %}
+    <!-- Totals across every course -->
+    <div class="grid grid-cols-2 gap-3 sm:grid-cols-5 mb-6">
+      <div class="col-span-2 rounded-lg border border-gray-200 bg-gray-50/60 p-4 sm:col-span-1">
+        <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Overall</p>
+        <p class="mt-1 text-2xl font-bold {% if a.is_low %}text-rose-600{% else %}text-emerald-600{% endif %}">{{ a.percent_label }}</p>
+        <div class="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-200">
+          <div class="h-full rounded-full {% if a.is_low %}bg-rose-500{% else %}bg-emerald-500{% endif %}" style="width: {{ a.bar_width }}"></div>
+        </div>
+      </div>
+      <div class="rounded-lg border border-gray-200 bg-gray-50/60 p-4">
+        <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Present</p>
+        <p class="mt-1 text-2xl font-bold text-emerald-600">{{ a.present }}</p>
+      </div>
+      <div class="rounded-lg border border-gray-200 bg-gray-50/60 p-4">
+        <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Absent</p>
+        <p class="mt-1 text-2xl font-bold {% if a.absent > 0 %}text-rose-600{% else %}text-gray-700{% endif %}">{{ a.absent }}</p>
+      </div>
+      <div class="rounded-lg border border-gray-200 bg-gray-50/60 p-4">
+        <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">On leave</p>
+        <p class="mt-1 text-2xl font-bold text-gray-700">{{ a.leave }}</p>
+      </div>
+    </div>
+
+    {% if a.unmarked > 0 %}
+    <p class="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      <strong>{{ a.unmarked }}</strong> of {{ a.held }} scheduled session(s) have not been marked yet. They are left out of your percentage until your teacher marks the register.
+    </p>
+    {% endif %}
+
+    <h3 class="text-sm font-bold uppercase tracking-wider text-gray-500 mb-3">Subject by subject</h3>
+    {% if a.per_course.is_empty() %}
+    <p class="text-gray-500 py-4 text-center border-2 border-dashed border-gray-100 rounded-lg text-sm">No courses enrolled yet.</p>
+    {% else %}
+    <div class="overflow-x-auto mb-6">
+      <table class="w-full text-left text-sm">
+        <thead>
+          <tr class="border-b bg-gray-50 text-xs font-semibold uppercase tracking-wider text-gray-600">
+            <th class="py-2 px-3">Course</th>
+            <th class="py-2 px-3 text-center">Marked</th>
+            <th class="py-2 px-3 text-center">Absent</th>
+            <th class="py-2 px-3 text-center">Leave</th>
+            <th class="py-2 px-3 w-56">Attendance</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          {% for c in a.per_course %}
+          <tr>
+            <td class="py-2 px-3">
+              <span class="font-mono font-semibold text-gray-800">{{ c.code }}</span>
+              <span class="block text-xs text-gray-600">{{ c.title }}</span>
+            </td>
+            <td class="py-2 px-3 text-center text-gray-600">{{ c.marked }}</td>
+            <td class="py-2 px-3 text-center {% if c.absent > 0 %}text-rose-600{% else %}text-gray-500{% endif %}">{{ c.absent }}</td>
+            <td class="py-2 px-3 text-center text-gray-500">{{ c.leave }}</td>
+            <td class="py-2 px-3">
+              {% if c.marked == 0 %}
+              <span class="text-xs text-gray-400">No sessions yet</span>
+              {% else %}
+              <div class="flex items-center gap-2">
+                <div class="h-2 w-28 overflow-hidden rounded-full bg-gray-100">
+                  <div class="h-full rounded-full {% if c.is_low %}bg-rose-500{% else %}bg-emerald-500{% endif %}" style="width: {{ c.bar_width }}"></div>
+                </div>
+                <span class="text-xs font-semibold {% if c.is_low %}text-rose-600{% else %}text-emerald-700{% endif %}">{{ c.percent_label }}</span>
+              </div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    <div class="grid gap-6 lg:grid-cols-2">
+      <!-- Month by month -->
+      {% if a.months.len() > 1 %}
+      <div>
+        <h3 class="text-sm font-bold uppercase tracking-wider text-gray-500 mb-3">Month by month</h3>
+        <ul class="space-y-2">
+          {% for m in a.months %}
+          <li class="flex items-center gap-3">
+            <span class="w-24 shrink-0 text-sm text-gray-600">{{ m.label }}</span>
+            <div class="h-2 flex-1 overflow-hidden rounded-full bg-gray-100">
+              <div class="h-full rounded-full {% if m.is_low %}bg-rose-400{% else %}bg-emerald-400{% endif %}" style="width: {{ m.bar_width }}"></div>
+            </div>
+            <span class="w-32 shrink-0 text-right text-xs text-gray-500">{{ m.attended }}/{{ m.marked }} &middot; <span class="font-semibold {% if m.is_low %}text-rose-600{% else %}text-emerald-700{% endif %}">{{ m.percent_label }}</span></span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
+      <!-- Latest marked sessions -->
+      <div>
+        <h3 class="text-sm font-bold uppercase tracking-wider text-gray-500 mb-3">Recent sessions</h3>
+        {% if a.recent.is_empty() %}
+        <p class="text-gray-500 py-4 text-center border-2 border-dashed border-gray-100 rounded-lg text-sm">No sessions have been marked yet.</p>
+        {% else %}
+        <ul class="divide-y divide-gray-100">
+          {% for r in a.recent %}
+          <li class="flex items-center gap-3 py-2">
+            <div class="w-28 shrink-0">
+              <span class="block text-sm font-medium text-gray-800">{{ r.date_label }}</span>
+              <span class="block font-mono text-xs text-gray-500">{{ r.time_label }}</span>
+            </div>
+            <div class="min-w-0 flex-1">
+              <span class="block font-mono text-sm font-semibold text-gray-800">{{ r.code }}</span>
+              <span class="block truncate text-xs text-gray-600">{{ r.title }}</span>
+            </div>
+            <span class="shrink-0 rounded border px-2 py-0.5 text-xs font-semibold {{ r.tone }}">{{ r.status_label }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+      </div>
+    </div>
+
+    {% else %}
+    <p class="text-gray-500 py-6 text-center border-2 border-dashed border-gray-100 rounded-lg">
+      No sessions have been marked yet. Your attendance builds up as your teachers mark the register.
+    </p>
+    {% endif %}
+
+    {% else %}
+    <p class="text-gray-500 py-6 text-center border-2 border-dashed border-gray-100 rounded-lg">
+      Your attendance record will appear here once your student profile is set up.
+    </p>
+    {% endif %}
+  </section>
   {% endif %}
+
+  <!-- Latest announcements, straight from the notice board -->
+  <section id="notices" class="scroll-mt-6 bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-bold text-gray-900">Latest Announcements</h2>
+      <a href="/notices" class="text-sm font-semibold text-indigo-600 hover:text-indigo-800">View all</a>
+    </div>
+    {% if feed.is_empty() %}
+    <p class="text-gray-500 py-6 text-center border-2 border-dashed border-gray-100 rounded-lg">
+      No announcements right now. New notices appear here as soon as they are published.
+    </p>
+    {% else %}
+    <ul class="divide-y divide-gray-100">
+      {% for n in feed %}
+      <li class="py-3">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-bold font-mono px-2 py-0.5 rounded bg-gray-100 text-gray-600 uppercase">{{ n.category }}</span>
+          {% if n.is_new %}<span class="text-xs font-bold text-emerald-600">NEW</span>{% endif %}
+        </div>
+        <a href="{{ n.href }}" class="mt-1 block font-medium text-gray-900 hover:text-indigo-600">{{ n.title }}</a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
 </div>
 {% endblock %}
