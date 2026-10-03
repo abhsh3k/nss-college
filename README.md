@@ -125,7 +125,9 @@ Keep the colours and fonts in `tailwind.config.js` and `styles.html` identical.
    - 4b-1 (done): admin tools for people, programmes/courses, enrollment and the timetable builder
    - 4b-2: publishing tools (notices, news, events, documents, pages, settings) for IT admin and office staff
    - 4c: teacher attendance
-   - 4d: student views
+   - 4d (done): student views — the Student Hub at `/hub` shows the announcements feed, today's
+     timeline, weekly timetable matrix, enrolled courses with live attendance percentages, and the
+     e-grants warning card when the monthly attendance drops below the configured threshold
 5. HTMX interactions and polling, ETag caching
 6. Security, performance, tests, deployment
 
@@ -133,7 +135,8 @@ Keep the colours and fonts in `tailwind.config.js` and `styles.html` identical.
 
 - Informational pages (about, IQAC, fees, ...) live in the `pages` and `page_sections` tables and are served by path, so a page added to the database works without a restart. Pages with no sections show a short "still preparing" message.
 - Queries use `sqlx::query_as` at runtime rather than the compile-time macros, so the project builds without a database.
-- The academic tables (students, attendance, marks, exams, timetable) exist but have no Rust models yet; they arrive with the Student Hub in Layer 4.
+- Students, the timetable and attendance now have models and queries in `services/hub.rs` (Student Hub).
+  The marks and exam tables still have no Rust models yet; they arrive with the Student Hub's exam views.
 - The header and footer still carry the college phone number as fixed text. Contact details on the home and contact pages come from `site_settings`.
 - Set `SITE_URL` in `.env` so `sitemap.xml` and `robots.txt` use your real domain.
 - Images on the home page currently hotlink the live site and move to `uploads/` when the content is migrated.
