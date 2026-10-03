@@ -3,7 +3,7 @@ use axum::extract::State;
 use tower_sessions::Session;
 
 use crate::{
-    auth::{OfficeOrAdmin, Role, StudentOnly, TeacherOnly},
+    auth::{OfficeOrAdmin, Role, StudentOnly},
     error::AppError,
     services::users::{self, Counts},
     shell::Shell,
@@ -27,18 +27,6 @@ pub async fn admin(
         shell: Shell::build(&user, &session).await?,
         is_admin: user.role == Role::Admin,
         counts: users::overview_counts(&s.db).await?,
-    })
-}
-
-#[derive(Template)]
-#[template(path = "dashboard/teacher.html")]
-pub struct TeacherTemplate {
-    shell: Shell,
-}
-
-pub async fn teacher(session: Session, TeacherOnly(user): TeacherOnly) -> Result<TeacherTemplate, AppError> {
-    Ok(TeacherTemplate {
-        shell: Shell::build(&user, &session).await?,
     })
 }
 

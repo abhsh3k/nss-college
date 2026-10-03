@@ -33,6 +33,7 @@ fn nav_for(role: Role) -> Vec<NavItem> {
             item("People", "/admin/people", false),
             item("Courses and programmes", "/admin/academics", false),
             item("Timetable", "/admin/timetable", false),
+            item("Substitutions", "/admin/substitutions", false),
             item("Attendance reports", "/admin/attendance", true),
             item("Notices", "/admin/notices", true),
             item("News", "/admin/news", true),
@@ -50,9 +51,9 @@ fn nav_for(role: Role) -> Vec<NavItem> {
         ],
         Role::Faculty => vec![
             item("Today", "/teacher", false),
-            item("My timetable", "/teacher/timetable", true),
-            item("Mark attendance", "/teacher/attendance", true),
-            item("Reports", "/teacher/reports", true),
+            item("My timetable", "/teacher/timetable", false),
+            item("Mark attendance", "/teacher/attendance", false),
+            item("Attendance reports", "/teacher/reports", false),
         ],
         Role::Student => vec![
             item("Overview", "/hub", false),

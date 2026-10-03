@@ -1,0 +1,12 @@
+{% extends "layouts/app.html" %}
+{% block title %}Mark attendance{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Mark attendance</h1>
+<p class="mt-3 max-w-2xl text-ink/80">Take attendance for today, or catch up and correct any period from the last {{ window_days }} days. After that, records are locked and the IT admin must help.</p>
+
+{% if groups.is_empty() %}
+<p class="mt-8 max-w-2xl text-lg">No classes found in this period.</p>
+{% else %}
+{% include "partials/period_groups.html" %}
+{% endif %}
+{% endblock %}

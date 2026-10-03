@@ -1,0 +1,37 @@
+{% extends "layouts/app.html" %}
+{% block title %}My timetable{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">My timetable</h1>
+
+{% if days.is_empty() %}
+<p class="mt-8 max-w-2xl text-lg leading-relaxed">No periods have been assigned to you yet. The IT admin builds the timetable under Timetable.</p>
+{% else %}
+{% for d in days %}
+<section class="mt-8" aria-labelledby="wd-{{ loop.index }}">
+  <h2 id="wd-{{ loop.index }}" class="font-display text-xl font-semibold">{{ d.name }}</h2>
+  <ul class="mt-3 divide-y divide-ink/10 border-y border-ink/10">
+    {% for s in d.slots %}
+    <li class="flex flex-wrap items-baseline justify-between gap-x-6 py-3">
+      <span class="font-medium">{{ s.start_at }}–{{ s.end_at }} &nbsp;{{ s.code }} {{ s.course }}</span>
+      <span class="text-sm text-ink/70">{{ s.programme }}, semester {{ s.semester }}{% if s.room != "" %} · Room {{ s.room }}{% endif %}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endfor %}
+{% endif %}
+
+{% if !covers.is_empty() %}
+<section class="mt-12" aria-labelledby="covers-heading">
+  <h2 id="covers-heading" class="font-display text-2xl font-semibold">Classes you are covering</h2>
+  <ul class="mt-3 divide-y divide-ink/10 border-y border-ink/10">
+    {% for c in covers %}
+    <li class="py-3">
+      <p class="font-medium">{{ c.day_label }}, {{ c.start_at }}–{{ c.end_at }} &nbsp;{{ c.course }}</p>
+      <p class="text-sm text-ink/70">{{ c.programme }}, semester {{ c.semester }}. Covering for {{ c.covering_for }}.</p>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endblock %}

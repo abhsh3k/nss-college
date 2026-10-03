@@ -1,0 +1,68 @@
+{% extends "layouts/app.html" %}
+{% block title %}Substitutions{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Substitute teachers</h1>
+<p class="mt-3 max-w-2xl text-ink/80">When a teacher is absent, choose the date and the teacher, then assign someone to each of their periods. The substitute can take attendance for that period; the absent teacher no longer sees it. Dates up to {{ window_days }} days back can be set.</p>
+
+<form method="get" action="/admin/substitutions" class="mt-6 flex flex-wrap items-end gap-4">
+  <div>
+    <label for="date" class="block font-semibold">Date</label>
+    <input id="date" name="date" type="date" value="{{ date }}" required class="mt-1 rounded border border-ink/40 bg-white px-3 py-2">
+  </div>
+  <div>
+    <label for="teacher" class="block font-semibold">Absent teacher</label>
+    <select id="teacher" name="teacher" required class="mt-1 rounded border border-ink/40 bg-white px-3 py-2">
+      <option value="">Choose a teacher</option>
+      {% for t in teachers %}<option value="{{ t.id }}" {% if t.id == teacher_id %}selected{% endif %}>{{ t.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Show their periods</button>
+</form>
+
+{% if teacher_id != 0 %}
+<h2 class="mt-10 font-display text-2xl font-semibold">Periods on {{ date }}</h2>
+{% if candidates.is_empty() %}
+<p class="mt-3 max-w-2xl text-lg">This teacher has no periods on that day.</p>
+{% else %}
+<ul class="mt-4 divide-y divide-ink/10 border-y border-ink/10">
+  {% for c in candidates %}
+  <li class="py-4">
+    <p class="font-medium">{{ c.start_at }}–{{ c.end_at }} &nbsp;{{ c.course }}</p>
+    <p class="text-sm text-ink/70">{{ c.programme }}, semester {{ c.semester }}</p>
+
+    {% if c.substitution_id != 0 %}
+    <div class="mt-3 flex flex-wrap items-center gap-4">
+      <p class="font-semibold">Covered by {{ c.substitute }}</p>
+      <form method="post" action="/admin/substitutions/{{ c.substitution_id }}/remove">
+        <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+        <input type="hidden" name="date" value="{{ date }}">
+        <input type="hidden" name="teacher" value="{{ teacher_id }}">
+        <button type="submit" class="text-sm font-semibold text-brand underline underline-offset-4 hover:text-ink">Remove substitution<span class="sr-only"> for {{ c.course }}</span></button>
+      </form>
+    </div>
+    {% else %}
+    <form method="post" action="/admin/substitutions" class="mt-3 flex flex-wrap items-end gap-3">
+      <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+      <input type="hidden" name="date" value="{{ date }}">
+      <input type="hidden" name="teacher" value="{{ teacher_id }}">
+      <input type="hidden" name="entry_id" value="{{ c.entry_id }}">
+      <div>
+        <label for="sub-{{ c.entry_id }}" class="block text-sm font-semibold">Substitute</label>
+        <select id="sub-{{ c.entry_id }}" name="substitute_id" required class="mt-1 rounded border border-ink/40 bg-white px-3 py-2">
+          <option value="">Choose a teacher</option>
+          {% for t in teachers %}{% if t.id != teacher_id %}<option value="{{ t.id }}">{{ t.name }}</option>{% endif %}{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="reason-{{ c.entry_id }}" class="block text-sm font-semibold">Reason <span class="font-normal text-ink/70">(optional)</span></label>
+        <input id="reason-{{ c.entry_id }}" name="reason" type="text" class="mt-1 rounded border border-ink/40 bg-white px-3 py-2">
+      </div>
+      <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Assign substitute</button>
+    </form>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endif %}
+{% endblock %}

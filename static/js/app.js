@@ -18,13 +18,15 @@
 
   // Dashboard sidebar: highlight the current page, and move focus to the content after an HTMX swap.
   function markActive() {
+    var path = window.location.pathname;
+    var best = null;
     document.querySelectorAll("a[data-nav]").forEach(function (a) {
-      if (a.getAttribute("href") === window.location.pathname) {
-        a.setAttribute("aria-current", "page");
-      } else {
-        a.removeAttribute("aria-current");
-      }
+      a.removeAttribute("aria-current");
+      var href = a.getAttribute("href");
+      var match = path === href || path.indexOf(href + "/") === 0;
+      if (match && (!best || href.length > best.getAttribute("href").length)) best = a;
     });
+    if (best) best.setAttribute("aria-current", "page");
   }
   markActive();
   document.body.addEventListener("htmx:pushedIntoHistory", markActive);
@@ -32,5 +34,15 @@
   document.body.addEventListener("htmx:afterSettle", function (e) {
     var main = document.getElementById("app-main");
     if (main && e.detail && e.detail.target && e.detail.target.id === "app-main") main.focus();
+  });
+
+  // Attendance register: "Mark everyone present/absent".
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-mark-all]");
+    if (!btn) return;
+    var value = btn.getAttribute("data-mark-all");
+    document.querySelectorAll('input[type="radio"][name^="status_"]').forEach(function (r) {
+      if (r.value === value) r.checked = true;
+    });
   });
 })();

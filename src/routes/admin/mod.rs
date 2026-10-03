@@ -2,6 +2,7 @@
 
 mod academics;
 mod people;
+mod substitutions;
 mod timetable;
 
 use axum::{
@@ -31,6 +32,9 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/timetable", get(timetable::page))
         .route("/admin/timetable/slots", post(timetable::add_slot))
         .route("/admin/timetable/slots/:id/delete", post(timetable::delete_slot))
+        // Substitute teachers
+        .route("/admin/substitutions", get(substitutions::page).post(substitutions::set))
+        .route("/admin/substitutions/:id/remove", post(substitutions::remove))
 }
 
 // ---------- small form helpers shared by the admin handlers ----------

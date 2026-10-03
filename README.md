@@ -40,6 +40,20 @@ After pulling this update, rebuild the CSS (new classes were added) and restart:
     powershell -ExecutionPolicy Bypass -File .\build-css.ps1
     cargo run
 
+## Teacher tools and attendance (Phase 4c)
+
+- **Today** and **Mark attendance**: a teacher sees their periods (and any they are covering), taps one, and marks each
+  student present, absent or on leave. Saving happens in place, without reloading. Periods can be taken or corrected up to
+  5 days after the class date (setting `attendance_edit_window_days`).
+- **My timetable** and **Attendance reports**: weekly timetable, classes being covered, and a per-course table with each
+  student's percentage. Below 75% is flagged; e-grants students are also checked for the current month.
+- **Substitutions** (IT admin): choose a date and an absent teacher, assign a substitute for each period. Only the substitute
+  can then take that period's attendance. Overlaps with the substitute's own classes are refused.
+- A teacher account needs a teacher profile. Create teachers under People (not with the command line) so the profile exists.
+- "Today" always means the college's local date (India time), not the server's UTC date.
+- Whether **leave** counts as present is the setting `attendance_leave_counts_as_present` (default false). Change it in the
+  `site_settings` table until the settings screen exists.
+
 ## Sign in and accounts (Phase 4a)
 
 Create the first IT administrator (you will be asked for a password at a hidden prompt):
@@ -124,7 +138,7 @@ Keep the colours and fonts in `tailwind.config.js` and `styles.html` identical.
    - 4a (done): sign-in, sessions, CSRF, roles, dashboard shells, `create-user` command
    - 4b-1 (done): admin tools for people, programmes/courses, enrollment and the timetable builder
    - 4b-2: publishing tools (notices, news, events, documents, pages, settings) for IT admin and office staff
-   - 4c: teacher attendance
+   - 4c (done): teacher dashboard, per-period attendance, substitutions, attendance reports
    - 4d: student views
 5. HTMX interactions and polling, ETag caching
 6. Security, performance, tests, deployment

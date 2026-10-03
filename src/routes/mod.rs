@@ -3,6 +3,7 @@ mod auth;
 mod dashboards;
 mod htmx;
 mod public;
+mod teacher;
 
 use axum::{
     http::{header, HeaderValue},
@@ -23,7 +24,14 @@ pub fn router() -> Router<AppState> {
             get(auth::password_form).post(auth::password_submit),
         )
         .route("/admin", get(dashboards::admin))
-        .route("/teacher", get(dashboards::teacher))
+        .route("/teacher", get(teacher::today))
+        .route("/teacher/attendance", get(teacher::attendance_list))
+        .route(
+            "/teacher/attendance/:entry_id/:date",
+            get(teacher::mark_form).post(teacher::mark_save),
+        )
+        .route("/teacher/timetable", get(teacher::timetable))
+        .route("/teacher/reports", get(teacher::reports))
         .route("/hub", get(dashboards::student))
         .merge(admin::routes())
         .layer(SetResponseHeaderLayer::overriding(
