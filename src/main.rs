@@ -65,6 +65,23 @@ async fn main() {
     }
     tracing::info!("database ready");
 
+    // Seed the demo accounts from inside the deployment. The only other way in
+    // is `railway ssh`, which needs a key registered against the account, so
+    // this is driven by an environment variable that is unset once done.
+    if std::env::var("SEED_DEMO_USERS")
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+    {
+        match cli::seed_demo_users(&db).await {
+            Ok(lines) => {
+                for line in lines {
+                    tracing::warn!("{line}");
+                }
+            }
+            Err(msg) => tracing::error!("SEED: demo user seeding failed: {msg}"),
+        }
+    }
+
     // Command-line helpers (e.g. creating the first admin) run instead of the server.
     let cli_args: Vec<String> = std::env::args().skip(1).collect();
     if cli::run(&cli_args, &db).await {

@@ -25,9 +25,16 @@ pub async fn run(args: &[String], db: &PgPool) -> bool {
             true
         }
         Some("seed-demo-users") => {
-            if let Err(msg) = seed_demo_users(db).await {
-                eprintln!("error: {msg}");
-                std::process::exit(1);
+            match seed_demo_users(db).await {
+                Ok(lines) => {
+                    for line in &lines {
+                        println!("{line}");
+                    }
+                }
+                Err(msg) => {
+                    eprintln!("error: {msg}");
+                    std::process::exit(1);
+                }
             }
             true
         }
@@ -99,12 +106,16 @@ fn random_admission_no() -> String {
     format!("2026{n:06}")
 }
 
-/// Create a ready-to-use set of demo accounts and print their credentials.
+/// Create a ready-to-use set of demo accounts and return a report of their
+/// credentials.
 ///
 /// Skips anything that already exists, so it is safe to run twice. Passwords
 /// are generated rather than prompted for, which is what lets this run from a
 /// script or a container without a TTY.
-async fn seed_demo_users(db: &PgPool) -> Result<(), String> {
+///
+/// The report is returned rather than printed so the startup path can log it
+/// where the deploy operator can see it.
+pub async fn seed_demo_users(db: &PgPool) -> Result<Vec<String>, String> {
     let mut out: Vec<Seeded> = Vec::new();
 
     async fn hash_for(plain: &str) -> Result<String, String> {
@@ -241,16 +252,23 @@ async fn seed_demo_users(db: &PgPool) -> Result<(), String> {
     }
 
     if out.is_empty() {
-        println!("Everything already exists; nothing was created.");
-        return Ok(());
+        return Ok(vec!["seed: everything already exists; nothing was created".into()]);
     }
 
-    println!("\nDemo accounts created. Sign in at /login with these:\n");
-    println!("{:<9} {:<24} {:<26} {}", "ROLE", "NAME", "LOGIN", "PASSWORD");
-    println!("{}", "-".repeat(92));
+    let mut lines = Vec::new();
+    lines.push("SEED: demo accounts created. Sign in at /login with these:".to_string());
+    lines.push(format!("{:<9} {:<22} {:<26} {}", "ROLE", "NAME", "LOGIN", "PASSWORD"));
+    lines.push("-".repeat(88));
     for s in &out {
-        println!("{:<9} {:<24} {:<26} {}", s.role, s.name, s.login, s.password);
+        lines.push(format!("{:<9} {:<22} {:<26} {}", s.role, s.name, s.login, s.password));
     }
-    println!("\nStudent admission numbers: {}\n", out.iter().filter_map(|s| s.admission_no.as_ref()).cloned().collect::<Vec<_>>().join(", "));
-    Ok(())
+    lines.push(format!(
+        "SEED: student admission numbers: {}",
+        out.iter()
+            .filter_map(|s| s.admission_no.as_ref())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    Ok(lines)
 }
