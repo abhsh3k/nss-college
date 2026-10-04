@@ -2,13 +2,20 @@
 {% block title %}Import students{% endblock %}
 {% block content %}
 <h1 class="font-display text-3xl font-semibold md:text-4xl">Import students</h1>
-<p class="mt-3 max-w-2xl text-ink/80">Paste a class list to create many accounts at once. Everyone in one import joins the same programme, semester and admission year. Each student gets a temporary password on the next screen.</p>
+<p class="mt-3 max-w-2xl text-ink/80">Upload a class list and the system reads it into a table you can check and correct. Nothing is saved until you press <strong>Create accounts</strong>, and each student then gets a temporary password shown once on the next screen.</p>
+
+{% if let Some(pending) = pending %}
+<p class="mt-6 max-w-2xl border-l-4 border-accent bg-mist px-4 py-3 font-medium">
+  A list is already waiting to be reviewed.
+  <a href="/admin/people/import/review" class="underline">Go to the review table</a>, or upload a different file to replace it.
+</p>
+{% endif %}
 
 {% if let Some(msg) = error %}
 <p role="alert" class="mt-6 max-w-2xl border-l-4 border-brand bg-mist px-4 py-3 font-medium">{{ msg }}</p>
 {% endif %}
 
-<form method="post" action="/admin/people/import" class="mt-8 max-w-2xl space-y-5">
+<form method="post" action="/admin/people/import/upload" enctype="multipart/form-data" class="mt-8 max-w-2xl space-y-5">
   <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
   <div>
     <label for="programme_id" class="block font-semibold">Programme</label>
@@ -23,33 +30,30 @@
     <div>
       <label for="semester" class="block font-semibold">Current semester</label>
       <select id="semester" name="semester" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
-        <option value="1" {% if semester == "1" %}selected{% endif %}>Semester 1</option>
-        <option value="2" {% if semester == "2" %}selected{% endif %}>Semester 2</option>
-        <option value="3" {% if semester == "3" %}selected{% endif %}>Semester 3</option>
-        <option value="4" {% if semester == "4" %}selected{% endif %}>Semester 4</option>
-        <option value="5" {% if semester == "5" %}selected{% endif %}>Semester 5</option>
-        <option value="6" {% if semester == "6" %}selected{% endif %}>Semester 6</option>
-        <option value="7" {% if semester == "7" %}selected{% endif %}>Semester 7</option>
-        <option value="8" {% if semester == "8" %}selected{% endif %}>Semester 8</option>
+        {% for n in 1..=12 %}
+        <option value="{{ n }}" {% if n.to_string() == semester %}selected{% endif %}>Semester {{ n }}</option>
+        {% endfor %}
       </select>
     </div>
     <div>
       <label for="batch_year" class="block font-semibold">Admission year</label>
-      <input id="batch_year" name="batch_year" type="number" min="2000" max="2100" value="{{ batch_year }}" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+      <input id="batch_year" name="batch_year" type="number" min="2000" max="2100" value="{{ batch_year }}" placeholder="2025" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
     </div>
   </div>
   <div>
-    <label for="csv_text" class="block font-semibold">Student list</label>
-    <textarea id="csv_text" name="csv_text" rows="10" required spellcheck="false" aria-describedby="csv-help" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2 font-mono text-sm">{{ csv_text }}</textarea>
-    <div id="csv-help" class="mt-2 text-sm text-ink/80">
-      <p>First line is the header. Required columns: <code>admission_no</code> and <code>name</code>. Optional: <code>email</code>, <code>phone</code>, <code>egrants</code> (yes or no). You can copy rows straight from Excel.</p>
+    <label for="list" class="block font-semibold">Class list</label>
+    <input id="list" name="list" type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls,.ods" required aria-describedby="list-help" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    <div id="list-help" class="mt-2 text-sm text-ink/80">
+      <p>CSV, or Excel saved as .xlsx or .xls. Up to 8&nbsp;MB and 500 students at a time. The first line is the header; the first sheet of a workbook is read.</p>
+      <p class="mt-2">Required columns: <code>admission_no</code> and <code>name</code>. Optional: <code>email</code>, <code>phone</code>, <code>egrants</code>, <code>programme</code>, <code>semester</code>, <code>batch_year</code>. Column names are matched loosely, so <code>Admission No.</code> works too.</p>
+      <p class="mt-2">Leave <code>programme</code>, <code>semester</code> and <code>batch_year</code> out of the file to put the whole list in the class chosen above. Any row that does carry them is placed in its own class instead, so one file can mix years and programmes.</p>
       <pre class="mt-2 overflow-x-auto rounded bg-mist p-3">admission_no,name,email,phone,egrants
 2501,Asha K,,9876500000,no
 2502,Rahul M,rahul@example.com,,yes</pre>
     </div>
   </div>
   <div class="flex flex-wrap gap-3">
-    <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Create accounts</button>
+    <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Read the list</button>
     <a href="/admin/people" class="rounded border border-ink px-4 py-2 font-semibold hover:bg-ink hover:text-chalk">Cancel</a>
   </div>
 </form>

@@ -65,9 +65,15 @@ pub struct IncomingFile {
 }
 
 /// One parsed multipart body: plain fields plus any file parts, keyed by field name.
+///
+/// `fields` keeps the first value under each name, which is all a normal form
+/// needs. A table of repeated inputs (one per row) cannot be read that way, so
+/// `values` holds every value in order; a urlencoded body cannot carry those at
+/// all, which is why such a form has to post as multipart.
 #[derive(Default)]
 pub struct ParsedForm {
     pub fields: HashMap<String, String>,
+    pub values: HashMap<String, Vec<String>>,
     pub files: HashMap<String, IncomingFile>,
 }
 
@@ -79,6 +85,11 @@ impl ParsedForm {
             .map(String::as_str)
             .unwrap_or("")
             .trim()
+    }
+
+    /// Every value submitted under `name`, in the order the rows appeared.
+    pub fn repeated(&self, name: &str) -> &[String] {
+        self.values.get(name).map(Vec::as_slice).unwrap_or(&[])
     }
 
     pub fn file(&self, name: &str) -> Option<&IncomingFile> {
@@ -113,7 +124,8 @@ pub async fn read(mut multipart: Multipart) -> Result<ParsedForm, AppError> {
             if total > MAX_BODY_BYTES {
                 return Err(AppError::BadRequest("That form is too large.".into()));
             }
-            form.fields.insert(name, text);
+            form.values.entry(name.clone()).or_default().push(text.clone());
+            form.fields.entry(name).or_insert(text);
             continue;
         };
 

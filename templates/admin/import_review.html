@@ -1,0 +1,107 @@
+{% extends "layouts/app.html" %}
+{% block title %}Review student import{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Review the import</h1>
+<p class="mt-3 max-w-2xl text-ink/80">
+  Read <strong>{{ rows.len() }}</strong> row{% if rows.len() != 1 %}s{% endif %} from <strong>{{ batch.source_name }}</strong>.
+  Anything left empty above the table falls back to {{ batch.programme_name }}, semester {{ batch.semester }}, admission year {{ batch.batch_year }}.
+  Edit anything that is wrong, untick what you do not want, then create the accounts.
+</p>
+
+{% if let Some(msg) = error %}
+<p role="alert" class="mt-6 max-w-2xl border-l-4 border-brand bg-mist px-4 py-3 font-medium">{{ msg }}</p>
+{% endif %}
+
+<ul class="mt-6 flex flex-wrap gap-4 text-sm">
+  <li><strong>{{ ready }}</strong> ready to create</li>
+  <li><strong>{{ faulty }}</strong> needing a fix</li>
+  <li><strong>{{ created }}</strong> already created</li>
+</ul>
+
+<form method="post" action="/admin/people/import/review" enctype="multipart/form-data" id="import-review" class="mt-6">
+  <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+  <input type="hidden" name="batch_id" value="{{ batch.id }}">
+
+  <div class="flex flex-wrap items-center gap-3">
+    <button type="submit" name="intent" value="save" class="rounded border border-ink px-4 py-2 font-semibold hover:bg-ink hover:text-chalk">Save changes</button>
+    <button type="submit" name="intent" value="all" class="rounded border border-ink/40 px-3 py-2 text-sm font-medium hover:bg-ink hover:text-chalk">Tick all</button>
+    <button type="submit" name="intent" value="valid" class="rounded border border-ink/40 px-3 py-2 text-sm font-medium hover:bg-ink hover:text-chalk">Tick all without problems</button>
+    <button type="submit" name="intent" value="none" class="rounded border border-ink/40 px-3 py-2 text-sm font-medium hover:bg-ink hover:text-chalk">Untick all</button>
+    <button type="submit" name="intent" value="add" class="rounded border border-ink/40 px-3 py-2 text-sm font-medium hover:bg-ink hover:text-chalk">Add a blank row</button>
+    <button type="submit" name="intent" value="discard" class="ml-auto rounded border border-brand px-3 py-2 text-sm font-semibold text-brand hover:bg-brand hover:text-chalk">Discard this import</button>
+  </div>
+
+  <div class="mt-4 overflow-x-auto">
+    <table class="w-full min-w-[68rem] text-left text-sm">
+      <caption class="sr-only">Students read from the uploaded file. Edit any cell, tick the rows to create, then save.</caption>
+      <thead>
+        <tr class="border-b-2 border-ink/20 text-ink/70">
+          <th scope="col" class="py-2 pr-2 font-medium">Save</th>
+          <th scope="col" class="py-2 pr-3 font-medium">Line</th>
+          <th scope="col" class="py-2 pr-3 font-medium">Admission no.</th>
+          <th scope="col" class="py-2 pr-3 font-medium">Name</th>
+          <th scope="col" class="py-2 pr-3 font-medium">Email (optional)</th>
+          <th scope="col" class="py-2 pr-3 font-medium">Phone</th>
+          <th scope="col" class="py-2 pr-3 font-medium">Programme</th>
+          <th scope="col" class="py-2 pr-3 font-medium">Sem</th>
+          <th scope="col" class="py-2 pr-3 font-medium">Year</th>
+          <th scope="col" class="py-2 pr-3 font-medium">Egrants</th>
+          <th scope="col" class="py-2 pr-3 font-medium">Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr class="border-b border-ink/10 align-top {% if !r.include %}opacity-50{% endif %}">
+          {% if r.is_created() %}
+          <td class="py-2 pr-2"><span class="rounded bg-mist px-2 py-1 text-xs font-semibold">Created</span></td>
+          <td class="py-2 pr-3 tabular-nums text-ink/60">{{ r.line_no }}</td>
+          <td class="py-2 pr-3"><input type="hidden" name="row_id" value="{{ r.id }}"><input type="hidden" name="admission_no" value="{{ r.admission_no }}"><span class="font-mono">{{ r.admission_no }}</span></td>
+          <td class="py-2 pr-3"><input type="hidden" name="name" value="{{ r.name }}">{{ r.name }}</td>
+          <td class="py-2 pr-3"><input type="hidden" name="email" value="{{ r.email }}">{{ r.email }}</td>
+          <td class="py-2 pr-3"><input type="hidden" name="phone" value="{{ r.phone }}">{{ r.phone }}</td>
+          <td class="py-2 pr-3"><input type="hidden" name="programme_text" value="{{ r.programme_text }}">{{ r.programme_name() }}</td>
+          <td class="py-2 pr-3"><input type="hidden" name="semester_text" value="{{ r.semester_text }}">{{ r.semester().unwrap_or(0) }}</td>
+          <td class="py-2 pr-3"><input type="hidden" name="year_text" value="{{ r.year_text }}">{{ r.year().unwrap_or(0) }}</td>
+          <td class="py-2 pr-3">{% if r.egrants %}<input type="hidden" name="egrants" value="{{ r.id }}">Yes{% else %}No{% endif %}</td>
+          <td class="py-2 pr-3 text-ink/80">Account created; the password is on the results screen.</td>
+          {% else %}
+          <td class="py-2 pr-2"><input type="checkbox" name="include" value="{{ r.id }}" {% if r.include %}checked{% endif %} aria-label="Create this student"></td>
+          <td class="py-2 pr-3 tabular-nums text-ink/60">{{ r.line_no }}</td>
+          <td class="py-2 pr-3">
+            <input type="hidden" name="row_id" value="{{ r.id }}">
+            <input type="text" name="admission_no" value="{{ r.admission_no }}" aria-label="Admission number for line {{ r.line_no }}" class="w-28 rounded border border-ink/40 bg-white px-2 py-1 font-mono">
+          </td>
+          <td class="py-2 pr-3"><input type="text" name="name" value="{{ r.name }}" aria-label="Name for line {{ r.line_no }}" class="w-44 rounded border border-ink/40 bg-white px-2 py-1"></td>
+          <td class="py-2 pr-3"><input type="text" name="email" value="{{ r.email }}" aria-label="Email for line {{ r.line_no }}" class="w-52 rounded border border-ink/40 bg-white px-2 py-1"></td>
+          <td class="py-2 pr-3"><input type="text" name="phone" value="{{ r.phone }}" aria-label="Phone for line {{ r.line_no }}" class="w-32 rounded border border-ink/40 bg-white px-2 py-1"></td>
+          <td class="py-2 pr-3">
+            <input type="text" name="programme_text" value="{{ r.programme_text }}" list="programme-names" placeholder="{{ batch.programme_name }}" aria-label="Programme for line {{ r.line_no }}" class="w-44 rounded border border-ink/40 bg-white px-2 py-1">
+          </td>
+          <td class="py-2 pr-3"><input type="text" name="semester_text" value="{{ r.semester_text }}" placeholder="{{ batch.semester }}" aria-label="Semester for line {{ r.line_no }}" class="w-16 rounded border border-ink/40 bg-white px-2 py-1"></td>
+          <td class="py-2 pr-3"><input type="text" name="year_text" value="{{ r.year_text }}" placeholder="{{ batch.batch_year }}" aria-label="Admission year for line {{ r.line_no }}" class="w-20 rounded border border-ink/40 bg-white px-2 py-1"></td>
+          <td class="py-2 pr-3"><input type="checkbox" name="egrants" value="{{ r.id }}" {% if r.egrants %}checked{% endif %} aria-label="Egrants for line {{ r.line_no }}"></td>
+          <td class="py-2 pr-3 text-ink/80">
+            {% if r.note != "" %}<p class="text-brand">{{ r.note }}</p>{% endif %}
+            {% for problem in r.problems() %}<p class="text-brand">{{ problem }}</p>{% endfor %}
+            <label class="flex items-center gap-1 text-xs"><input type="checkbox" name="remove" value="{{ r.id }}" class="h-3 w-3"> remove this row</label>
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</form>
+
+<datalist id="programme-names">
+  {% for name in programme_names %}<option value="{{ name }}"></option>{% endfor %}
+</datalist>
+
+<div class="mt-8 flex flex-wrap items-center gap-4 border-t border-ink/20 pt-6">
+  {# Lives outside the table for space, but submits the whole review form. #}
+  <button type="submit" form="import-review" name="intent" value="commit" {% if ready == 0 %}disabled{% endif %} class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink disabled:cursor-not-allowed disabled:opacity-40">
+    Create {{ ready }} account{% if ready != 1 %}s{% endif %}
+  </button>
+  <p class="max-w-xl text-sm text-ink/80">Creating a student also creates their sign-in, enrols them in that semester's courses and gives them a temporary password. Each one must set their own password at first sign-in. Rows with problems are not created, and anything unticked is left alone.</p>
+</div>
+{% endblock %}

@@ -25,10 +25,19 @@ pub fn routes() -> Router<AppState> {
         // People
         .route("/admin/people", get(people::list).post(people::create))
         .route("/admin/people/new", get(people::new_form))
-        .route("/admin/people/import", get(people::import_form).post(people::import_submit))
         .route("/admin/people/:id", get(people::edit_form).post(people::update))
         .route("/admin/people/:id/reset-password", post(people::reset_password))
         .route("/admin/people/:id/active", post(people::set_active));
+
+    // The import takes a whole class list, so it needs the same body limit as
+    // the publishing forms.
+    let imports = Router::new()
+        .route("/admin/people/import", get(people::import_form))
+        .route("/admin/people/import/upload", post(people::import_upload))
+        .route("/admin/people/import/review", get(people::import_review).post(people::import_review_submit))
+        .route("/admin/people/import/credentials.csv", get(people::import_credentials_csv))
+        .route("/admin/people/import/finished", post(people::import_finished))
+        .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
 
     let academics_and_timetable = Router::new()
         // Programmes and courses
@@ -68,6 +77,7 @@ pub fn routes() -> Router<AppState> {
 
     Router::new()
         .merge(people)
+        .merge(imports)
         .merge(academics_and_timetable)
         .merge(publishing)
 }
