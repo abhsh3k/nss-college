@@ -1,0 +1,18 @@
+# Line endings must not change between a Windows checkout and a Linux deploy.
+# sqlx stores a SHA-384 of each migration file in _sqlx_migrations, so a CRLF
+# working copy (Git's default on Windows) makes the deployed checksum differ
+# from the recorded one and every startup fails with "migration N was
+# previously applied but has been modified". Pin LF everywhere.
+* text=auto eol=lf
+
+*.sql text eol=lf
+*.toml text eol=lf
+*.rs text eol=lf
+*.html text eol=lf
+*.js text eol=lf
+*.sh text eol=lf
+
+*.exe binary
+*.png binary
+*.jpg binary
+*.webp binary
