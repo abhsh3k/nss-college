@@ -44,10 +44,23 @@ async fn main() {
         .await
         .expect("could not connect to PostgreSQL. Is it running? Try: docker compose up -d");
 
-    sqlx::migrate!("./migrations")
-        .run(&db)
+    if let Err(e) = sqlx::migrate!("./migrations").run(&db).await {
+        // A version mismatch is invisible without knowing what the database
+        // already has, so print the applied set before giving up.
+        tracing::error!("database migrations failed: {e}");
+        let applied: Vec<(i64, String, bool, Option<String>)> = sqlx::query_as(
+            "SELECT version, description, success, encode(checksum, 'hex')
+               FROM _sqlx_migrations ORDER BY version",
+        )
+        .fetch_all(&db)
         .await
-        .expect("database migrations failed");
+        .unwrap_or_default();
+        tracing::error!("database already has {} applied migration(s):", applied.len());
+        for (version, description, success, checksum) in &applied {
+            tracing::error!("  v{version} {description} success={success} checksum={checksum:?}");
+        }
+        panic!("database migrations failed: {e}");
+    }
     tracing::info!("database ready");
 
     // Command-line helpers (e.g. creating the first admin) run instead of the server.
