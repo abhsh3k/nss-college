@@ -124,17 +124,31 @@ pub async fn seed_demo_users(db: &PgPool) -> Result<Vec<String>, String> {
             .map_err(|_| "could not hash password".to_string())
     }
 
+    /// The id of an account with this email, if it already exists.
+    async fn existing_id(db: &PgPool, email: &str) -> Result<Option<i64>, String> {
+        Ok(users::find_for_login(db, email)
+            .await
+            .map_err(|e| e.to_string())?
+            .map(|u| u.id))
+    }
+
+    /// Give an account the generated password whether or not it already exists,
+    /// so the printed credentials are always the ones that will work.
+
     // ---- IT administrator (must_change_password = false, like create-user) ----
     for (email, name) in [("admin@college.local", "Site Administrator")] {
-        if users::find_for_login(db, email).await.map_err(|e| e.to_string())?.is_some() {
-            continue;
-        }
         let plain = password::temporary();
         let hash = hash_for(&plain).await?;
-        let id = users::create(db, email, name, "admin", &hash, false)
-            .await
-            .map_err(|e| e.to_string())?;
-        let _ = users::audit(db, None, "user_created_seed", "user", Some(id)).await;
+        if let Some(id) = existing_id(db, email).await? {
+            users::set_password(db, id, &hash)
+                .await
+                .map_err(|e| e.to_string())?;
+        } else {
+            let id = users::create(db, email, name, "admin", &hash, false)
+                .await
+                .map_err(|e| e.to_string())?;
+            let _ = users::audit(db, None, "user_created_seed", "user", Some(id)).await;
+        }
         out.push(Seeded {
             role: "admin",
             name: name.to_string(),
@@ -146,14 +160,17 @@ pub async fn seed_demo_users(db: &PgPool) -> Result<Vec<String>, String> {
 
     // ---- Office staff ----
     for (email, name) in [("office@college.local", "Office Staff")] {
-        if users::find_for_login(db, email).await.map_err(|e| e.to_string())?.is_some() {
-            continue;
-        }
         let plain = password::temporary();
         let hash = hash_for(&plain).await?;
-        let id = people::create_staff(db, name, email, &hash)
-            .await
-            .map_err(|e| e.to_string())?;
+        if let Some(id) = existing_id(db, email).await? {
+            users::set_password(db, id, &hash)
+                .await
+                .map_err(|e| e.to_string())?;
+        } else {
+            people::create_staff(db, name, email, &hash)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
         out.push(Seeded {
             role: "staff",
             name: name.to_string(),
@@ -161,7 +178,6 @@ pub async fn seed_demo_users(db: &PgPool) -> Result<Vec<String>, String> {
             password: plain,
             admission_no: None,
         });
-        let _ = id;
     }
 
     // ---- Teachers: the first is the head of their department ----
@@ -179,26 +195,37 @@ pub async fn seed_demo_users(db: &PgPool) -> Result<Vec<String>, String> {
     .into_iter()
     .enumerate()
     {
-        if users::find_for_login(db, email).await.map_err(|e| e.to_string())?.is_some() {
-            continue;
-        }
         let plain = password::temporary();
         let hash = hash_for(&plain).await?;
-        people::create_teacher(
-            db,
-            &people::NewTeacher {
-                name,
-                email,
-                department_id: department_id.unwrap_or(0),
-                designation: if index == 0 { "Head of Department" } else { "Lecturer" },
-                qualification: "M.Sc.",
-                is_hod: index == 0,
-                can_manage: false,
-            },
-            &hash,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+        if let Some(id) = existing_id(db, email).await? {
+            users::set_password(db, id, &hash)
+                .await
+                .map_err(|e| e.to_string())?;
+            // Keep the head-of-department flag in step with the seeder.
+            sqlx::query("UPDATE faculty SET is_hod = $2, department_id = NULLIF($3, 0) WHERE user_id = $1")
+                .bind(id)
+                .bind(index == 0)
+                .bind(department_id.unwrap_or(0))
+                .execute(db)
+                .await
+                .map_err(|e| e.to_string())?;
+        } else {
+            people::create_teacher(
+                db,
+                &people::NewTeacher {
+                    name,
+                    email,
+                    department_id: department_id.unwrap_or(0),
+                    designation: if index == 0 { "Head of Department" } else { "Lecturer" },
+                    qualification: "M.Sc.",
+                    is_hod: index == 0,
+                    can_manage: false,
+                },
+                &hash,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        }
         out.push(Seeded {
             role: "faculty",
             name: name.to_string(),
@@ -217,30 +244,46 @@ pub async fn seed_demo_users(db: &PgPool) -> Result<Vec<String>, String> {
     .map_err(|_| "no published programme to enrol students in".to_string())?;
 
     for n in 1..=5 {
-        let admission_no = random_admission_no();
         let email = format!("student{n}@college.local");
-        if users::find_for_login(db, &email).await.map_err(|e| e.to_string())?.is_some() {
-            continue;
-        }
         let name = format!("Student {n}");
         let plain = password::temporary();
         let hash = hash_for(&plain).await?;
-        people::create_student(
-            db,
-            &people::NewStudent {
-                admission_no: &admission_no,
-                name: &name,
-                email: &email,
-                programme_id,
-                batch_year: 2024,
-                semester: 3,
-                phone: "",
-                egrants: n % 2 == 0,
-            },
-            &hash,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+
+        let admission_no = match existing_id(db, &email).await? {
+            Some(id) => {
+                users::set_password(db, id, &hash)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                // Students sign in with the admission number already on file,
+                // so report that rather than a freshly generated one.
+                sqlx::query_scalar("SELECT admission_no FROM students WHERE user_id = $1")
+                    .bind(id)
+                    .fetch_one(db)
+                    .await
+                    .map_err(|e| e.to_string())?
+            }
+            None => {
+                let adm = random_admission_no();
+                people::create_student(
+                    db,
+                    &people::NewStudent {
+                        admission_no: &adm,
+                        name: &name,
+                        email: &email,
+                        programme_id,
+                        batch_year: 2024,
+                        semester: 3,
+                        phone: "",
+                        egrants: n % 2 == 0,
+                    },
+                    &hash,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+                adm
+            }
+        };
+
         out.push(Seeded {
             role: "student",
             name,
@@ -251,12 +294,8 @@ pub async fn seed_demo_users(db: &PgPool) -> Result<Vec<String>, String> {
         });
     }
 
-    if out.is_empty() {
-        return Ok(vec!["seed: everything already exists; nothing was created".into()]);
-    }
-
     let mut lines = Vec::new();
-    lines.push("SEED: demo accounts created. Sign in at /login with these:".to_string());
+    lines.push("SEED: demo accounts ready. Sign in at /login with these:".to_string());
     lines.push(format!("{:<9} {:<22} {:<26} {}", "ROLE", "NAME", "LOGIN", "PASSWORD"));
     lines.push("-".repeat(88));
     for s in &out {
