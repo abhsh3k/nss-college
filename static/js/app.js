@@ -2,12 +2,80 @@
 (function () {
   var btn = document.getElementById("menu-toggle");
   var nav = document.getElementById("primary-nav");
-  if (btn && nav) {
+  var wide = window.matchMedia("(min-width: 768px)");
+
+  if (btn && nav && nav.hasAttribute("data-nav-drawer")) {
+    // Public navbar: below md the links live in an off-canvas sidebar, at md and
+    // up they are the ordinary bar (all of that styling is in app.css).
+    var backdrop = document.getElementById("nav-backdrop");
+    var groups = Array.prototype.slice.call(nav.querySelectorAll("[data-nav-group]"));
+
+    function collapseGroups() {
+      groups.forEach(function (g) {
+        g.setAttribute("aria-expanded", "false");
+        if (g.nextElementSibling) g.nextElementSibling.classList.add("hidden");
+      });
+    }
+
+    function setDrawer(open) {
+      nav.classList.toggle("is-open", open);
+      if (backdrop) backdrop.classList.toggle("is-open", open);
+      document.body.classList.toggle("nav-locked", open);
+      btn.setAttribute("aria-expanded", String(open));
+      if (open) {
+        var close = nav.querySelector(".nav-close");
+        if (close) close.focus();
+      } else {
+        collapseGroups();
+      }
+    }
+
+    btn.addEventListener("click", function () {
+      setDrawer(btn.getAttribute("aria-expanded") !== "true");
+    });
+    if (backdrop) backdrop.addEventListener("click", function () { setDrawer(false); });
+    var closeBtn = nav.querySelector(".nav-close");
+    if (closeBtn) closeBtn.addEventListener("click", function () { setDrawer(false); btn.focus(); });
+    // Following a link closes the drawer, so the next page opens clean.
+    nav.addEventListener("click", function (e) {
+      if (e.target.closest("a")) setDrawer(false);
+    });
+
+    // Submenus: hover dropdowns at md and up, a tap-to-open accordion below md.
+    groups.forEach(function (g) {
+      var item = g.parentElement;
+      var sub = g.nextElementSibling;
+      g.addEventListener("click", function () {
+        if (wide.matches || !sub) return;
+        var open = g.getAttribute("aria-expanded") === "true";
+        g.setAttribute("aria-expanded", String(!open));
+        sub.classList.toggle("hidden", open);
+      });
+      // Keep aria-expanded honest for pointer and keyboard users on the desktop bar.
+      function sync() {
+        if (!wide.matches) return;
+        g.setAttribute("aria-expanded", String(item.matches(":hover") || item.contains(document.activeElement)));
+      }
+      item.addEventListener("mouseenter", sync);
+      item.addEventListener("mouseleave", sync);
+      item.addEventListener("focusin", sync);
+      item.addEventListener("focusout", function () { window.setTimeout(sync, 0); });
+    });
+
+    // Crossing back to the desktop width drops the mobile-only state.
+    var onBreakpoint = function (e) { if (e.matches) setDrawer(false); };
+    if (wide.addEventListener) wide.addEventListener("change", onBreakpoint);
+    else if (wide.addListener) wide.addListener(onBreakpoint);
+  } else if (btn && nav) {
+    // Dashboard sidebar: show and hide the stacked list.
     btn.addEventListener("click", function () {
       var open = btn.getAttribute("aria-expanded") === "true";
       btn.setAttribute("aria-expanded", String(!open));
       nav.classList.toggle("hidden", open);
     });
+  }
+
+  if (btn && nav) {
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && btn.getAttribute("aria-expanded") === "true") {
         btn.click();

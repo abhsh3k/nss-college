@@ -21,11 +21,13 @@
 
     <button id="menu-toggle" type="button" class="rounded border border-ink/30 px-3 py-2 text-sm font-medium md:hidden" aria-expanded="false" aria-controls="primary-nav">Menu</button>
 
-    <nav id="primary-nav" aria-label="Primary" class="hidden w-full md:block md:w-auto">
+    {# Below md this becomes the off-canvas sidebar (see app.css / data-nav-drawer); above md it stays the normal bar. #}
+    <nav id="primary-nav" data-nav-drawer aria-label="Primary" class="hidden w-full md:block md:w-auto">
+      <button type="button" class="nav-close hidden" aria-label="Close menu">Close menu</button>
       <ul class="mt-3 flex flex-col gap-1 md:mt-0 md:flex-row md:items-center md:gap-1">
         <li class="group relative">
-          <button type="button" class="w-full rounded px-3 py-2 text-left font-medium hover:bg-mist md:w-auto">About</button>
-          <ul class="mb-2 ml-3 md:absolute md:left-0 md:top-full md:mb-0 md:ml-0 md:hidden md:w-60 md:rounded md:border md:border-ink/10 md:bg-chalk md:py-2 md:shadow-lg md:group-hover:block md:group-focus-within:block">
+          <button type="button" data-nav-group aria-expanded="false" aria-controls="nav-sub-about" class="w-full rounded px-3 py-2 text-left font-medium hover:bg-mist md:w-auto">About</button>
+          <ul id="nav-sub-about" class="hidden mb-2 ml-3 md:absolute md:left-0 md:top-full md:mb-0 md:ml-0 md:w-60 md:rounded md:border md:border-ink/10 md:bg-chalk md:py-2 md:shadow-lg md:group-hover:block md:group-focus-within:block">
             <li><a class="block px-3 py-1.5 hover:bg-mist" href="/about">Our management</a></li>
             <li><a class="block px-3 py-1.5 hover:bg-mist" href="/about/principal">Principal's desk</a></li>
             <li><a class="block px-3 py-1.5 hover:bg-mist" href="/about/organogram">Organogram</a></li>
@@ -35,8 +37,8 @@
           </ul>
         </li>
         <li class="group relative">
-          <button type="button" class="w-full rounded px-3 py-2 text-left font-medium hover:bg-mist md:w-auto">Academics</button>
-          <ul class="mb-2 ml-3 md:absolute md:left-0 md:top-full md:mb-0 md:ml-0 md:hidden md:w-60 md:rounded md:border md:border-ink/10 md:bg-chalk md:py-2 md:shadow-lg md:group-hover:block md:group-focus-within:block">
+          <button type="button" data-nav-group aria-expanded="false" aria-controls="nav-sub-academics" class="w-full rounded px-3 py-2 text-left font-medium hover:bg-mist md:w-auto">Academics</button>
+          <ul id="nav-sub-academics" class="hidden mb-2 ml-3 md:absolute md:left-0 md:top-full md:mb-0 md:ml-0 md:w-60 md:rounded md:border md:border-ink/10 md:bg-chalk md:py-2 md:shadow-lg md:group-hover:block md:group-focus-within:block">
             <li><a class="block px-3 py-1.5 hover:bg-mist" href="/academics">All programmes</a></li>
             <li><a class="block px-3 py-1.5 hover:bg-mist" href="/academics/syllabus">Syllabus</a></li>
             <li><a class="block px-3 py-1.5 hover:bg-mist" href="/academics/examinations">College examinations</a></li>
@@ -45,8 +47,8 @@
           </ul>
         </li>
         <li class="group relative">
-          <button type="button" class="w-full rounded px-3 py-2 text-left font-medium hover:bg-mist md:w-auto">Student life</button>
-          <ul class="mb-2 ml-3 md:absolute md:left-0 md:top-full md:mb-0 md:ml-0 md:hidden md:w-60 md:rounded md:border md:border-ink/10 md:bg-chalk md:py-2 md:shadow-lg md:group-hover:block md:group-focus-within:block">
+          <button type="button" data-nav-group aria-expanded="false" aria-controls="nav-sub-student-life" class="w-full rounded px-3 py-2 text-left font-medium hover:bg-mist md:w-auto">Student life</button>
+          <ul id="nav-sub-student-life" class="hidden mb-2 ml-3 md:absolute md:left-0 md:top-full md:mb-0 md:ml-0 md:w-60 md:rounded md:border md:border-ink/10 md:bg-chalk md:py-2 md:shadow-lg md:group-hover:block md:group-focus-within:block">
             <li><a class="block px-3 py-1.5 hover:bg-mist" href="/student-life/union">College union</a></li>
             <li><a class="block px-3 py-1.5 hover:bg-mist" href="/student-life/clubs">Clubs and cells</a></li>
             <li><a class="block px-3 py-1.5 hover:bg-mist" href="/student-life/nss">NSS</a></li>
@@ -64,4 +66,7 @@
       </ul>
     </nav>
   </div>
+
+  {# Click-to-close overlay behind the mobile sidebar. Never shown at md and up. #}
+  <div id="nav-backdrop"></div>
 </header>

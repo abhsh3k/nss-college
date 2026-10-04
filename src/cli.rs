@@ -1,6 +1,7 @@
 //! Command-line helpers, run instead of starting the server:
 //!
 //!   cargo run -- create-user <admin|staff|faculty|student> <email> "<Full name>"
+//!   cargo run -- set-password <email>
 //!   cargo run -- seed-demo-users
 //!
 //! The password is typed at a hidden prompt, never passed on the command line.
@@ -24,6 +25,13 @@ pub async fn run(args: &[String], db: &PgPool) -> bool {
             }
             true
         }
+        Some("set-password") => {
+            if let Err(msg) = set_password(&args[1..], db).await {
+                eprintln!("error: {msg}");
+                std::process::exit(1);
+            }
+            true
+        }
         Some("seed-demo-users") => {
             match seed_demo_users(db).await {
                 Ok(lines) => {
@@ -42,6 +50,7 @@ pub async fn run(args: &[String], db: &PgPool) -> bool {
             eprintln!(
                 "unknown command: {other}\n\
                  usage: cargo run -- create-user <admin|staff|faculty|student> <email> \"<Full name>\"\n\
+                 \x20      cargo run -- set-password <email>\n\
                  \x20      cargo run -- seed-demo-users"
             );
             std::process::exit(2);
@@ -59,16 +68,7 @@ async fn create_user(args: &[String], db: &PgPool) -> Result<(), String> {
         return Err("email must contain @ (students without email can use admission-number@college.local)".into());
     }
 
-    let min_len = if role == Role::Admin { 12 } else { password::MIN_LENGTH };
-    let pw = rpassword::prompt_password(format!("Password (at least {min_len} characters): "))
-        .map_err(|e| e.to_string())?;
-    let again = rpassword::prompt_password("Repeat password: ").map_err(|e| e.to_string())?;
-    if pw != again {
-        return Err("passwords did not match".into());
-    }
-    if pw.chars().count() < min_len {
-        return Err(format!("password must be at least {min_len} characters"));
-    }
+    let pw = prompt_new_password("Password", password::MIN_LENGTH)?;
 
     let hash = password::hash_blocking(pw).await.map_err(|_| "could not hash password".to_string())?;
     // Everyone except the first administrator must replace the password they were given.
@@ -82,6 +82,53 @@ async fn create_user(args: &[String], db: &PgPool) -> Result<(), String> {
     let _ = users::audit(db, None, "user_created_cli", "user", Some(id)).await;
 
     println!("Created {} account for {} (id {id}).", role.label(), email.trim());
+    Ok(())
+}
+
+/// Ask for a new password twice, typed at a hidden prompt, and check it
+/// against the minimum length.
+fn prompt_new_password(label: &str, min_len: usize) -> Result<String, String> {
+    let pw = rpassword::prompt_password(format!("{label} (at least {min_len} characters): "))
+        .map_err(|e| e.to_string())?;
+    let again = rpassword::prompt_password("Repeat password: ").map_err(|e| e.to_string())?;
+    if pw != again {
+        return Err("passwords did not match".into());
+    }
+    if pw.chars().count() < min_len {
+        return Err(format!("password must be at least {min_len} characters"));
+    }
+    Ok(pw)
+}
+
+/// Replace the password on an existing account.
+///
+/// The account keeps its role and flags; only the hash changes, so this is the
+/// way to hand a known password to an operator without an email reset flow.
+async fn set_password(args: &[String], db: &PgPool) -> Result<(), String> {
+    let [email] = args else {
+        return Err("usage: cargo run -- set-password <email>".into());
+    };
+    let id: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE lower(email) = lower($1)")
+        .bind(email.trim())
+        .fetch_optional(db)
+        .await
+        .map_err(|e| e.to_string())?;
+    let id = id.ok_or_else(|| "no account with that email".to_string())?;
+
+    let pw = prompt_new_password("New password", password::MIN_LENGTH)?;
+    let hash = password::hash_blocking(pw).await.map_err(|_| "could not hash password".to_string())?;
+    users::set_password(db, id, &hash)
+        .await
+        .map_err(|e| e.to_string())?;
+    // Clear any lockout from earlier failed attempts, so the new password works at once.
+    sqlx::query("UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = $1")
+        .bind(id)
+        .execute(db)
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = users::audit(db, None, "password_set_cli", "user", Some(id)).await;
+
+    println!("Password updated for {email}.");
     Ok(())
 }
 
