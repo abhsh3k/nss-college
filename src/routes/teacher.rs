@@ -4,10 +4,11 @@ use axum::{
     Form,
 };
 use serde::Deserialize;
-use sqlx::types::time::OffsetDateTime;
+use sqlx::{types::time::OffsetDateTime, FromRow};
+use tower_sessions::Session;
 
 use crate::{
-    auth::TeacherOnly,
+    auth::{csrf, TeacherOnly},
     error::AppError,
     state::AppState,
 };
@@ -24,59 +25,76 @@ pub struct StudentAttendanceItem {
 pub struct AttendanceSheetTemplate {
     pub session_id: i64,
     pub on_date_str: String,
+    pub csrf_token: String,
     pub students: Vec<StudentAttendanceItem>,
 }
 
+/// One roster row: the student's current status, defaulting to present.
+#[derive(FromRow)]
+struct RosterRow {
+    student_id: i64,
+    full_name: String,
+    roll_number: String,
+    status: String,
+}
+
 pub async fn get_attendance_sheet(
-    State(s): State<AppState>,
+    State(s): State<AppState>,session: Session,
     TeacherOnly(user): TeacherOnly,
     Path(entry_id): Path<i64>,
 ) -> Result<AttendanceSheetTemplate, AppError> {
     let today = OffsetDateTime::now_utc().date();
     let today_str = today.to_string();
 
-    let faculty = sqlx::query!("SELECT id FROM faculty WHERE user_id = $1", user.id)
+    let faculty_id: i64 = sqlx::query_scalar("SELECT id FROM faculty WHERE user_id = $1")
+        .bind(user.id)
         .fetch_one(&s.db)
         .await?;
 
-    let entry = sqlx::query!("SELECT course_id FROM timetable_entries WHERE id = $1", entry_id)
-        .fetch_one(&s.db)
-        .await?;
+    let course_id: i64 =
+        sqlx::query_scalar("SELECT course_id FROM timetable_entries WHERE id = $1")
+            .bind(entry_id)
+            .fetch_one(&s.db)
+            .await?;
 
     // Upsert the session
-    let session_id = sqlx::query!(
+    let session_id: i64 = sqlx::query_scalar(
         r#"
         INSERT INTO attendance_sessions (timetable_entry_id, course_id, on_date, taught_by, marked_by)
         VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (timetable_entry_id, on_date) 
+        ON CONFLICT (timetable_entry_id, on_date)
         DO UPDATE SET updated_at = now()
         RETURNING id
         "#,
-        entry_id, entry.course_id, today, faculty.id, user.id
     )
+    .bind(entry_id)
+    .bind(course_id)
+    .bind(today)
+    .bind(faculty_id)
+    .bind(user.id)
     .fetch_one(&s.db)
-    .await?
-    .id;
+    .await?;
 
     // Get the roster with current statuses (using st.admission_no as the roll number)
-    let rows = sqlx::query!(
+    let rows = sqlx::query_as::<_, RosterRow>(
         r#"
-        SELECT 
+        SELECT
             st.id AS student_id,
             u.full_name,
             st.admission_no AS roll_number,
-            COALESCE(ar.status, 'present') AS "status!"
+            COALESCE(ar.status, 'present') AS status
         FROM enrollments e
         JOIN students st ON st.id = e.student_id
         JOIN users u ON u.id = st.user_id
-        LEFT JOIN attendance_records ar 
-               ON ar.session_id = $1 
+        LEFT JOIN attendance_records ar
+               ON ar.session_id = $1
               AND ar.student_id = st.id
         WHERE e.course_id = $2 AND e.status = 'active'
         ORDER BY st.admission_no ASC
         "#,
-        session_id, entry.course_id
     )
+    .bind(session_id)
+    .bind(course_id)
     .fetch_all(&s.db)
     .await?;
 
@@ -90,6 +108,7 @@ pub async fn get_attendance_sheet(
     Ok(AttendanceSheetTemplate {
         session_id,
         on_date_str: today_str,
+        csrf_token: csrf::token(&session).await?,
         students,
     })
 }
@@ -98,6 +117,7 @@ pub async fn get_attendance_sheet(
 pub struct AttendanceToggleInput {
     pub student_id: i64,
     pub status: String,
+    pub csrf_token: String,
 }
 
 #[derive(Template)]
@@ -106,47 +126,55 @@ pub struct AttendanceBadgeTemplate {
     pub session_id: i64,
     pub student_id: i64,
     pub status: String,
+    pub csrf_token: String,
 }
 
 pub async fn toggle_attendance_status(
     State(s): State<AppState>,
+    session: Session,
     TeacherOnly(user): TeacherOnly,
     Path(session_id): Path<i64>,
     Form(payload): Form<AttendanceToggleInput>,
 ) -> Result<AttendanceBadgeTemplate, AppError> {
-    let window_setting = sqlx::query!("SELECT value FROM site_settings WHERE key = 'attendance_edit_window_days'")
-        .fetch_optional(&s.db)
-        .await?
-        .map(|r| r.value.parse::<i32>().unwrap_or(5))
-        .unwrap_or(5);
+    csrf::verify(&session, &payload.csrf_token).await?;
 
-    let session = sqlx::query!("SELECT on_date FROM attendance_sessions WHERE id = $1", session_id)
-        .fetch_one(&s.db)
-        .await?;
+    if !matches!(payload.status.as_str(), "present" | "absent" | "leave") {
+        return Err(AppError::Forbidden);
+    }
+
+    let window_setting = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM site_settings WHERE key = 'attendance_edit_window_days'",
+    )
+    .fetch_optional(&s.db)
+    .await?
+    .and_then(|v| v.trim().parse::<i32>().ok())
+    .unwrap_or(5);
 
     // Use Postgres to reliably calculate the date difference
-    let is_valid = sqlx::query!(
-        "SELECT (CURRENT_DATE - $1) <= $2 AS valid", 
-        session.on_date, window_setting
+    let is_valid = sqlx::query_scalar::<_, bool>(
+        "SELECT (CURRENT_DATE - s.on_date) <= $2 FROM attendance_sessions s WHERE s.id = $1",
     )
+    .bind(session_id)
+    .bind(window_setting)
     .fetch_one(&s.db)
-    .await?
-    .valid
-    .unwrap_or(false);
+    .await?;
 
     if !is_valid {
         return Err(AppError::Forbidden);
     }
 
-    sqlx::query!(
+    sqlx::query(
         r#"
         INSERT INTO attendance_records (session_id, student_id, status, updated_by)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (session_id, student_id)
         DO UPDATE SET status = EXCLUDED.status, updated_by = EXCLUDED.updated_by, updated_at = now()
         "#,
-        session_id, payload.student_id, payload.status, user.id
     )
+    .bind(session_id)
+    .bind(payload.student_id)
+    .bind(&payload.status)
+    .bind(user.id)
     .execute(&s.db)
     .await?;
 
@@ -154,5 +182,6 @@ pub async fn toggle_attendance_status(
         session_id,
         student_id: payload.student_id,
         status: payload.status,
+        csrf_token: payload.csrf_token,
     })
 }

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use askama::Template;
 use axum::extract::State;
-use sqlx::types::time::OffsetDateTime;
+use sqlx::{types::time::OffsetDateTime, FromRow};
 use tower_sessions::Session;
 
 use crate::{
@@ -54,6 +54,20 @@ pub struct TeacherTemplate {
     classes: Vec<TeacherClassItem>,
 }
 
+/// One class in today's timeline, straight from the query.
+#[derive(FromRow)]
+struct TodayClassRow {
+    timetable_entry_id: i64,
+    course_id: i64,
+    course_code: String,
+    course_title: String,
+    start_time: String,
+    end_time: String,
+    room: String,
+    is_substitution: bool,
+    is_marked: bool,
+}
+
 pub async fn teacher(
     State(s): State<AppState>,
     session: Session,
@@ -67,42 +81,40 @@ pub async fn teacher(
     let weekday_num = today.weekday().number_from_monday() as i16;
 
     // Fetch faculty ID linked to logged-in user
-    let faculty = sqlx::query!(
-        "SELECT id FROM faculty WHERE user_id = $1",
-        user.id
-    )
-    .fetch_optional(&s.db)
-    .await?;
+    let faculty_id: Option<i64> = sqlx::query_scalar("SELECT id FROM faculty WHERE user_id = $1")
+        .bind(user.id)
+        .fetch_optional(&s.db)
+        .await?;
 
-    let classes = if let Some(fac) = faculty {
-        let rows = sqlx::query!(
+    let classes = if let Some(faculty_id) = faculty_id {
+        let rows = sqlx::query_as::<_, TodayClassRow>(
             r#"
-            SELECT 
+            SELECT
                 te.id AS timetable_entry_id,
                 c.id AS course_id,
                 c.code AS course_code,
                 c.title AS course_title,
-                te.start_time::text AS "start_time!",
-                te.end_time::text AS "end_time!",
-                COALESCE(te.room, '') AS "room!",
-                COALESCE(s.id IS NOT NULL, false) AS "is_substitution!",
-                COALESCE(att.id IS NOT NULL, false) AS "is_marked!"
+                te.start_time::text AS start_time,
+                te.end_time::text AS end_time,
+                COALESCE(te.room, '') AS room,
+                COALESCE(s.id IS NOT NULL, false) AS is_substitution,
+                COALESCE(att.id IS NOT NULL, false) AS is_marked
             FROM timetable_entries te
             JOIN courses c ON c.id = te.course_id
-            LEFT JOIN substitutions s 
-                   ON s.timetable_entry_id = te.id 
+            LEFT JOIN substitutions s
+                   ON s.timetable_entry_id = te.id
                   AND s.on_date = $2
-            LEFT JOIN attendance_sessions att 
-                   ON att.timetable_entry_id = te.id 
+            LEFT JOIN attendance_sessions att
+                   ON att.timetable_entry_id = te.id
                   AND att.on_date = $2
-            WHERE ((te.faculty_id = $1 AND te.weekday = $3 AND s.id IS NULL) 
+            WHERE ((te.faculty_id = $1 AND te.weekday = $3 AND s.id IS NULL)
                OR s.substitute_faculty_id = $1)
             ORDER BY te.start_time ASC
             "#,
-            fac.id,
-            today,
-            weekday_num
         )
+        .bind(faculty_id)
+        .bind(today)
+        .bind(weekday_num)
         .fetch_all(&s.db)
         .await?;
 

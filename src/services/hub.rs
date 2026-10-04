@@ -165,6 +165,24 @@ pub async fn setting(db: &PgPool, key: &str, default: i32) -> Res<i32> {
         .unwrap_or(default))
 }
 
+/// A yes/no setting such as `attendance_leave_counts_as_present`, which is seeded
+/// as the word "false" rather than a number, so it must not go through `setting`.
+pub async fn setting_bool(db: &PgPool, key: &str, default: bool) -> Res<bool> {
+    let value = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM site_settings WHERE key = $1",
+    )
+    .bind(key)
+    .fetch_optional(db)
+    .await?;
+    Ok(match value {
+        None => default,
+        Some(v) => matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "true" | "1" | "yes" | "on"
+        ),
+    })
+}
+
 /// Announcements aimed at students (public ones included), newest first.
 pub async fn student_feed(db: &PgPool, limit: i64) -> Res<Vec<Notice>> {
     sqlx::query_as::<_, Notice>(

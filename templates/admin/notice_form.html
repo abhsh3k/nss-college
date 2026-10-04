@@ -1,0 +1,63 @@
+{% extends "layouts/app.html" %}
+{% block title %}{% if form.id == 0 %}Add notice{% else %}Edit notice{% endif %}{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">{% if form.id == 0 %}Add notice{% else %}Edit notice{% endif %}</h1>
+{% if form.id != 0 %}<p class="mt-2 text-lg text-ink/80">{{ form.title }}</p>{% endif %}
+
+{% if let Some(msg) = form.error %}
+<p role="alert" class="mt-6 max-w-xl border-l-4 border-brand bg-mist px-4 py-3 font-medium">{{ msg }}</p>
+{% endif %}
+
+<form method="post" enctype="multipart/form-data" action="{% if form.id == 0 %}/admin/notices{% else %}/admin/notices/{{ form.id }}{% endif %}" class="mt-8 max-w-2xl space-y-5">
+  <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+
+  <div>
+    <label for="title" class="block font-semibold">Title</label>
+    <input id="title" name="title" type="text" value="{{ form.title }}" required maxlength="300" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+  </div>
+
+  <div class="grid gap-5 sm:grid-cols-2">
+    <div>
+      <label for="category" class="block font-semibold">Category</label>
+      <input id="category" name="category" type="text" value="{{ form.category }}" maxlength="80" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+    <div>
+      <label for="audience" class="block font-semibold">Audience</label>
+      <select id="audience" name="audience" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        {% for a in audiences %}<option value="{{ a }}" {% if form.audience == a.as_str() %}selected{% endif %}>{{ a }}</option>{% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <div>
+    <label for="body" class="block font-semibold">Details</label>
+    <textarea id="body" name="body" rows="7" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">{{ form.body }}</textarea>
+  </div>
+
+  <div>
+    <label for="attachment" class="block font-semibold">Attachment <span class="font-normal text-ink/70">(optional)</span></label>
+    <input id="attachment" name="attachment" type="file" accept="application/pdf,.pdf" class="mt-1 w-full text-sm">
+    <p class="mt-1 text-sm text-ink/70">A PDF, up to 8 MB. {% if form.attachment_path != "" %}Leave empty to keep the file already attached.{% endif %}</p>
+  </div>
+
+  <div class="grid gap-5 sm:grid-cols-2">
+    <div>
+      <label for="status" class="block font-semibold">Status</label>
+      <select id="status" name="status" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        {% for st in statuses %}<option value="{{ st }}" {% if form.status == st.as_str() %}selected{% endif %}>{{ st }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="flex items-end pb-2">
+      <label class="flex items-center gap-2 font-semibold">
+        <input type="checkbox" name="is_pinned" value="on" {% if form.is_pinned %}checked{% endif %} class="size-4">
+        Pin to the top of the board
+      </label>
+    </div>
+  </div>
+
+  <div class="flex flex-wrap gap-3 pt-2">
+    <button type="submit" class="rounded bg-brand px-5 py-2 font-semibold text-chalk hover:bg-ink">Save notice</button>
+    <a href="/admin/notices" class="rounded border border-ink/40 px-5 py-2 font-semibold hover:bg-mist">Cancel</a>
+  </div>
+</form>
+{% endblock %}

@@ -22,13 +22,13 @@
           <td class="py-3 px-4 font-semibold text-gray-900">{{ student.full_name }}</td>
           <td class="py-3 px-4 text-center" id="status-badge-{{ student.student_id }}">
             <div class="inline-flex rounded-lg border border-gray-200 shadow-sm" role="group">
-              <button type="button" hx-post="/dashboard/teacher/session/{{ session_id }}/toggle" hx-vals='{"student_id": {{ student.student_id }}, "status": "present"}' hx-target="#status-badge-{{ student.student_id }}" class="px-3 py-1.5 text-xs font-semibold rounded-l-lg transition-colors {% if student.status == "present" %}bg-emerald-600 text-white border-emerald-600{% else %}bg-white text-gray-700 hover:bg-gray-100{% endif %}">
+              <button type="button" hx-post="/dashboard/teacher/session/{{ session_id }}/toggle" hx-vals='{"student_id": {{ student.student_id }}, "status": "present", "csrf_token": "{{ csrf_token }}"}' hx-target="#status-badge-{{ student.student_id }}" class="px-3 py-1.5 text-xs font-semibold rounded-l-lg transition-colors {% if student.status == "present" %}bg-emerald-600 text-white border-emerald-600{% else %}bg-white text-gray-700 hover:bg-gray-100{% endif %}">
                 Present
               </button>
-              <button type="button" hx-post="/dashboard/teacher/session/{{ session_id }}/toggle" hx-vals='{"student_id": {{ student.student_id }}, "status": "absent"}' hx-target="#status-badge-{{ student.student_id }}" class="px-3 py-1.5 text-xs font-semibold border-x border-gray-200 transition-colors {% if student.status == "absent" %}bg-rose-600 text-white border-rose-600{% else %}bg-white text-gray-700 hover:bg-gray-100{% endif %}">
+              <button type="button" hx-post="/dashboard/teacher/session/{{ session_id }}/toggle" hx-vals='{"student_id": {{ student.student_id }}, "status": "absent", "csrf_token": "{{ csrf_token }}"}' hx-target="#status-badge-{{ student.student_id }}" class="px-3 py-1.5 text-xs font-semibold border-x border-gray-200 transition-colors {% if student.status == "absent" %}bg-rose-600 text-white border-rose-600{% else %}bg-white text-gray-700 hover:bg-gray-100{% endif %}">
                 Absent
               </button>
-              <button type="button" hx-post="/dashboard/teacher/session/{{ session_id }}/toggle" hx-vals='{"student_id": {{ student.student_id }}, "status": "leave"}' hx-target="#status-badge-{{ student.student_id }}" class="px-3 py-1.5 text-xs font-semibold rounded-r-lg transition-colors {% if student.status == "leave" %}bg-amber-500 text-white border-amber-500{% else %}bg-white text-gray-700 hover:bg-gray-100{% endif %}">
+              <button type="button" hx-post="/dashboard/teacher/session/{{ session_id }}/toggle" hx-vals='{"student_id": {{ student.student_id }}, "status": "leave", "csrf_token": "{{ csrf_token }}"}' hx-target="#status-badge-{{ student.student_id }}" class="px-3 py-1.5 text-xs font-semibold rounded-r-lg transition-colors {% if student.status == "leave" %}bg-amber-500 text-white border-amber-500{% else %}bg-white text-gray-700 hover:bg-gray-100{% endif %}">
                 Leave
               </button>
             </div>
