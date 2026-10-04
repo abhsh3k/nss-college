@@ -24,11 +24,6 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::AppState;
 
-/// Lowercase hex, for readable checksum logging.
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
@@ -50,53 +45,6 @@ async fn main() {
         .expect("could not connect to PostgreSQL. Is it running? Try: docker compose up -d");
 
     let migrator = sqlx::migrate!("./migrations");
-
-    // TEMPORARY one-shot repair, enabled by MIGRATION_CHECKSUM_REPAIR=<version>.
-    //
-    // A migration file's recorded checksum can go stale when the file was
-    // applied from a checkout with different line endings, which makes every
-    // later start fail with "was previously applied but has been modified"
-    // even though the schema is identical. This re-records the checksum from
-    // the migration the binary actually embeds, so the value can never be
-    // mistyped. Remove once the production row has been corrected.
-    if let Ok(spec) = std::env::var("MIGRATION_CHECKSUM_REPAIR") {
-        let version: i64 = spec.trim().parse().unwrap_or_else(|_| {
-            panic!("MIGRATION_CHECKSUM_REPAIR must be a migration version, got {spec:?}")
-        });
-        let expected = migrator
-            .iter()
-            .find(|m| m.version == version)
-            .map(|m| m.checksum.clone())
-            .unwrap_or_else(|| panic!("no embedded migration with version {version}"));
-
-        let current: Option<Vec<u8>> =
-            sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = $1")
-                .bind(version)
-                .fetch_optional(&db)
-                .await
-                .expect("could not read the recorded migration checksum");
-
-        match current {
-            Some(current) if current == expected.as_ref() => {
-                tracing::warn!("checksum repair: v{version} already correct, nothing to do");
-            }
-            Some(current) => {
-                tracing::warn!(
-                    "checksum repair: v{version} recorded {:?}, embedding {:?}; updating",
-                    hex(&current),
-                    hex(expected.as_ref())
-                );
-                sqlx::query("UPDATE _sqlx_migrations SET checksum = $2 WHERE version = $1")
-                    .bind(version)
-                    .bind(expected.as_ref())
-                    .execute(&db)
-                    .await
-                    .expect("could not update the migration checksum");
-                tracing::warn!("checksum repair: v{version} updated");
-            }
-            None => tracing::warn!("checksum repair: v{version} is not recorded, nothing to do"),
-        }
-    }
 
     if let Err(e) = migrator.run(&db).await {
         // A version mismatch is invisible without knowing what the database
