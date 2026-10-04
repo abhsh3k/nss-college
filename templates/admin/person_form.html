@@ -95,6 +95,13 @@
     <input id="is_hod" name="is_hod" type="checkbox" {% if form.is_hod.is_some() %}checked{% endif %} class="mt-1 h-5 w-5">
     <label for="is_hod" class="font-semibold">Head of department</label>
   </div>
+  <div class="flex items-start gap-3">
+    <input id="can_manage" name="can_manage" type="checkbox" {% if form.can_manage.is_some() %}checked{% endif %} class="mt-1 h-5 w-5">
+    <div>
+      <label for="can_manage" class="font-semibold">Approved to manage the department</label>
+      <p class="text-sm text-ink/70">Gives the HOD powers (timetable, substitutions, enrollment, attendance) without making this person the head.</p>
+    </div>
+  </div>
   {% endif %}
 
   <div class="flex flex-wrap gap-3 pt-2">

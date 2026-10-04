@@ -26,13 +26,16 @@ fn item(label: &'static str, href: &'static str, soon: bool) -> NavItem {
     NavItem { label, href, soon }
 }
 
-fn nav_for(role: Role) -> Vec<NavItem> {
-    match role {
+fn nav_for(user: &AuthUser) -> Vec<NavItem> {
+    let nav = match user.role {
         Role::Admin => vec![
             item("Overview", "/admin", false),
             item("People", "/admin/people", false),
             item("Courses and programmes", "/admin/academics", false),
             item("Timetable", "/admin/timetable", false),
+            item("Substitutions", "/admin/substitutions", false),
+            item("Departments", "/admin/departments", false),
+            item("Department attendance", "/admin/departments/attendance", false),
             item("Attendance reports", "/admin/attendance", false),
             item("Notices", "/admin/notices", false),
             item("News", "/admin/news", false),
@@ -48,21 +51,34 @@ fn nav_for(role: Role) -> Vec<NavItem> {
             item("Events", "/admin/events", false),
             item("Documents", "/admin/documents", true),
         ],
-        Role::Faculty => vec![
-            item("Today", "/teacher", false),
-            item("My timetable", "/teacher/timetable", true),
-            item("Mark attendance", "/teacher/attendance", true),
-            item("Reports", "/teacher/reports", true),
-        ],
+        Role::Faculty => {
+            let mut items = vec![
+                item("Today", "/teacher", false),
+                item("My timetable", "/teacher/timetable", false),
+                item("Mark attendance", "/teacher/attendance", false),
+                item("Reports", "/teacher/reports", false),
+                item("Attendance sheet", "/teacher/sheet", false),
+            ];
+            if user.manages_department() {
+                items.push(item("Courses and programmes", "/admin/academics", false));
+                items.push(item("Timetable", "/admin/timetable", false));
+                items.push(item("Substitutions", "/admin/substitutions", false));
+                items.push(item("Students", "/admin/departments", false));
+                items.push(item("Department attendance", "/admin/departments/attendance", false));
+            }
+            items
+        }
         Role::Student => vec![
             item("Overview", "/hub", false),
-            item("My courses", "/hub/courses", true),
-            item("Timetable", "/hub/timetable", true),
-            item("Attendance", "/hub/attendance", true),
-            item("Notices", "/hub/notices", true),
+            item("Today's classes", "/hub#today", false),
+            item("Timetable", "/hub#timetable", false),
+            item("My courses", "/hub#courses", false),
+            item("Results", "/hub#results", false),
+            item("Notices", "/hub#notices", false),
         ],
         Role::Alumni => vec![],
-    }
+    };
+    nav
 }
 
 impl Shell {
@@ -74,7 +90,7 @@ impl Shell {
                 user.full_name.clone()
             },
             role_label: user.role.label(),
-            nav: nav_for(user.role),
+            nav: nav_for(user),
             csrf_token: csrf::token(session).await?,
             flash: session.remove::<String>("flash").await.map_err(internal)?,
         })

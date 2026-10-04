@@ -9,7 +9,7 @@ use tower_sessions::Session;
 
 use super::{parse_i32, parse_i64};
 use crate::{
-    auth::{csrf, AdminOnly},
+    auth::{csrf, AdminOnly, Manager},
     error::{is_foreign_key_violation, is_unique_violation, AppError},
     services::{
         academics::{self, CourseDetail, CourseInput, CourseRow, ProgrammeOption, ProgrammeSummary, TeacherOption},
@@ -31,11 +31,11 @@ pub struct AcademicsTemplate {
 pub async fn index(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    manager: Manager,
 ) -> Result<AcademicsTemplate, AppError> {
     Ok(AcademicsTemplate {
-        shell: Shell::build(&user, &session).await?,
-        programmes: academics::programme_summaries(&s.db).await?,
+        shell: Shell::build(&manager.user, &session).await?,
+        programmes: academics::programme_summaries_for(&s.db, manager.department()).await?,
     })
 }
 
@@ -54,14 +54,20 @@ pub struct ProgrammeTemplate {
     semesters: Vec<SemesterView>,
     teachers: Vec<TeacherOption>,
     semester_numbers: Vec<i32>,
+    /// Course create/edit/delete stays with the IT admin; an HOD may still
+    /// enroll students and read the page.
+    can_edit_courses: bool,
 }
 
 pub async fn programme(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    manager: Manager,
     Path(id): Path<i64>,
 ) -> Result<ProgrammeTemplate, AppError> {
+    if !academics::may_manage_programme(&s.db, id, manager.department()).await? {
+        return Err(AppError::Forbidden);
+    }
     let programme = academics::programme(&s.db, id).await?.ok_or(AppError::NotFound)?;
     let all = academics::courses(&s.db, id).await?;
     // Two-year programmes have four semesters; honours degrees have eight.
@@ -75,11 +81,12 @@ pub async fn programme(
         })
         .collect();
     Ok(ProgrammeTemplate {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&manager.user, &session).await?,
         programme,
         semesters,
-        teachers: academics::teacher_options(&s.db).await?,
+        teachers: academics::teacher_options_for(&s.db, manager.department()).await?,
         semester_numbers,
+        can_edit_courses: manager.is_admin(),
     })
 }
 
@@ -241,18 +248,22 @@ pub async fn course_delete(
 pub async fn enroll(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    manager: Manager,
     Path(programme_id): Path<i64>,
     Form(f): Form<TokenForm>,
 ) -> Result<Redirect, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
+    // HODs may enroll their own department's students, nobody else's.
+    if !academics::may_manage_programme(&s.db, programme_id, manager.department()).await? {
+        return Err(AppError::Forbidden);
+    }
     let back = format!("/admin/academics/programmes/{programme_id}");
     let Some(semester) = parse_i32(&f.semester).filter(|v| (1..=8).contains(v)) else {
         shell::flash(&session, "Choose a semester.").await?;
         return Ok(Redirect::to(&back));
     };
     let added = academics::enroll_semester(&s.db, programme_id, semester).await?;
-    users::audit(&s.db, Some(user.id), "semester_enrolled", "programme", Some(programme_id)).await?;
+    users::audit(&s.db, Some(manager.user.id), "semester_enrolled", "programme", Some(programme_id)).await?;
     shell::flash(
         &session,
         if added == 0 {

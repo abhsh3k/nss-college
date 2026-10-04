@@ -54,6 +54,7 @@ pub struct PersonDetail {
     pub designation: String,
     pub qualification: String,
     pub is_hod: bool,
+    pub can_manage: bool,
 }
 
 pub async fn detail(db: &PgPool, user_id: i64) -> Res<Option<PersonDetail>> {
@@ -68,7 +69,8 @@ pub async fn detail(db: &PgPool, user_id: i64) -> Res<Option<PersonDetail>> {
                   COALESCE(f.department_id, 0) AS department_id,
                   COALESCE(f.designation, '') AS designation,
                   COALESCE(f.qualification, '') AS qualification,
-                  COALESCE(f.is_hod, false) AS is_hod
+                  COALESCE(f.is_hod, false) AS is_hod,
+                  COALESCE(f.can_manage, false) AS can_manage
            FROM users u
            LEFT JOIN students s ON s.user_id = u.id
            LEFT JOIN faculty f ON f.user_id = u.id
@@ -137,6 +139,7 @@ pub struct NewTeacher<'a> {
     pub designation: &'a str,
     pub qualification: &'a str,
     pub is_hod: bool,
+    pub can_manage: bool,
 }
 
 pub async fn create_teacher(db: &PgPool, t: &NewTeacher<'_>, password_hash: &str) -> Res<i64> {
@@ -151,8 +154,8 @@ pub async fn create_teacher(db: &PgPool, t: &NewTeacher<'_>, password_hash: &str
     .fetch_one(&mut *tx)
     .await?;
     sqlx::query(
-        r#"INSERT INTO faculty (user_id, department_id, name, designation, qualification, email, is_hod, status)
-           VALUES ($1, NULLIF($2, 0), $3, $4, $5, $6, $7, 'published')"#,
+        r#"INSERT INTO faculty (user_id, department_id, name, designation, qualification, email, is_hod, can_manage, status)
+           VALUES ($1, NULLIF($2, 0), $3, $4, $5, $6, $7, $8, 'published')"#,
     )
     .bind(user_id)
     .bind(t.department_id)
@@ -161,6 +164,7 @@ pub async fn create_teacher(db: &PgPool, t: &NewTeacher<'_>, password_hash: &str
     .bind(t.qualification)
     .bind(t.email)
     .bind(t.is_hod)
+    .bind(t.can_manage)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -217,7 +221,7 @@ pub async fn update(db: &PgPool, d: &PersonDetail) -> Res<()> {
         sqlx::query(
             r#"UPDATE faculty
                SET name = $2, email = $3, department_id = NULLIF($4, 0),
-                   designation = $5, qualification = $6, is_hod = $7
+                   designation = $5, qualification = $6, is_hod = $7, can_manage = $8
                WHERE user_id = $1"#,
         )
         .bind(d.id)
@@ -227,6 +231,7 @@ pub async fn update(db: &PgPool, d: &PersonDetail) -> Res<()> {
         .bind(&d.designation)
         .bind(&d.qualification)
         .bind(d.is_hod)
+        .bind(d.can_manage)
         .execute(&mut *tx)
         .await?;
     }

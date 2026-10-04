@@ -8,7 +8,7 @@ use tower_sessions::Session;
 
 use super::{normalise_time, parse_i32, parse_i64};
 use crate::{
-    auth::{csrf, AdminOnly},
+    auth::{csrf, Manager},
     error::AppError,
     services::{
         academics::{self, CourseRow, NewSlot, ProgrammeOption, SlotRow, TeacherOption},
@@ -125,10 +125,11 @@ pub struct TimetablePage {
 pub async fn page(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    manager: Manager,
     Query(q): Query<PageQuery>,
 ) -> Result<TimetablePage, AppError> {
-    let shell = Shell::build(&user, &session).await?;
+    let shell = Shell::build(&manager.user, &session).await?;
+    let department = manager.department();
     let sel_programme = q.programme.as_deref().and_then(parse_i64).unwrap_or(0);
     let sel_semester = q
         .semester
@@ -136,6 +137,12 @@ pub async fn page(
         .and_then(parse_i32)
         .filter(|v| (1..=8).contains(v))
         .unwrap_or(1);
+    // A programme from another department is simply not selectable here.
+    let sel_programme = match sel_programme {
+        0 => 0,
+        id if academics::may_manage_programme(&s.db, id, department).await? => id,
+        _ => 0,
+    };
     let panel = if sel_programme > 0 {
         build_panel(&s, shell.csrf_token.clone(), sel_programme, sel_semester, None, None).await?
     } else {
@@ -143,7 +150,7 @@ pub async fn page(
     };
     Ok(TimetablePage {
         shell,
-        programmes: academics::programme_options(&s.db).await?,
+        programmes: academics::programme_options_for(&s.db, department).await?,
         sel_programme,
         sel_semester,
         panel,
@@ -175,11 +182,15 @@ pub struct SlotForm {
 pub async fn add_slot(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    manager: Manager,
     Form(f): Form<SlotForm>,
 ) -> Result<PanelTemplate, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
     let programme_id = parse_i64(&f.programme_id).ok_or(AppError::NotFound)?;
+    // HODs may only build a timetable for their own department.
+    if !academics::may_manage_programme(&s.db, programme_id, manager.department()).await? {
+        return Err(AppError::Forbidden);
+    }
     let semester = parse_i32(&f.semester).filter(|v| (1..=8).contains(v)).ok_or(AppError::NotFound)?;
     let token = f.csrf_token.clone();
 
@@ -237,7 +248,7 @@ pub async fn add_slot(
     }
 
     let id = academics::add_slot(&s.db, &slot).await?;
-    users::audit(&s.db, Some(user.id), "timetable_slot_added", "timetable_entry", Some(id)).await?;
+    users::audit(&s.db, Some(manager.user.id), "timetable_slot_added", "timetable_entry", Some(id)).await?;
     let notice = format!("Added {start_at}–{end_at}.");
     Ok(PanelTemplate {
         panel: build_panel(&s, token, programme_id, semester, Some(notice), None).await?,
@@ -254,16 +265,29 @@ pub struct DeleteForm {
 pub async fn delete_slot(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    manager: Manager,
     Path(id): Path<i64>,
     Form(f): Form<DeleteForm>,
 ) -> Result<PanelTemplate, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
     let programme_id = parse_i64(&f.programme_id).ok_or(AppError::NotFound)?;
+    // The period being removed must belong to a programme this manager owns.
+    if !academics::may_manage_programme(&s.db, programme_id, manager.department()).await? {
+        return Err(AppError::Forbidden);
+    }
+    let slot_programme: Option<i64> =
+        sqlx::query_scalar("SELECT programme_id FROM timetable_entries WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&s.db)
+            .await?;
+    match slot_programme {
+        Some(p) if p == programme_id => {}
+        _ => return Err(AppError::Forbidden),
+    }
     let semester = parse_i32(&f.semester).filter(|v| (1..=8).contains(v)).ok_or(AppError::NotFound)?;
     match academics::delete_slot(&s.db, id).await {
         Ok(()) => {
-            users::audit(&s.db, Some(user.id), "timetable_slot_removed", "timetable_entry", Some(id)).await?;
+            users::audit(&s.db, Some(manager.user.id), "timetable_slot_removed", "timetable_entry", Some(id)).await?;
             Ok(PanelTemplate {
                 panel: build_panel(&s, f.csrf_token, programme_id, semester, Some("Period removed.".into()), None).await?,
             })

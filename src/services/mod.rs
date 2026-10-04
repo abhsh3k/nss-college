@@ -1,4 +1,5 @@
 pub mod academics;
+pub mod attendance;
 pub mod content;
 pub mod content_admin;
 pub mod hub;

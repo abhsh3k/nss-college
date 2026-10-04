@@ -1,0 +1,51 @@
+{% extends "layouts/app.html" %}
+{% block title %}Attendance in {{ department_name }}{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Attendance in {{ department_name }}</h1>
+<p class="mt-3 max-w-2xl text-ink/80">
+  Every course in this department, across all its teachers. Anything below {{ rules.min_percent }}% is highlighted.
+</p>
+
+{% for cr in courses %}
+<section class="mt-10">
+  <h2 class="font-display text-2xl font-semibold">{{ cr.course.code }} &mdash; {{ cr.course.title }}</h2>
+  <p class="text-sm text-ink/70">{{ cr.course.programme }}, semester {{ cr.course.semester }}</p>
+  {% if cr.lines.is_empty() %}
+  <p class="mt-3 text-ink/70">No students enrolled yet.</p>
+  {% else %}
+  <div class="mt-3 overflow-x-auto">
+    <table class="w-full min-w-[40rem] text-left">
+      <thead>
+        <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+          <th scope="col" class="py-2 pr-4 font-medium">Student</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Admission no</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Marked</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Present</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Absent</th>
+          <th scope="col" class="py-2 pr-4 font-medium">On leave</th>
+          <th scope="col" class="py-2 font-medium">Attendance</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for l in cr.lines %}
+        <tr class="border-b border-ink/10 {% if l.low %}bg-amber-50{% endif %}">
+          <td class="py-2 pr-4 font-medium">{{ l.name }}</td>
+          <td class="py-2 pr-4">{{ l.admission_no }}</td>
+          <td class="py-2 pr-4">{{ l.marked }}</td>
+          <td class="py-2 pr-4">{{ l.present }}</td>
+          <td class="py-2 pr-4">{{ l.absent }}</td>
+          <td class="py-2 pr-4">{{ l.on_leave }}</td>
+          <td class="py-2 {% if l.low %}font-semibold text-amber-700{% endif %}">{{ l.percent_label }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+{% endfor %}
+
+{% if courses.is_empty() %}
+<p class="mt-8 text-ink/70">No courses are attached to this department yet.</p>
+{% endif %}
+{% endblock %}

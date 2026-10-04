@@ -2,10 +2,12 @@
 
 mod academics;
 mod attendance;
+mod departments;
 mod events;
 mod news;
 mod notices;
 mod people;
+mod substitutions;
 mod timetable;
 
 use axum::{
@@ -51,6 +53,18 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/timetable", get(timetable::page))
         .route("/admin/timetable/slots", post(timetable::add_slot))
         .route("/admin/timetable/slots/:id/delete", post(timetable::delete_slot))
+        // Substitutes (head of department)
+        .route("/admin/substitutions", get(substitutions::page).post(substitutions::set))
+        .route("/admin/substitutions/:id/remove", post(substitutions::remove))
+        // Students in the department, and correcting its attendance
+        .route("/admin/departments", get(departments::page))
+        .route("/admin/departments/:id", post(departments::place))
+        .route("/admin/departments/attendance", get(departments::attendance_page))
+        .route("/admin/departments/attendance/:entry_id", get(departments::mark_form))
+        .route(
+            "/admin/departments/attendance/:entry_id/save",
+            post(departments::mark_save),
+        )
         // Attendance reporting
         .route("/admin/attendance", get(attendance::report))
         .route("/admin/attendance.csv", get(attendance::csv));

@@ -1,0 +1,67 @@
+{% extends "layouts/app.html" %}
+{% block title %}Attendance reports{% endblock %}
+{% block content %}
+<div class="space-y-8">
+  <div>
+    <h1 class="font-display text-3xl font-semibold md:text-4xl text-gray-900">Attendance reports</h1>
+    <p class="mt-2 max-w-2xl text-gray-600">Minimum {{ rules.min_percent }}% across the semester. E-grants students also need {{ rules.egrants_monthly_percent }}% in each month. Leave is counted as {% if rules.leave_counts %}present{% else %}not present{% endif %}.</p>
+  </div>
+
+  {% if courses.is_empty() %}
+  <p class="text-gray-500 py-6 text-center border-2 border-dashed border-gray-100 rounded-lg">
+    You have no courses yet. They appear once the IT admin assigns you to a course or timetable period.
+  </p>
+  {% else %}
+  <section class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+    <form method="get" action="/teacher/reports" class="flex flex-wrap items-end gap-4">
+      <div>
+        <label for="course" class="block font-semibold text-gray-900">Course</label>
+        <select id="course" name="course" required class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900">
+          <option value="">Choose a course</option>
+          {% for c in courses %}<option value="{{ c.id }}" {% if c.id == selected %}selected{% endif %}>{{ c.code }} {{ c.title }} ({{ c.programme }}, sem {{ c.semester }})</option>{% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition">Show report</button>
+    </form>
+  </section>
+  {% endif %}
+
+  {% if course_title != "" %}
+  <section class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+    <h2 class="text-xl font-bold text-gray-900">{{ course_title }}</h2>
+    {% if lines.is_empty() %}
+    <p class="mt-3 text-gray-500">No students are enrolled in this course yet.</p>
+    {% else %}
+    <div class="mt-4 overflow-x-auto">
+      <table class="w-full min-w-[40rem] text-left text-sm">
+        <thead>
+          <tr class="border-b bg-gray-50 text-xs font-semibold uppercase tracking-wider text-gray-600">
+            <th scope="col" class="py-3 px-3">Student</th>
+            <th scope="col" class="py-3 px-3">Periods</th>
+            <th scope="col" class="py-3 px-3">Present</th>
+            <th scope="col" class="py-3 px-3">Absent</th>
+            <th scope="col" class="py-3 px-3">Leave</th>
+            <th scope="col" class="py-3 px-3">Attendance</th>
+            <th scope="col" class="py-3 px-3">E-grants, this month</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          {% for l in lines %}
+          <tr>
+            <td class="py-3 px-3 font-medium text-gray-900">{{ l.name }}<br><span class="text-sm font-normal text-gray-500">{{ l.admission_no }}</span></td>
+            <td class="py-3 px-3 text-gray-700">{{ l.marked }}</td>
+            <td class="py-3 px-3 text-gray-700">{{ l.present }}</td>
+            <td class="py-3 px-3 text-gray-700">{{ l.absent }}</td>
+            <td class="py-3 px-3 text-gray-700">{{ l.on_leave }}</td>
+            <td class="py-3 px-3 text-gray-700 {% if l.low %}font-semibold text-rose-600{% endif %}">{{ l.percent_label }}{% if l.low %}<br><span class="text-xs">Below {{ rules.min_percent }}%</span>{% endif %}</td>
+            <td class="py-3 px-3 text-gray-700 {% if l.month_low %}font-semibold text-rose-600{% endif %}">{% if l.egrants %}{{ l.month_label }}{% if l.month_low %}<br><span class="text-xs">Below {{ rules.egrants_monthly_percent }}%</span>{% endif %}{% else %}<span class="text-gray-400">Not e-grants</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

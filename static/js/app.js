@@ -65,10 +65,29 @@
   document.body.addEventListener("htmx:pushedIntoHistory", markActive);
   document.body.addEventListener("htmx:afterSettle", markActive);
   window.addEventListener("popstate", markActive);
+  // The sidebar uses hx-boost, which swaps #app-main without the browser's
+  // native jump to the fragment. Focusing #app-main then scrolls back to the
+  // top, so re-apply the fragment afterwards.
+  function scrollToHash() {
+    var hash = window.location.hash;
+    if (!hash || hash.length < 2) return;
+    var target = document.getElementById(decodeURIComponent(hash.slice(1)));
+    if (target) target.scrollIntoView({ block: "start" });
+  }
+
   document.body.addEventListener("htmx:afterSettle", function (e) {
     var main = document.getElementById("app-main");
-    if (main && e.detail && e.detail.target && e.detail.target.id === "app-main") main.focus();
+    if (main && e.detail && e.detail.target && e.detail.target.id === "app-main") {
+      main.focus();
+      scrollToHash();
+    }
   });
+
+  // A fragment in the URL on first paint (back button, shared link).
+  if (window.location.hash) {
+    window.addEventListener("load", scrollToHash);
+    scrollToHash();
+  }
 
   // Attendance register: "Mark everyone present/absent".
   document.addEventListener("click", function (e) {

@@ -206,6 +206,19 @@ pub struct HubCourse {
     pub is_low: bool,
 }
 
+/// One course's internal marks on the Results section.
+pub struct HubResult {
+    pub code: String,
+    pub title: String,
+    pub credits: i32,
+    pub obtained_label: String,
+    pub maximum_label: String,
+    pub percent_label: String,
+    pub grade: String,
+    pub bar_width: String,
+    pub has_marks: bool,
+}
+
 #[derive(Template)]
 #[template(path = "dashboard/student.html")]
 pub struct StudentTemplate {
@@ -221,6 +234,41 @@ pub struct StudentTemplate {
     rows: Vec<HubRow>,
     courses: Vec<HubCourse>,
     total_credits: i32,
+    results: Vec<HubResult>,
+    results_total_label: String,
+    results_credits: i32,
+    results_published: bool,
+    results_semester_label: String,
+}
+
+/// Grade a percentage on the usual internal-assessment scale.
+fn grade_for(percent: f64) -> &'static str {
+    match percent {
+        p if p >= 90.0 => "A",
+        p if p >= 80.0 => "B+",
+        p if p >= 70.0 => "B",
+        p if p >= 60.0 => "C",
+        p if p >= 50.0 => "C+",
+        _ => "F",
+    }
+}
+
+/// Marks are stored as numeric(6,2); show a whole number unless there really
+/// is a fraction, so the table stays tidy.
+fn format_marks(v: f64) -> String {
+    if v.fract().abs() < 0.005 {
+        format!("{v:.0}")
+    } else {
+        format!("{v:.1}")
+    }
+}
+
+struct ResultsBlock {
+    results: Vec<HubResult>,
+    results_total_label: String,
+    results_credits: i32,
+    results_published: bool,
+    results_semester_label: String,
 }
 
 /// "Room 12 · Dr. Name", with sensible fallbacks for missing data.
@@ -262,6 +310,11 @@ pub async fn student(
             rows: Vec::new(),
             courses: Vec::new(),
             total_credits: 0,
+            results: Vec::new(),
+            results_total_label: "—".into(),
+            results_credits: 0,
+            results_published: false,
+            results_semester_label: "—".into(),
         });
     };
 
@@ -401,6 +454,54 @@ pub async fn student(
         None
     };
 
+    // Internal assessment marks for this semester, across the courses the
+    // student is actually enrolled in.
+    let marks = hub::internal_results(&s.db, p.id, p.semester).await?;
+    let mut results_total = 0.0f64;
+    let mut results_max = 0.0f64;
+    let mut results_credits = 0;
+    let results: Vec<HubResult> = marks
+        .into_iter()
+        .map(|m| {
+            let has_marks = m.maximum > 0.0;
+            let percent = if has_marks {
+                100.0 * m.obtained / m.maximum
+            } else {
+                0.0
+            };
+            results_total += m.obtained;
+            results_max += m.maximum;
+            results_credits += m.credits;
+            HubResult {
+                obtained_label: format_marks(m.obtained),
+                maximum_label: format_marks(m.maximum),
+                percent_label: if has_marks {
+                    format!("{percent:.0}%")
+                } else {
+                    "—".into()
+                },
+                grade: if has_marks { grade_for(percent).into() } else { "—".into() },
+                bar_width: if has_marks {
+                    format!("{}%", percent.round().clamp(0.0, 100.0) as i32)
+                } else {
+                    "0%".into()
+                },
+                has_marks,
+                code: m.code,
+                title: m.title,
+                credits: m.credits,
+            }
+        })
+        .collect();
+
+    let results_block = ResultsBlock {
+        results,
+        results_total_label: format_marks(results_total),
+        results_credits,
+        results_published: results_max > 0.0,
+        results_semester_label: format!("Semester {}", p.semester),
+    };
+
     Ok(StudentTemplate {
         shell,
         today_str,
@@ -418,5 +519,10 @@ pub async fn student(
         rows,
         courses,
         total_credits,
+        results: results_block.results,
+        results_total_label: results_block.results_total_label,
+        results_credits: results_block.results_credits,
+        results_published: results_block.results_published,
+        results_semester_label: results_block.results_semester_label,
     })
 }

@@ -24,7 +24,16 @@ pub fn router() -> Router<AppState> {
             get(auth::password_form).post(auth::password_submit),
         )
         .route("/admin", get(dashboards::admin))
-        .route("/teacher", get(dashboards::teacher))
+        .route("/teacher", get(teacher::today))
+        .route("/teacher/attendance", get(teacher::attendance_list))
+        .route(
+            "/teacher/attendance/:entry_id/:date",
+            get(teacher::mark_form).post(teacher::mark_save),
+        )
+        .route("/teacher/timetable", get(teacher::timetable))
+        .route("/teacher/reports", get(teacher::reports))
+        // The newer HTMX attendance sheet, kept alongside the pages above.
+        .route("/teacher/sheet", get(dashboards::teacher))
         .route("/hub", get(dashboards::student))
         // Add these alongside your existing dashboard routes:
         .route("/dashboard/teacher/session/:entry_id/attendance", axum::routing::get(teacher::get_attendance_sheet))
@@ -47,6 +56,7 @@ pub fn router() -> Router<AppState> {
         .route("/notices", get(public::notices))
         .route("/contact", get(public::contact))
         .route("/fragments/notices", get(htmx::notices))
+        .route("/fragments/account-link", get(htmx::account_link))
         .route("/robots.txt", get(seo::robots))
         .route("/sitemap.xml", get(seo::sitemap))
         .route("/healthz", get(public::health))

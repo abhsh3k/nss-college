@@ -79,6 +79,7 @@ pub struct PersonForm {
     designation: String,
     qualification: String,
     is_hod: Option<String>,
+    can_manage: Option<String>,
 }
 
 impl PersonForm {
@@ -111,6 +112,7 @@ impl PersonForm {
             designation: d.designation.clone(),
             qualification: d.qualification.clone(),
             is_hod: d.is_hod.then(|| "on".to_string()),
+            can_manage: d.can_manage.then(|| "on".to_string()),
         }
     }
 }
@@ -209,6 +211,7 @@ struct Checked {
     designation: String,
     qualification: String,
     is_hod: bool,
+    can_manage: bool,
 }
 
 fn check(f: &PersonForm) -> Result<Checked, String> {
@@ -263,6 +266,7 @@ fn check(f: &PersonForm) -> Result<Checked, String> {
         designation: f.designation.trim().to_string(),
         qualification: f.qualification.trim().to_string(),
         is_hod: f.is_hod.is_some(),
+        can_manage: f.can_manage.is_some(),
     })
 }
 
@@ -359,6 +363,7 @@ pub async fn create(
                     designation: &c.designation,
                     qualification: &c.qualification,
                     is_hod: c.is_hod,
+                    can_manage: c.can_manage,
                 },
                 &hash,
             )
@@ -443,6 +448,7 @@ pub async fn update(
         designation: c.designation,
         qualification: c.qualification,
         is_hod: c.is_hod,
+        can_manage: c.can_manage,
     };
     if let Err(e) = people::update(&s.db, &updated).await {
         if is_unique_violation(&e) {

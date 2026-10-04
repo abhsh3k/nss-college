@@ -22,6 +22,26 @@ pub async fn programme_options(db: &PgPool) -> Res<Vec<ProgrammeOption>> {
     .await
 }
 
+/// Programmes in one department, for the HOD's timetable picker.
+/// `None` means the IT admin, who sees every programme.
+pub async fn programme_options_for(
+    db: &PgPool,
+    department: Option<i64>,
+) -> Res<Vec<ProgrammeOption>> {
+    let Some(dep) = department else {
+        return programme_options(db).await;
+    };
+    sqlx::query_as::<_, ProgrammeOption>(
+        r#"SELECT p.id, p.name, d.name AS department, p.level
+           FROM programmes p JOIN departments d ON d.id = p.department_id
+           WHERE p.status = 'published' AND p.department_id = $1
+           ORDER BY p.sort_order, p.name"#,
+    )
+    .bind(dep)
+    .fetch_all(db)
+    .await
+}
+
 pub async fn programme(db: &PgPool, id: i64) -> Res<Option<ProgrammeOption>> {
     sqlx::query_as::<_, ProgrammeOption>(
         r#"SELECT p.id, p.name, d.name AS department, p.level
@@ -31,6 +51,30 @@ pub async fn programme(db: &PgPool, id: i64) -> Res<Option<ProgrammeOption>> {
     .bind(id)
     .fetch_optional(db)
     .await
+}
+
+/// The department a programme belongs to, for scoping HOD actions.
+pub async fn programme_department(db: &PgPool, id: i64) -> Res<Option<i64>> {
+    sqlx::query_scalar("SELECT department_id FROM programmes WHERE id = $1")
+        .bind(id)
+        .fetch_optional(db)
+        .await
+}
+
+/// Whether a manager may act on this programme.
+///
+/// The IT admin (`department` is `None`) may touch any programme. An HOD or an
+/// approved teacher may only touch programmes in their own department, and a
+/// teacher whose department is not set yet may touch nothing.
+pub async fn may_manage_programme(
+    db: &PgPool,
+    programme_id: i64,
+    department: Option<i64>,
+) -> Res<bool> {
+    let Some(want) = department else {
+        return Ok(true);
+    };
+    Ok(matches!(programme_department(db, programme_id).await?, Some(id) if id == want))
 }
 
 #[derive(Debug, FromRow)]
@@ -51,6 +95,28 @@ pub async fn programme_summaries(db: &PgPool) -> Res<Vec<ProgrammeSummary>> {
            FROM programmes p JOIN departments d ON d.id = p.department_id
            WHERE p.status = 'published' ORDER BY p.sort_order, p.name"#,
     )
+    .fetch_all(db)
+    .await
+}
+
+/// Programme summaries limited to one department, for the HOD's own view.
+/// `None` means the IT admin, who sees every programme.
+pub async fn programme_summaries_for(
+    db: &PgPool,
+    department: Option<i64>,
+) -> Res<Vec<ProgrammeSummary>> {
+    let Some(dep) = department else {
+        return programme_summaries(db).await;
+    };
+    sqlx::query_as::<_, ProgrammeSummary>(
+        r#"SELECT p.id, p.name, d.name AS department, p.level,
+                  (SELECT count(*) FROM courses c WHERE c.programme_id = p.id) AS course_count,
+                  (SELECT count(*) FROM students s WHERE s.programme_id = p.id AND s.is_active) AS student_count
+           FROM programmes p JOIN departments d ON d.id = p.department_id
+           WHERE p.status = 'published' AND p.department_id = $1
+           ORDER BY p.sort_order, p.name"#,
+    )
+    .bind(dep)
     .fetch_all(db)
     .await
 }
@@ -118,6 +184,42 @@ pub async fn teacher_options(db: &PgPool) -> Res<Vec<TeacherOption>> {
     )
     .fetch_all(db)
     .await
+}
+
+/// Teachers in one department, for HOD substitution pickers.
+pub async fn teacher_options_for(
+    db: &PgPool,
+    department: Option<i64>,
+) -> Res<Vec<TeacherOption>> {
+    let Some(dep) = department else {
+        return teacher_options(db).await;
+    };
+    sqlx::query_as::<_, TeacherOption>(
+        r#"SELECT f.id, f.name, COALESCE(d.name, '') AS department
+           FROM faculty f LEFT JOIN departments d ON d.id = f.department_id
+           WHERE f.status = 'published' AND f.department_id = $1 ORDER BY f.name"#,
+    )
+    .bind(dep)
+    .fetch_all(db)
+    .await
+}
+
+/// Whether a manager may act on this teacher, for substitutions and timetable
+/// assignment. The IT admin may act on anyone.
+pub async fn may_manage_teacher(
+    db: &PgPool,
+    faculty_id: i64,
+    department: Option<i64>,
+) -> Res<bool> {
+    let Some(want) = department else {
+        return Ok(true);
+    };
+    let dept: Option<i64> =
+        sqlx::query_scalar("SELECT department_id FROM faculty WHERE id = $1")
+            .bind(faculty_id)
+            .fetch_optional(db)
+            .await?;
+    Ok(matches!(dept, Some(id) if id == want))
 }
 
 pub struct CourseInput<'a> {

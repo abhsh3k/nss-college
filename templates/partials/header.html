@@ -58,7 +58,9 @@
         <li><a class="block rounded px-3 py-2 font-medium hover:bg-mist" href="/alumni">Alumni</a></li>
         <li><a class="block rounded px-3 py-2 font-medium hover:bg-mist" href="/news">News</a></li>
         <li><a class="block rounded px-3 py-2 font-medium hover:bg-mist" href="/contact">Contact</a></li>
-        <li class="mt-2 md:ml-2 md:mt-0"><a class="inline-block rounded bg-ink px-4 py-2 font-semibold text-chalk hover:bg-brand" href="/login">Student Hub</a></li>
+        <li class="mt-2 md:ml-2 md:mt-0" hx-get="/fragments/account-link" hx-swap="outerHTML" hx-trigger="load">
+          <a href="/login" class="inline-block rounded bg-ink px-4 py-2 font-semibold text-chalk hover:bg-brand">Log in</a>
+        </li>
       </ul>
     </nav>
   </div>

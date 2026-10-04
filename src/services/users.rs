@@ -16,6 +16,8 @@ pub struct SessionUserRow {
     pub full_name: String,
     pub role: String,
     pub must_change_password: bool,
+    pub is_hod: bool,
+    pub can_manage: bool,
 }
 
 /// Sign in with the account email or, for students, the admission number.
@@ -37,8 +39,15 @@ pub async fn find_for_login(db: &PgPool, identifier: &str) -> Res<Option<LoginRo
 }
 
 pub async fn find_active(db: &PgPool, id: i64) -> Res<Option<SessionUserRow>> {
+    // The faculty flags ride along here so the sidebar can show HOD links
+    // without a second query on every page.
     sqlx::query_as::<_, SessionUserRow>(
-        "SELECT id, full_name, role, must_change_password FROM users WHERE id = $1 AND is_active",
+        r#"SELECT u.id, u.full_name, u.role, u.must_change_password,
+                  COALESCE(f.is_hod, false) AS is_hod,
+                  COALESCE(f.can_manage, false) AS can_manage
+           FROM users u
+           LEFT JOIN faculty f ON f.user_id = u.id
+           WHERE u.id = $1 AND u.is_active"#,
     )
     .bind(id)
     .fetch_optional(db)
