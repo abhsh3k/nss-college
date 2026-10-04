@@ -2,7 +2,10 @@
 .env
 /uploads/*
 !/uploads/.gitkeep
-/static/css/tailwind.css
+
+# tailwind.css is a build artifact, but it is committed on purpose: the deploy
+# image has no Node/Tailwind to run build-css.sh, so without it the deployed
+# site renders unstyled. Re-run build-css.sh after changing templates.
 
 /tailwindcss.exe
 /tailwindcss

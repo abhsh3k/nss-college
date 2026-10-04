@@ -1,0 +1,5 @@
+# Railway's Nixpacks builder defaults to an older Cargo (1.84 at the time of
+# writing) which rejects dependencies that require the 2024 edition. Pinning the
+# channel keeps local and deployed builds on the same compiler.
+[toolchain]
+channel = "stable"
