@@ -12,3 +12,5 @@
 
 # Plaintext test credentials - never commit
 /usename.txt
+/username.txt
+/credentials*.txt
