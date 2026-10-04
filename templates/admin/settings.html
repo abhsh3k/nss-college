@@ -1,0 +1,78 @@
+{% extends "layouts/app.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Settings</h1>
+<p class="mt-3 max-w-2xl text-ink/80">The words every visitor reads. Nothing here is written into the page templates, so an edit shows on the public site as soon as you save.</p>
+
+<h2 class="mt-10 font-display text-2xl font-semibold">College details</h2>
+<p class="mt-2 max-w-2xl text-ink/80">Leave a field empty to hide whatever it controls. Writing <code class="font-mono text-sm">&#123;phone&#125;</code>, <code class="font-mono text-sm">&#123;site_name&#125;</code> or <code class="font-mono text-sm">&#123;year&#125;</code> inserts the current value automatically.</p>
+
+<form method="post" enctype="multipart/form-data" action="/admin/settings" class="mt-6 max-w-3xl space-y-6">
+  <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+
+  {% for row in settings %}
+  <div class="border-t border-ink/15 pt-5">
+    <label for="s-{{ row.key }}" class="block font-semibold">{{ row.label }}</label>
+    {% if row.multiline %}
+    <textarea id="s-{{ row.key }}" name="{{ row.key }}" rows="3" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">{{ row.value }}</textarea>
+    {% else %}
+    <input id="s-{{ row.key }}" name="{{ row.key }}" type="text" value="{{ row.value }}" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    {% endif %}
+    {% if row.hint != "" %}<p class="mt-1 text-sm text-ink/70">{{ row.hint }}</p>{% endif %}
+  </div>
+  {% endfor %}
+
+  <div class="border-t border-ink/15 pt-5">
+    <button type="submit" class="rounded bg-brand px-5 py-2 font-semibold text-chalk hover:bg-ink">Save college details</button>
+  </div>
+</form>
+
+<h2 class="mt-12 font-display text-2xl font-semibold">Default section display</h2>
+<p class="mt-2 max-w-2xl text-ink/80">What a new section starts from. Every block below can override these, and changing this only affects sections added from now on.</p>
+
+<form method="post" action="/admin/settings/display-defaults" class="mt-6 max-w-3xl">
+  <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+  {% let opts = defaults %}
+  {% include "admin/_display_options.html" %}
+  <button type="submit" class="mt-4 rounded bg-brand px-5 py-2 font-semibold text-chalk hover:bg-ink">Save as the default</button>
+</form>
+
+<h2 class="mt-14 font-display text-2xl font-semibold">Home page text</h2>
+<p class="mt-2 max-w-2xl text-ink/80">The blocks that make up the home page. Each one saves on its own, so a long paragraph cannot be lost by editing the block above it. Each block also carries a photo and its own display options.</p>
+
+<div class="mt-6 max-w-3xl space-y-8">
+  {% for sec in home_sections %}
+  {# multipart because the shared options fragment includes a photo upload. #}
+  <form method="post" action="/admin/settings/home/{{ sec.section_key }}" enctype="multipart/form-data" class="rounded border border-ink/15 p-4">
+    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+    <p class="font-mono text-xs uppercase tracking-wide text-ink/70">{{ sec.section_key }}</p>
+
+    <div class="mt-3">
+      <label for="h-{{ sec.section_key }}" class="block font-semibold">Heading</label>
+      <input id="h-{{ sec.section_key }}" name="heading" type="text" value="{{ sec.heading }}" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+
+    <div class="mt-3">
+      <label for="b-{{ sec.section_key }}" class="block font-semibold">Text</label>
+      <textarea id="b-{{ sec.section_key }}" name="body" rows="4" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">{{ sec.body }}</textarea>
+      {% if sec.section_key == "mission" %}<p class="mt-1 text-sm text-ink/70">Shown as a bullet list. Leave a blank line between items.</p>{% endif %}
+    </div>
+
+    {# The rank holders block is edited on its own screen, next to the list it
+       styles, so it does not appear twice. #}
+    {% if sec.section_key != "rank_holders" %}
+    {% let opts = sec.opts %}
+    {% if let Some(p) = sec.photo %}
+    <p class="mt-4 flex items-center gap-3 text-sm text-ink/70">
+      <img src="{{ p }}" alt="" width="72" height="72" loading="lazy" class="h-16 w-16 rounded bg-mist object-cover">
+      <span>Current block photo. Choosing a file replaces it.</span>
+    </p>
+    {% endif %}
+    {% include "admin/_display_options.html" %}
+    {% endif %}
+
+    <button type="submit" class="mt-3 rounded bg-brand px-5 py-2 font-semibold text-chalk hover:bg-ink">Save this block</button>
+  </form>
+  {% endfor %}
+</div>
+{% endblock %}

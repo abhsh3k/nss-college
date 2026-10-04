@@ -1,0 +1,34 @@
+{# The body of a home page block, drawn in the layout its row asks for.
+
+   Callers pass `block` (the block's `section_key`) and `bopts` (its
+   `DisplayOptions`). The text itself is read through `copy.paragraphs_of(block)`
+   rather than bound by the caller, because an askama `{% let %}` cannot move a
+   `String` out of the template. Paragraphs are separated by blank lines, exactly
+   as on a page section, so an admin writes text the same way everywhere and only
+   the layout differs.
+
+   This is what makes the Layout choice real on the home page: a block holding a
+   couple of sentences reads better as prose, and one holding a list of short
+   items reads better as cards, and the admin picks per block.
+
+   The name `bopts` rather than `opts` is deliberate: `home.html` also includes the
+   rank holder partial, which reads `opts`, and a `{% let %}` of the same name
+   would shadow it. #}
+
+{% if bopts.is_cards() %}
+<div class="mt-5 grid gap-6
+            {% if bopts.columns == 1 %}md:grid-cols-1{% endif %}
+            {% if bopts.columns == 2 %}md:grid-cols-2{% endif %}
+            {% if bopts.columns == 3 %}md:grid-cols-2 lg:grid-cols-3{% endif %}
+            {% if bopts.columns == 4 %}md:grid-cols-2 lg:grid-cols-4{% endif %}">
+  {% for para in copy.paragraphs_of(block) %}
+  <div class="rounded border border-ink/15 bg-white/60 p-5{% if bopts.text_is_centre() %} text-center{% endif %}{% if bopts.text_is_right() %} text-right{% endif %}">
+    <p class="leading-relaxed">{{ para }}</p>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+{% for para in copy.paragraphs_of(block) %}
+<p class="mt-5 max-w-prose text-lg leading-relaxed{% if bopts.text_is_centre() %} text-center{% endif %}{% if bopts.text_is_right() %} text-right{% endif %}">{{ para }}</p>
+{% endfor %}
+{% endif %}

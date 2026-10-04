@@ -1,0 +1,91 @@
+{# The display options every section form shows.
+
+   Callers set `opts` (a DisplayOptions, which is `Copy`, so it can be bound with
+   a `{% let %}`) before including this. The current photo preview is rendered by
+   each caller rather than here, because the loop callers need to reach a photo
+   stored on the item they are looping over, and askama's `{% let %}` can only
+   bind a field path — not a call.
+
+   Each control wraps its input in a `<label>` rather than pointing at it with
+   `for`/`id`. That is deliberate: the settings screen includes this fragment once
+   for the defaults and again for every home page block, and hardcoded ids would
+   repeat on one page. A wrapping label associates just as well for a screen
+   reader, so nothing is lost.
+
+   The Tailwind classes are written out in full for each choice rather than
+   assembled in Rust, because the CSS build scans this file for class names and a
+   class built in code would never reach static/css/tailwind.css. #}
+<fieldset class="mt-4 rounded border border-ink/15 p-4">
+  <legend class="px-1 font-semibold">How this section is displayed</legend>
+  <p class="mt-1 text-sm text-ink/70">Choose between cards and paragraphs, how many cards sit in a row, and where the photo and text line up.</p>
+
+  <div class="mt-4 grid gap-4 sm:grid-cols-2">
+    <label class="block">
+      <span class="block font-semibold">Layout</span>
+      <select name="layout" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        <option value="cards" {% if opts.is_cards() %}selected{% endif %}>Cards — boxed items, photo above the text</option>
+        <option value="paragraphs" {% if opts.is_paragraphs() %}selected{% endif %}>Paragraphs — plain text, one block after another</option>
+      </select>
+    </label>
+
+    <label class="block">
+      <span class="block font-semibold">Cards per row</span>
+      <select name="grid_columns" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        <option value="1" {% if opts.columns == 1 %}selected{% endif %}>1 — one across</option>
+        <option value="2" {% if opts.columns == 2 %}selected{% endif %}>2</option>
+        <option value="3" {% if opts.columns == 3 %}selected{% endif %}>3</option>
+        <option value="4" {% if opts.columns == 4 %}selected{% endif %}>4</option>
+      </select>
+      <span class="mt-1 block text-sm text-ink/70">Fewer columns make bigger cards. Narrow screens always drop to one.</span>
+    </label>
+
+    <label class="block">
+      <span class="block font-semibold">Photo position</span>
+      <select name="image_align" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        <option value="left" {% if opts.photo_is_left() %}selected{% endif %}>Photo on the left</option>
+        <option value="center" {% if opts.photo_is_centre() %}selected{% endif %}>Photo centred</option>
+        <option value="right" {% if opts.photo_is_right() %}selected{% endif %}>Photo on the right</option>
+      </select>
+    </label>
+
+    <label class="block">
+      <span class="block font-semibold">Text alignment</span>
+      <select name="text_align" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        <option value="left" {% if !opts.text_is_centre() && !opts.text_is_right() %}selected{% endif %}>Left</option>
+        <option value="center" {% if opts.text_is_centre() %}selected{% endif %}>Centred</option>
+        <option value="right" {% if opts.text_is_right() %}selected{% endif %}>Right</option>
+      </select>
+    </label>
+
+    <label class="block">
+      <span class="block font-semibold">Photo shape</span>
+      <select name="photo_shape" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        <option value="circle" {% if opts.shape_is_circle() %}selected{% endif %}>Circle</option>
+        <option value="rounded" {% if opts.shape_is_rounded() %}selected{% endif %}>Rounded rectangle</option>
+        <option value="square" {% if opts.shape_is_square() %}selected{% endif %}>Square corners</option>
+      </select>
+    </label>
+
+    <label class="block">
+      <span class="block font-semibold">Photo size</span>
+      <select name="photo_size" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        <option value="sm" {% if opts.size_is_small() %}selected{% endif %}>Small</option>
+        <option value="md" {% if opts.size_is_medium() %}selected{% endif %}>Medium</option>
+        <option value="lg" {% if opts.size_is_large() %}selected{% endif %}>Large</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="mt-4">
+    <span class="block font-semibold">Section photo</span>
+    <input type="file" name="photo" accept="image/jpeg,image/png,image/gif,image/webp" class="mt-2 text-sm">
+    <span class="mt-1 block text-sm text-ink/70">JPG, PNG, GIF or WebP, up to 8&nbsp;MB. Leave empty to keep the current photo.</span>
+    {# Removing needs an explicit box: an empty file input means "keep what is
+       there", so without this there would be no way to take a photo back off a
+       section once one had been uploaded. #}
+    <label class="mt-2 flex items-center gap-2 text-sm">
+      <input type="checkbox" name="remove_photo" value="1" class="h-4 w-4">
+      <span>Remove the current photo</span>
+    </label>
+  </div>
+</fieldset>

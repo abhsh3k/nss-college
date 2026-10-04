@@ -1,0 +1,29 @@
+{# The photo an admin uploaded for one home page block, drawn in the alignment,
+   shape and size that block's display options ask for.
+
+   Callers pass `block` (the block's `section_key`) and `bopts` (its
+   `DisplayOptions`). Both are read from `copy`, which owns the keyed lookups, so
+   `home.html` never hardcodes a string. The name `bopts` rather than `opts` is
+   deliberate: `home.html` also includes the rank holder partial, which reads
+   `opts`, and a `{% let %}` of the same name would shadow it.
+
+   Every class is written out in full for each choice, because the CSS build
+   scans templates/ for class names and a class assembled from a stored value in
+   Rust would never be generated.
+
+   Renders nothing when the block has no photo, so callers can include it
+   unconditionally. #}
+
+{% if copy.has_photo(block) %}
+<p class="mt-6 flex {% if bopts.photo_is_centre() %}justify-center{% endif %}{% if bopts.photo_is_right() %}justify-end{% endif %}{% if bopts.photo_is_left() %}justify-start{% endif %}">
+  <img src="{{ copy.photo(block).unwrap_or_default() }}" alt="" loading="lazy"
+       width="{{ bopts.photo_px() }}" height="{{ bopts.photo_px() }}"
+       class="bg-mist object-cover
+              {% if bopts.size_is_small() %}h-16 w-16{% endif %}
+              {% if bopts.size_is_large() %}h-40 w-40{% endif %}
+              {% if bopts.size_is_medium() %}h-24 w-24{% endif %}
+              {% if bopts.shape_is_circle() %}rounded-full{% endif %}
+              {% if bopts.shape_is_rounded() %}rounded-2xl{% endif %}
+              {% if bopts.shape_is_square() %}rounded-none{% endif %}">
+</p>
+{% endif %}

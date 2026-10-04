@@ -2,9 +2,11 @@ mod auth;
 mod cli;
 mod config;
 mod error;
+mod layout;
 mod models;
 mod routes;
 mod seo;
+mod site;
 mod services;
 mod shell;
 mod state;
@@ -98,6 +100,13 @@ async fn main() {
         .with_secure(cfg.cookie_secure)
         .with_same_site(SameSite::Lax)
         .with_expiry(Expiry::OnInactivity(CookieDuration::hours(8)));
+
+    // The error pages and the dashboard sidebar have no database handle of
+    // their own, so they read the cached copy of these settings.
+    if let Err(e) = site::get(&db).await {
+        tracing::warn!(error = ?e, "could not load site settings; falling back to defaults");
+    }
+    site::spawn_refresher(db.clone());
 
     let state = AppState {
         db,

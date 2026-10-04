@@ -1,0 +1,84 @@
+{# The rank holders list, drawn in the layout chosen on the settings screen.
+
+   Callers pass `holders` and `opts` (a DisplayOptions). Every class is written
+   out in full for each choice, because the CSS build scans templates/ for class
+   names and a class built from a stored value in Rust would never be generated.
+   Askama 0.12 has no template macros either, so the photo's classes are spelled
+   out at each place a photo is drawn rather than factored into a helper.
+
+   A holder with no photo falls back to an initials badge rather than a broken
+   image, so a missing upload still looks deliberate. #}
+
+{% if opts.is_paragraphs() %}
+{# ---------- Paragraphs ---------- #}
+<div class="mt-10 space-y-8">
+  {% for r in holders %}
+  <div class="flex gap-5
+              {% if opts.photo_is_centre() %}flex-col items-center text-center{% endif %}
+              {% if opts.photo_is_right() %}flex-row-reverse items-start text-right{% endif %}
+              {% if opts.photo_is_left() %}flex-row items-start{% endif %}">
+    {% if let Some(photo) = r.photo %}
+    <img src="{{ photo }}" alt="{{ r.name }}" loading="lazy" width="{{ opts.photo_px() }}" height="{{ opts.photo_px() }}"
+         class="shrink-0 bg-mist object-cover
+                {% if opts.size_is_small() %}h-16 w-16{% endif %}
+                {% if opts.size_is_large() %}h-40 w-40{% endif %}
+                {% if opts.size_is_medium() %}h-24 w-24{% endif %}
+                {% if opts.shape_is_circle() %}rounded-full{% endif %}
+                {% if opts.shape_is_rounded() %}rounded-2xl{% endif %}
+                {% if opts.shape_is_square() %}rounded-none{% endif %}">
+    {% else %}
+    <span aria-hidden="true" class="flex shrink-0 items-center justify-center bg-brand font-display text-chalk
+                {% if opts.size_is_small() %}h-16 w-16 text-lg{% endif %}
+                {% if opts.size_is_large() %}h-40 w-40 text-4xl{% endif %}
+                {% if opts.size_is_medium() %}h-24 w-24 text-2xl{% endif %}
+                {% if opts.shape_is_circle() %}rounded-full{% endif %}
+                {% if opts.shape_is_rounded() %}rounded-2xl{% endif %}
+                {% if opts.shape_is_square() %}rounded-none{% endif %}">{{ r.initials() }}</span>
+    {% endif %}
+    <div>
+      <p class="font-display text-3xl font-semibold">Rank {{ r.rank }}</p>
+      <p class="font-medium">{{ r.name }}</p>
+      <p class="text-sm text-ink/70">{% if let Some(dep) = r.department %}{{ dep }}, {% endif %}{{ site.university_short }} {{ r.year }}</p>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+
+{# ---------- Cards ---------- #}
+<ul class="mt-10 grid gap-8
+          {% if opts.columns == 1 %}md:grid-cols-1{% endif %}
+          {% if opts.columns == 2 %}md:grid-cols-2{% endif %}
+          {% if opts.columns == 3 %}md:grid-cols-2 lg:grid-cols-3{% endif %}
+          {% if opts.columns == 4 %}md:grid-cols-2 lg:grid-cols-4{% endif %}">
+  {% for r in holders %}
+  <li class="rounded border border-ink/15 bg-white/60 p-6{% if opts.text_is_centre() %} text-center{% endif %}{% if opts.text_is_right() %} text-right{% endif %}">
+    {% if let Some(photo) = r.photo %}
+    <img src="{{ photo }}" alt="{{ r.name }}" loading="lazy" width="{{ opts.photo_px() }}" height="{{ opts.photo_px() }}"
+         class="mb-4 bg-mist object-cover
+                {% if opts.size_is_small() %}h-16 w-16{% endif %}
+                {% if opts.size_is_large() %}h-40 w-40{% endif %}
+                {% if opts.size_is_medium() %}h-24 w-24{% endif %}
+                {% if opts.shape_is_circle() %}rounded-full{% endif %}
+                {% if opts.shape_is_rounded() %}rounded-2xl{% endif %}
+                {% if opts.shape_is_square() %}rounded-none{% endif %}
+                {% if opts.photo_is_centre() %}mx-auto{% endif %}
+                {% if opts.photo_is_right() %}ml-auto{% endif %}">
+    {% else %}
+    <span aria-hidden="true" class="mb-4 flex items-center justify-center bg-brand font-display text-chalk
+                {% if opts.size_is_small() %}h-16 w-16 text-lg{% endif %}
+                {% if opts.size_is_large() %}h-40 w-40 text-4xl{% endif %}
+                {% if opts.size_is_medium() %}h-24 w-24 text-2xl{% endif %}
+                {% if opts.shape_is_circle() %}rounded-full{% endif %}
+                {% if opts.shape_is_rounded() %}rounded-2xl{% endif %}
+                {% if opts.shape_is_square() %}rounded-none{% endif %}
+                {% if opts.photo_is_centre() %}mx-auto{% endif %}
+                {% if opts.photo_is_right() %}ml-auto{% endif %}">{{ r.initials() }}</span>
+    {% endif %}
+    <p class="font-display text-3xl font-semibold">Rank {{ r.rank }}</p>
+    <p class="font-medium">{{ r.name }}</p>
+    <p class="text-sm text-ink/70">{% if let Some(dep) = r.department %}{{ dep }}, {% endif %}{{ site.university_short }} {{ r.year }}</p>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}

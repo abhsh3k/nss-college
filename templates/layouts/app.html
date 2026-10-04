@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
-  <title>{% block title %}Dashboard{% endblock %} | NSS College Rajakumari</title>
+  <title>{% block title %}Dashboard{% endblock %} | {{ shell.site.name }}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -18,7 +18,7 @@
     <aside class="bg-ink text-chalk md:sticky md:top-0 md:h-screen md:w-64 md:shrink-0 md:overflow-y-auto">
       <div class="flex items-center justify-between px-4 py-4 md:block">
         <a href="/" class="block leading-tight">
-          <span class="block font-display text-lg font-semibold">NSS College Rajakumari</span>
+          <span class="block font-display text-lg font-semibold">{{ shell.site.name }}</span>
           <span class="block text-sm text-chalk/70">{{ shell.role_label }}</span>
         </a>
         <button id="menu-toggle" type="button" class="rounded border border-chalk/40 px-3 py-2 text-sm font-medium md:hidden" aria-expanded="false" aria-controls="primary-nav">Menu</button>

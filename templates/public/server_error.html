@@ -1,9 +1,9 @@
 {% extends "layouts/base.html" %}
-{% block title %}Something went wrong | NSS College Rajakumari{% endblock %}
+{% block title %}Something went wrong | {{ site.name }}{% endblock %}
 {% block content %}
 <section class="mx-auto max-w-3xl px-4 py-24">
-  <h1 class="font-display text-4xl font-semibold md:text-5xl">We couldn't load this page</h1>
-  <p class="mt-4 text-lg text-ink/80">The problem is on our side. Try again in a minute, or call the college office on <a class="underline underline-offset-4 hover:text-brand" href="tel:04868245370">04868-245370</a>.</p>
+  <h1 class="font-display text-4xl font-semibold md:text-5xl">{{ site.error_500_heading }}</h1>
+  <p class="mt-4 text-lg text-ink/80">{{ site.error_500_body }}</p>
   <a href="/" class="mt-8 inline-block rounded bg-ink px-5 py-3 font-semibold text-chalk hover:bg-brand">Go to the home page</a>
 </section>
 {% endblock %}

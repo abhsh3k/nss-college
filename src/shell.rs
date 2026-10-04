@@ -5,6 +5,8 @@ use tower_sessions::Session;
 use crate::{
     auth::{csrf, AuthUser, Role},
     error::{internal, AppError},
+    models::SiteInfo,
+    site,
 };
 
 pub struct NavItem {
@@ -20,6 +22,8 @@ pub struct Shell {
     pub nav: Vec<NavItem>,
     pub csrf_token: String,
     pub flash: Option<String>,
+    /// The college name and other chrome, from the settings cache.
+    pub site: SiteInfo,
 }
 
 fn item(label: &'static str, href: &'static str, soon: bool) -> NavItem {
@@ -35,21 +39,20 @@ fn nav_for(user: &AuthUser) -> Vec<NavItem> {
             item("Timetable", "/admin/timetable", false),
             item("Substitutions", "/admin/substitutions", false),
             item("Departments", "/admin/departments", false),
-            item("Department attendance", "/admin/departments/attendance", false),
             item("Attendance reports", "/admin/attendance", false),
             item("Notices", "/admin/notices", false),
             item("News", "/admin/news", false),
             item("Events", "/admin/events", false),
-            item("Documents", "/admin/documents", true),
-            item("Pages", "/admin/pages", true),
-            item("Settings", "/admin/settings", true),
+            item("Documents", "/admin/documents", false),
+            item("Pages", "/admin/pages", false),
+            item("Rank holders", "/admin/rank-holders", false),
+            item("Settings", "/admin/settings", false),
         ],
         Role::Staff => vec![
             item("Overview", "/admin", false),
             item("Notices", "/admin/notices", false),
             item("News", "/admin/news", false),
             item("Events", "/admin/events", false),
-            item("Documents", "/admin/documents", true),
         ],
         Role::Faculty => {
             let mut items = vec![
@@ -93,6 +96,7 @@ impl Shell {
             nav: nav_for(user),
             csrf_token: csrf::token(session).await?,
             flash: session.remove::<String>("flash").await.map_err(internal)?,
+            site: site::cached(),
         })
     }
 }

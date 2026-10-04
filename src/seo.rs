@@ -16,21 +16,17 @@ pub async fn robots() -> impl IntoResponse {
 
 pub async fn sitemap(State(s): State<AppState>) -> Result<impl IntoResponse, AppError> {
     let base = site_url();
-    let mut paths: Vec<String> = vec![
-        "/".into(),
-        "/academics".into(),
-        "/academics/rank-holders".into(),
-        "/departments".into(),
-        "/news".into(),
-        "/notices".into(),
-        "/contact".into(),
-    ];
+    // The list pages are now `pages` rows too, so they arrive with the query
+    // rather than being listed here; dedupe anyway in case one is added twice.
+    let mut paths: Vec<String> = vec!["/".into()];
     paths.extend(
         content::sitemap_paths(&s.db)
             .await?
             .into_iter()
             .filter(|p| !p.starts_with("/hub") && !p.starts_with("/admin")),
     );
+    paths.sort();
+    paths.dedup();
 
     let mut xml = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n",

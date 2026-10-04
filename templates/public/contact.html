@@ -1,5 +1,5 @@
 {% extends "layouts/base.html" %}
-{% block title %}{{ title }} | NSS College Rajakumari{% endblock %}
+{% block title %}{{ title }} | {{ site.name }}{% endblock %}
 {% block description %}{{ lede }}{% endblock %}
 {% block content %}
 {% include "partials/page_header.html" %}
@@ -8,19 +8,19 @@
     <dl class="space-y-6">
       <div>
         <dt class="font-semibold">Address</dt>
-        <dd>{{ contact.address }}</dd>
+        <dd>{{ site.contact_address }}</dd>
       </div>
       <div>
         <dt class="font-semibold">Telephone</dt>
-        <dd>{% for p in contact.phones %}{% if !loop.first %} or {% endif %}<a class="underline underline-offset-4 hover:text-brand" href="tel:{{ p.tel }}">{{ p.display }}</a>{% endfor %}</dd>
+        <dd>{% for p in site.contact_phones %}{% if !loop.first %} or {% endif %}<a class="underline underline-offset-4 hover:text-brand" href="tel:{{ p.tel }}">{{ p.display }}</a>{% endfor %}</dd>
       </div>
       <div>
         <dt class="font-semibold">Email</dt>
-        <dd><a class="underline underline-offset-4 hover:text-brand" href="mailto:{{ contact.email }}">{{ contact.email }}</a></dd>
+        <dd><a class="underline underline-offset-4 hover:text-brand" href="mailto:{{ site.contact_email }}">{{ site.contact_email }}</a></dd>
       </div>
     </dl>
-    <iframe title="Map showing NSS College Rajakumari" class="h-80 w-full rounded border-0" loading="lazy" referrerpolicy="no-referrer-when-downgrade"
-      src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3929.654177138351!2d77.16909861428178!3d9.96270327641009!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3b07a0f52b1a501d%3A0x5e52b98bfcc0d3e7!2sNSS+College!5e0!3m2!1sen!2sin!4v1544351228773"></iframe>
+    <iframe title="{{ site.map_title }}" class="h-80 w-full rounded border-0" loading="lazy" referrerpolicy="no-referrer-when-downgrade"
+      src="{{ site.map_embed_url }}"></iframe>
   </div>
 </section>
 {% endblock %}

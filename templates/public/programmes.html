@@ -1,10 +1,10 @@
 {% extends "layouts/base.html" %}
-{% block title %}{{ title }} | NSS College Rajakumari{% endblock %}
+{% block title %}{{ title }} | {{ site.name }}{% endblock %}
 {% block description %}{{ lede }}{% endblock %}
 {% block content %}
 {% include "partials/page_header.html" %}
 <section class="mx-auto max-w-6xl px-4 py-14 md:py-16">
   {% include "partials/programme_rows.html" %}
-  <p class="mt-8 text-ink/80">Research programmes are also offered in electronics and in computer applications.</p>
+  {% if !site.research_note.is_empty() %}<p class="mt-8 text-ink/80">{{ site.research_note }}</p>{% endif %}
 </section>
 {% endblock %}

@@ -1,0 +1,66 @@
+{# One section of an informational page, drawn in the layout its row asks for.
+
+   Every class is written out in full for each choice. The CSS build scans
+   templates/ for class names, so a class assembled from a stored value in Rust
+   would never be generated and the section would come out unstyled. Askama 0.12
+   has no template macros either, so the photo's classes are spelled out at each
+   place a photo is drawn rather than factored into a helper.
+
+   Callers pass `s`, the PageSection, and `first`, whether this is the first
+   section on the page. An askama include has no `loop` of its own, so the caller
+   supplies that rather than reading it here.
+
+   When the layout is `paragraphs` the photo is drawn above the text rather than
+   beside it: the paragraph form is plain prose, and an editor who wants a photo
+   beside the words picks cards. #}
+
+{% if s.opts.is_paragraphs() %}
+<div class="{% if !first %}mt-12{% endif %}">
+  {% if let Some(p) = s.photo %}
+  <img src="{{ p }}" alt="" loading="lazy" width="{{ s.opts.photo_px() }}" height="{{ s.opts.photo_px() }}"
+       class="mb-4 bg-mist object-cover
+              {% if s.opts.size_is_small() %}h-16 w-16{% endif %}
+              {% if s.opts.size_is_large() %}h-40 w-40{% endif %}
+              {% if s.opts.size_is_medium() %}h-24 w-24{% endif %}
+              {% if s.opts.shape_is_circle() %}rounded-full{% endif %}
+              {% if s.opts.shape_is_rounded() %}rounded-2xl{% endif %}
+              {% if s.opts.shape_is_square() %}rounded-none{% endif %}">
+  {% endif %}
+  <h2 class="font-display text-2xl font-semibold">{{ s.heading }}</h2>
+  {% for para in s.paragraphs() %}
+  <p class="mt-3 text-lg leading-relaxed{% if s.opts.text_is_centre() %} text-center{% endif %}{% if s.opts.text_is_right() %} text-right{% endif %}">{{ para }}</p>
+  {% endfor %}
+</div>
+{% else %}
+
+{# ---------- Cards ---------- #}
+{# The paragraphs become the cards: one item per paragraph. #}
+<section class="{% if !first %}mt-12{% endif %}">
+  <h2 class="font-display text-2xl font-semibold{% if s.opts.text_is_centre() %} text-center{% endif %}{% if s.opts.text_is_right() %} text-right{% endif %}">{{ s.heading }}</h2>
+
+  {% if let Some(p) = s.photo %}
+  <p class="mt-6 flex {% if s.opts.photo_is_centre() %}justify-center{% endif %}{% if s.opts.photo_is_right() %}justify-end{% endif %}{% if s.opts.photo_is_left() %}justify-start{% endif %}">
+    <img src="{{ p }}" alt="" loading="lazy" width="{{ s.opts.photo_px() }}" height="{{ s.opts.photo_px() }}"
+         class="bg-mist object-cover
+                {% if s.opts.size_is_small() %}h-16 w-16{% endif %}
+                {% if s.opts.size_is_large() %}h-40 w-40{% endif %}
+                {% if s.opts.size_is_medium() %}h-24 w-24{% endif %}
+                {% if s.opts.shape_is_circle() %}rounded-full{% endif %}
+                {% if s.opts.shape_is_rounded() %}rounded-2xl{% endif %}
+                {% if s.opts.shape_is_square() %}rounded-none{% endif %}">
+  </p>
+  {% endif %}
+
+  <div class="mt-6 grid gap-6
+              {% if s.opts.columns == 1 %}md:grid-cols-1{% endif %}
+              {% if s.opts.columns == 2 %}md:grid-cols-2{% endif %}
+              {% if s.opts.columns == 3 %}md:grid-cols-2 lg:grid-cols-3{% endif %}
+              {% if s.opts.columns == 4 %}md:grid-cols-2 lg:grid-cols-4{% endif %}">
+    {% for para in s.paragraphs() %}
+    <div class="rounded border border-ink/15 bg-white/60 p-5{% if s.opts.text_is_centre() %} text-center{% endif %}{% if s.opts.text_is_right() %} text-right{% endif %}">
+      <p class="leading-relaxed">{{ para }}</p>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}

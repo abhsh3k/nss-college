@@ -1,0 +1,42 @@
+{% extends "layouts/app.html" %}
+{% block title %}Add page{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Add page</h1>
+
+{% if let Some(msg) = form.error %}
+<p role="alert" class="mt-6 max-w-xl border-l-4 border-brand bg-mist px-4 py-3 font-medium">{{ msg }}</p>
+{% endif %}
+
+<form method="post" action="/admin/pages" class="mt-8 max-w-2xl space-y-5">
+  <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+
+  <div>
+    <label for="path" class="block font-semibold">Path</label>
+    <input id="path" name="path" type="text" value="{{ form.path }}" required maxlength="200" placeholder="/about" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    <p class="mt-1 text-sm text-ink/70">Where visitors will reach it, starting with a slash. Nested paths work too, for example /about/principal.</p>
+  </div>
+
+  <div>
+    <label for="title" class="block font-semibold">Title</label>
+    <input id="title" name="title" type="text" value="{{ form.title }}" required maxlength="300" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+  </div>
+
+  <div>
+    <label for="lede" class="block font-semibold">Introduction <span class="font-normal text-ink/70">(optional)</span></label>
+    <textarea id="lede" name="lede" rows="3" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">{{ form.lede }}</textarea>
+    <p class="mt-1 text-sm text-ink/70">The sentence under the title, and the page's search description.</p>
+  </div>
+
+  <div>
+    <label for="status" class="block font-semibold">Status</label>
+    <select id="status" name="status" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+      {% for st in statuses %}<option value="{{ st }}" {% if form.status == st.as_str() %}selected{% endif %}>{{ st }}</option>{% endfor %}
+    </select>
+  </div>
+
+  <div class="flex flex-wrap gap-3 pt-2">
+    <button type="submit" class="rounded bg-brand px-5 py-2 font-semibold text-chalk hover:bg-ink">Create page</button>
+    <a href="/admin/pages" class="rounded border border-ink/40 px-5 py-2 font-semibold hover:bg-mist">Cancel</a>
+  </div>
+</form>
+{% endblock %}

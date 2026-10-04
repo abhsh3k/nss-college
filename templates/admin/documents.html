@@ -1,0 +1,68 @@
+{% extends "layouts/app.html" %}
+{% block title %}Documents{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Documents</h1>
+<p class="mt-3 max-w-2xl text-ink/80">Downloadable files the college publishes, such as application forms, circulars and reports. Only published documents are listed for the public.</p>
+
+<div class="mt-8 flex flex-wrap items-center gap-3">
+  <a href="/admin/documents/new" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Upload document</a>
+  <form method="get" action="/admin/documents" class="flex items-end gap-3">
+    <div>
+      <label for="status" class="block text-sm font-semibold">Show</label>
+      <select id="status" name="status" class="mt-1 rounded border border-ink/40 bg-white px-3 py-2">
+        <option value="" {% if filter == "" %}selected{% endif %}>All documents</option>
+        {% for st in statuses %}<option value="{{ st }}" {% if filter == st.as_str() %}selected{% endif %}>{{ st }}</option>{% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="rounded border border-ink/40 px-4 py-2 font-semibold hover:bg-mist">Filter</button>
+  </form>
+</div>
+
+<div class="mt-8 overflow-x-auto">
+  <table class="w-full min-w-[40rem] text-left">
+    <thead>
+      <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+        <th scope="col" class="py-2 pr-4 font-medium">Title</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Category</th>
+        <th scope="col" class="py-2 pr-4 font-medium">File</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Status</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Published</th>
+        <th scope="col" class="py-2 font-medium"><span class="sr-only">Actions</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in documents %}
+      <tr class="border-b border-ink/10 align-top">
+        <td class="py-3 pr-4 font-medium">{{ d.title }}</td>
+        <td class="py-3 pr-4 text-sm text-ink/80">{{ d.category }}</td>
+        <td class="py-3 pr-4 text-sm">
+          <a class="text-brand underline underline-offset-4 hover:text-ink" href="{{ d.file_path }}">{{ d.file_name }}</a>
+          <span class="block text-xs text-ink/70">{{ d.size_label }}</span>
+        </td>
+        <td class="py-3 pr-4 text-sm">{{ d.status }}</td>
+        <td class="py-3 pr-4 text-sm text-ink/80">{{ d.published_label }}</td>
+        <td class="py-3 text-right">
+          <div class="flex flex-wrap items-center justify-end gap-3">
+            <a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/documents/{{ d.id }}">Edit<span class="sr-only"> {{ d.title }}</span></a>
+            <form method="post" action="/admin/documents/{{ d.id }}/status" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+              <input type="hidden" name="back" value="/admin/documents{% if filter != "" %}?status={{ filter }}{% endif %}">
+              <input type="hidden" name="status" value="{% if d.status == "published" %}archived{% else %}published{% endif %}">
+              <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">{% if d.status == "published" %}Archive{% else %}Publish{% endif %}<span class="sr-only"> {{ d.title }}</span></button>
+            </form>
+            <form method="post" action="/admin/documents/{{ d.id }}/delete" class="inline" onsubmit="return confirm('Permanently delete &quot;{{ d.title }}&quot; and its file? This cannot be undone.')">
+              <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+              <input type="hidden" name="back" value="/admin/documents{% if filter != "" %}?status={{ filter }}{% endif %}">
+              <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Delete<span class="sr-only"> {{ d.title }} forever</span></button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if documents.is_empty() %}
+  <p class="py-8 text-ink/70">No documents match. Upload one with the button above.</p>
+  {% endif %}
+</div>
+{% endblock %}

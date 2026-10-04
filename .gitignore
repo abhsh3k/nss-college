@@ -14,3 +14,7 @@
 /usename.txt
 /username.txt
 /credentials*.txt
+
+# Runtime logs from local dev runs - never commit
+/server.log
+/server.err

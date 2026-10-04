@@ -1,18 +1,20 @@
 {% extends "layouts/base.html" %}
-{% block title %}{{ title }} | NSS College Rajakumari{% endblock %}
+{% block title %}{{ title }} | {{ site.name }}{% endblock %}
 {% block description %}{{ lede }}{% endblock %}
 {% block content %}
 {% include "partials/page_header.html" %}
-<section class="mx-auto max-w-3xl px-4 py-14 md:py-16">
+{# Prose reads best in a narrow column, but a card grid chosen to be four across
+   needs more room, so the page widens when any section uses cards. #}
+<section class="mx-auto px-4 py-14 md:py-16 {% if wide %}max-w-6xl{% else %}max-w-3xl{% endif %}">
   {% if sections.is_empty() %}
-  <h2 class="font-display text-2xl font-semibold">We're still preparing this page</h2>
-  <p class="mt-3 text-lg leading-relaxed">Until it is ready, the college office can answer your questions. Call <a class="underline underline-offset-4 hover:text-brand" href="tel:04868245370">04868-245370</a> or <a class="underline underline-offset-4 hover:text-brand" href="/contact">find other ways to reach us</a>.</p>
+  <h2 class="font-display text-2xl font-semibold">{{ site.page_placeholder_heading }}</h2>
+  <p class="mt-3 text-lg leading-relaxed">{{ site.page_placeholder_body }} <a class="underline underline-offset-4 hover:text-brand" href="/contact">find other ways to reach us</a>.</p>
   {% else %}
   {% for s in sections %}
-  <h2 class="font-display text-2xl font-semibold {% if !loop.first %}mt-12{% endif %}">{{ s.heading }}</h2>
-  {% for para in s.paragraphs() %}
-  <p class="mt-3 text-lg leading-relaxed">{{ para }}</p>
-  {% endfor %}
+  {# An include has no `loop` of its own, so the flag the partial needs is set
+     here and read from the shared scope. #}
+  {% let first = loop.first %}
+  {% include "partials/page_section.html" %}
   {% endfor %}
   {% endif %}
 </section>

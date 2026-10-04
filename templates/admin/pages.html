@@ -1,0 +1,66 @@
+{% extends "layouts/app.html" %}
+{% block title %}Pages{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Pages</h1>
+<p class="mt-3 max-w-2xl text-ink/80">The standing pages of the site, each served from its own path. A page with no sections shows a short placeholder rather than an empty page.</p>
+
+<div class="mt-8 flex flex-wrap items-center gap-3">
+  <a href="/admin/pages/new" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Add page</a>
+  <form method="get" action="/admin/pages" class="flex items-end gap-3">
+    <div>
+      <label for="status" class="block text-sm font-semibold">Show</label>
+      <select id="status" name="status" class="mt-1 rounded border border-ink/40 bg-white px-3 py-2">
+        <option value="" {% if filter == "" %}selected{% endif %}>All pages</option>
+        {% for st in statuses %}<option value="{{ st }}" {% if filter == st.as_str() %}selected{% endif %}>{{ st }}</option>{% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="rounded border border-ink/40 px-4 py-2 font-semibold hover:bg-mist">Filter</button>
+  </form>
+</div>
+
+<div class="mt-8 overflow-x-auto">
+  <table class="w-full min-w-[40rem] text-left">
+    <thead>
+      <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+        <th scope="col" class="py-2 pr-4 font-medium">Path</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Title</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Sections</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Status</th>
+        <th scope="col" class="py-2 font-medium"><span class="sr-only">Actions</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in pages %}
+      <tr class="border-b border-ink/10 align-top">
+        <td class="py-3 pr-4 font-mono text-sm">
+          {{ p.path }}
+          {% if p.is_list_page %}<span class="block text-xs font-sans text-ink/70">Served by a fixed route; its title and lede come from here, but the path is fixed.</span>{% endif %}
+        </td>
+        <td class="py-3 pr-4 font-medium">{{ p.title }}{% if p.lede != "" %}<span class="block text-sm font-normal text-ink/80">{{ p.lede }}</span>{% endif %}</td>
+        <td class="py-3 pr-4 text-sm text-ink/80">{{ p.section_count }}</td>
+        <td class="py-3 pr-4 text-sm">{{ p.status }}</td>
+        <td class="py-3 text-right">
+          <div class="flex flex-wrap items-center justify-end gap-3">
+            <a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/pages/{{ p.id }}">Edit<span class="sr-only"> {{ p.title }}</span></a>
+            <form method="post" action="/admin/pages/{{ p.id }}/status" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+              <input type="hidden" name="back" value="/admin/pages{% if filter != "" %}?status={{ filter }}{% endif %}">
+              <input type="hidden" name="status" value="{% if p.status == "published" %}draft{% else %}published{% endif %}">
+              <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">{% if p.status == "published" %}Unpublish{% else %}Publish{% endif %}<span class="sr-only"> {{ p.title }}</span></button>
+            </form>
+            <form method="post" action="/admin/pages/{{ p.id }}/delete" class="inline" onsubmit="return confirm('Permanently delete &quot;{{ p.title }}&quot; and all of its sections? This cannot be undone.')">
+              <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+              <input type="hidden" name="back" value="/admin/pages{% if filter != "" %}?status={{ filter }}{% endif %}">
+              <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Delete<span class="sr-only"> {{ p.title }} forever</span></button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if pages.is_empty() %}
+  <p class="py-8 text-ink/70">No pages match. Add one with the button above.</p>
+  {% endif %}
+</div>
+{% endblock %}

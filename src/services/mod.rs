@@ -5,5 +5,7 @@ pub mod content_admin;
 pub mod hub;
 pub mod import_students;
 pub mod people;
+pub mod rank_holders;
 pub mod reports;
+pub mod site_admin;
 pub mod users;

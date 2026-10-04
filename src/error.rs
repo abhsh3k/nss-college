@@ -4,21 +4,32 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-#[derive(Template)]
-#[template(path = "public/not_found.html")]
-pub struct NotFoundTemplate;
+use crate::{models::SiteInfo, site};
 
-#[derive(Template)]
-#[template(path = "public/forbidden.html")]
-pub struct ForbiddenTemplate;
+/// The error pages have no database handle of their own, so their copy comes
+/// from the settings cache rather than a query per failure.
+macro_rules! error_template {
+    ($name:ident, $path:literal) => {
+        #[derive(Template)]
+        #[template(path = $path)]
+        pub struct $name {
+            site: SiteInfo,
+        }
 
-#[derive(Template)]
-#[template(path = "public/server_error.html")]
-pub struct ServerErrorTemplate;
+        impl $name {
+            pub fn new() -> Self {
+                Self {
+                    site: site::cached(),
+                }
+            }
+        }
+    };
+}
 
-#[derive(Template)]
-#[template(path = "public/bad_request.html")]
-pub struct BadRequestTemplate;
+error_template!(NotFoundTemplate, "public/not_found.html");
+error_template!(ForbiddenTemplate, "public/forbidden.html");
+error_template!(ServerErrorTemplate, "public/server_error.html");
+error_template!(BadRequestTemplate, "public/bad_request.html");
 
 #[derive(Debug)]
 pub enum AppError {
@@ -47,19 +58,19 @@ impl From<sqlx::Error> for AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         match self {
-            AppError::NotFound => (StatusCode::NOT_FOUND, NotFoundTemplate).into_response(),
-            AppError::Forbidden => (StatusCode::FORBIDDEN, ForbiddenTemplate).into_response(),
+            AppError::NotFound => (StatusCode::NOT_FOUND, NotFoundTemplate::new()).into_response(),
+            AppError::Forbidden => (StatusCode::FORBIDDEN, ForbiddenTemplate::new()).into_response(),
             AppError::BadRequest(msg) => {
                 tracing::info!(message = %msg, "rejected an invalid form");
-                (StatusCode::BAD_REQUEST, BadRequestTemplate).into_response()
+                (StatusCode::BAD_REQUEST, BadRequestTemplate::new()).into_response()
             }
             AppError::Db(e) => {
                 tracing::error!(error = ?e, "database error");
-                (StatusCode::INTERNAL_SERVER_ERROR, ServerErrorTemplate).into_response()
+                (StatusCode::INTERNAL_SERVER_ERROR, ServerErrorTemplate::new()).into_response()
             }
             AppError::Internal(msg) => {
                 tracing::error!(error = %msg, "internal error");
-                (StatusCode::INTERNAL_SERVER_ERROR, ServerErrorTemplate).into_response()
+                (StatusCode::INTERNAL_SERVER_ERROR, ServerErrorTemplate::new()).into_response()
             }
         }
     }

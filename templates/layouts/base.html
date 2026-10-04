@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}NSS College Rajakumari{% endblock %}</title>
-  <meta name="description" content="{% block description %}NSS College Rajakumari, affiliated to Mahatma Gandhi University, offers BCA, B.Sc. Electronics, BBA and B.Com programmes in the High Ranges of Idukki, Kerala.{% endblock %}">
+  <title>{% block title %}{{ site.name }}{% endblock %}</title>
+  <meta name="description" content="{% block description %}{{ site.meta_description }}{% endblock %}">
   <meta name="theme-color" content="#2A1410">
-  <meta property="og:site_name" content="NSS College Rajakumari">
+  <meta property="og:site_name" content="{{ site.name }}">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="{% block og_title %}NSS College Rajakumari{% endblock %}">
+  <meta property="og:title" content="{% block og_title %}{{ site.name }}{% endblock %}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">

@@ -1,7 +1,7 @@
 <header class="relative z-40 border-b border-ink/10 bg-chalk">
   <div class="bg-ink text-sm text-chalk/80">
     <div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-1 px-4 py-2">
-      <p class="hidden sm:block">Aided college, NAAC B+ (2.70)</p>
+      <p class="hidden sm:block">{{ site.header_note }}</p>
       <ul class="flex flex-wrap gap-x-4">
         <li><a class="hover:text-accent" href="/iqac">IQAC</a></li>
         <li><a class="hover:text-accent" href="/placement">Placement</a></li>
@@ -9,14 +9,14 @@
         <li><a class="hover:text-accent" href="/rti">RTI</a></li>
         <li><a class="hover:text-accent" href="/fees">Fees</a></li>
       </ul>
-      <p><a class="hover:text-accent" href="tel:04868245370">04868-245370</a></p>
+      {% if !site.phone_tel.is_empty() %}<p><a class="hover:text-accent" href="tel:{{ site.phone_tel }}">{{ site.phone_display }}</a></p>{% endif %}
     </div>
   </div>
 
   <div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3">
     <a href="/" class="block leading-tight">
-      <span class="block font-display text-xl font-semibold">NSS College Rajakumari</span>
-      <span class="block text-sm text-ink/70">Affiliated to Mahatma Gandhi University</span>
+      <span class="block font-display text-xl font-semibold">{{ site.name }}</span>
+      <span class="block text-sm text-ink/70">{{ site.tagline }}</span>
     </a>
 
     <button id="menu-toggle" type="button" class="rounded border border-ink/30 px-3 py-2 text-sm font-medium md:hidden" aria-expanded="false" aria-controls="primary-nav">Menu</button>

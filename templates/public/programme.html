@@ -1,5 +1,5 @@
 {% extends "layouts/base.html" %}
-{% block title %}{{ title }} | NSS College Rajakumari{% endblock %}
+{% block title %}{{ title }} | {{ site.name }}{% endblock %}
 {% block description %}{{ lede }}{% endblock %}
 {% block content %}
 {% include "partials/page_header.html" %}
@@ -17,7 +17,7 @@
     </div>
   </dl>
   <div class="mt-10 flex flex-wrap gap-3">
-    <a href="/admissions" class="rounded bg-accent px-6 py-3 font-semibold text-ink hover:bg-ink hover:text-chalk">Apply for 2026–30</a>
+    <a href="/admissions" class="rounded bg-accent px-6 py-3 font-semibold text-ink hover:bg-ink hover:text-chalk">{{ site.admissions_cta }}</a>
     <a href="/contact" class="rounded border border-ink px-6 py-3 font-semibold hover:bg-ink hover:text-chalk">Ask the department</a>
   </div>
   {% if !related.is_empty() %}

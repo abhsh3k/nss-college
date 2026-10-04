@@ -20,6 +20,7 @@ use crate::{
 #[derive(Template)]
 #[template(path = "auth/login.html")]
 pub struct LoginTemplate {
+    site: crate::models::SiteInfo,
     csrf_token: String,
     next: String,
     identifier: String,
@@ -32,6 +33,7 @@ pub struct LoginQuery {
 }
 
 pub async fn login_form(
+    State(s): State<AppState>,
     session: Session,
     user: Option<AuthUser>,
     Query(q): Query<LoginQuery>,
@@ -41,6 +43,7 @@ pub async fn login_form(
     }
     let next = q.next.unwrap_or_default();
     Ok(LoginTemplate {
+        site: crate::site::get(&s.db).await?,
         csrf_token: csrf::token(&session).await?,
         next,
         identifier: String::new(),
@@ -72,6 +75,7 @@ pub async fn login_submit(
 
     let again = |error: &'static str, token: String| {
         LoginTemplate {
+            site: crate::site::cached(),
             csrf_token: token,
             next: next.clone(),
             identifier: identifier.clone(),

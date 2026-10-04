@@ -3,10 +3,14 @@
 mod academics;
 mod attendance;
 mod departments;
+mod documents;
 mod events;
 mod news;
 mod notices;
+mod pages;
 mod people;
+mod rank_holders;
+mod settings;
 mod substitutions;
 mod timetable;
 
@@ -89,11 +93,76 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/events/:id/delete", post(events::destroy))
         .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
 
+    // Documents take an uploaded file, so they need the same body limit.
+    let documents = Router::new()
+        .route("/admin/documents", get(documents::index).post(documents::create))
+        .route("/admin/documents/new", get(documents::new_form).post(documents::create))
+        .route("/admin/documents/:id", get(documents::edit_form).post(documents::update))
+        .route("/admin/documents/:id/status", post(documents::set_status))
+        .route("/admin/documents/:id/delete", post(documents::destroy))
+        .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
+
+    let pages = Router::new()
+        .route("/admin/pages", get(pages::index).post(pages::create))
+        .route("/admin/pages/new", get(pages::new_form).post(pages::create))
+        .route("/admin/pages/:id", get(pages::edit_form).post(pages::update))
+        .route("/admin/pages/:id/status", post(pages::set_status))
+        .route("/admin/pages/:id/delete", post(pages::destroy))
+        .route("/admin/pages/:id/sections", post(pages::add_section))
+        .route(
+            "/admin/pages/:id/sections/:section_id",
+            post(pages::update_section),
+        )
+        .route(
+            "/admin/pages/:id/sections/:section_id/delete",
+            post(pages::delete_section),
+        )
+        .route(
+            "/admin/pages/:id/sections/:section_id/move",
+            post(pages::move_section),
+        )
+        // A section form can upload a photo, so these posts are multipart and
+        // need the same raised body limit as the publishing forms.
+        .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
+
+    // The settings screen posts one multipart body covering every field, so it
+    // shares the content body limit.
+    let settings = Router::new()
+        .route("/admin/settings", get(settings::index).post(settings::save))
+        .route("/admin/settings/home/:key", post(settings::save_home_section))
+        .route(
+            "/admin/settings/display-defaults",
+            post(settings::save_display_defaults),
+        )
+        .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
+
+    // Rank holders: the list of university rank holders and how it is presented.
+    // The forms upload a photo, so they need the same body limit as documents.
+    let rank_holders = Router::new()
+        .route("/admin/rank-holders", get(rank_holders::index))
+        .route("/admin/rank-holders/new", get(rank_holders::new_form).post(rank_holders::create))
+        .route(
+            "/admin/rank-holders/display",
+            post(rank_holders::save_display),
+        )
+        .route(
+            "/admin/rank-holders/:id",
+            get(rank_holders::edit_form).post(rank_holders::update),
+        )
+        .route("/admin/rank-holders/:id/status", post(rank_holders::set_status))
+        .route("/admin/rank-holders/:id/delete", post(rank_holders::destroy))
+        .route("/admin/rank-holders/:id/move", post(rank_holders::reorder))
+        .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
+
     Router::new()
         .merge(people)
         .merge(imports)
         .merge(academics_and_timetable)
         .merge(publishing)
+        .merge(documents)
+        .merge(rank_holders)
+        .merge(pages)
+        .merge(settings)
 }
 
 // ---------- small form helpers shared by the admin handlers ----------

@@ -80,11 +80,15 @@ pub struct ParsedForm {
 impl ParsedForm {
     /// A text field, trimmed. Empty when absent.
     pub fn field(&self, name: &str) -> &str {
-        self.fields
-            .get(name)
-            .map(String::as_str)
-            .unwrap_or("")
-            .trim()
+        self.field_opt(name).unwrap_or("")
+    }
+
+    /// The field only if the form actually sent it, so a caller can tell
+    /// "posted empty" apart from "not posted at all". The second case must not
+    /// overwrite stored data: a form that fails partway would otherwise blank
+    /// every setting it did not manage to send.
+    pub fn field_opt(&self, name: &str) -> Option<&str> {
+        self.fields.get(name).map(|v| v.trim())
     }
 
     /// Every value submitted under `name`, in the order the rows appeared.
