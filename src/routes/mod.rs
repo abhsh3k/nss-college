@@ -24,15 +24,11 @@ pub fn router() -> Router<AppState> {
             get(auth::password_form).post(auth::password_submit),
         )
         .route("/admin", get(dashboards::admin))
-        .route("/teacher", get(teacher::today))
-        .route("/teacher/attendance", get(teacher::attendance_list))
-        .route(
-            "/teacher/attendance/:entry_id/:date",
-            get(teacher::mark_form).post(teacher::mark_save),
-        )
-        .route("/teacher/timetable", get(teacher::timetable))
-        .route("/teacher/reports", get(teacher::reports))
+        .route("/teacher", get(dashboards::teacher))
         .route("/hub", get(dashboards::student))
+        // Add these alongside your existing dashboard routes:
+        .route("/dashboard/teacher/session/:entry_id/attendance", axum::routing::get(teacher::get_attendance_sheet))
+        .route("/dashboard/teacher/session/:session_id/toggle", axum::routing::post(teacher::toggle_attendance_status))
         .merge(admin::routes())
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,

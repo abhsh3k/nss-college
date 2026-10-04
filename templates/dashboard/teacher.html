@@ -1,0 +1,69 @@
+{% extends "layouts/app.html" %}
+{% block title %}Teacher Dashboard{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+  <div>
+    <h1 class="font-display text-3xl font-semibold md:text-4xl text-gray-900">Welcome, {{ shell.user_name }}</h1>
+    <p class="mt-1 text-lg text-gray-600">{{ shell.role_label }} &bull; Today is <span class="font-medium text-gray-800">{{ today_str }}</span></p>
+  </div>
+
+  <section class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-bold text-gray-900">Today's Classes</h2>
+      <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+        {{ classes.len() }} Class(es) Scheduled
+      </span>
+    </div>
+
+    {% if classes.is_empty() %}
+      <p class="text-gray-500 py-6 text-center border-2 border-dashed border-gray-100 rounded-lg">
+        No classes or substitutions scheduled for today.
+      </p>
+    {% else %}
+      <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {% for cls in classes %}
+          <div class="border rounded-lg p-4 flex flex-col justify-between transition hover:border-gray-300 {% if cls.is_substitution %}bg-amber-50/50 border-amber-200{% else %}bg-gray-50/50 border-gray-200{% endif %}">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold font-mono px-2 py-0.5 rounded bg-gray-200 text-gray-700">
+                  {{ cls.start_time }} - {{ cls.end_time }}
+                </span>
+                {% if cls.is_substitution %}
+                  <span class="text-xs font-semibold px-2 py-0.5 rounded bg-amber-200 text-amber-800">
+                    Substitute
+                  </span>
+                {% endif %}
+              </div>
+              <h3 class="font-bold text-gray-900 text-base leading-snug">{{ cls.course_code }} - {{ cls.course_title }}</h3>
+              <p class="text-sm text-gray-600 mt-1">Room: <span class="font-medium text-gray-800">{% if cls.room.is_empty() %}N/A{% else %}{{ cls.room }}{% endif %}</span></p>
+            </div>
+
+            <div class="mt-4 pt-3 border-t border-gray-200/60 flex items-center justify-between">
+              <span class="text-xs font-medium text-gray-500">
+                {% if cls.is_marked %}
+                  <span class="inline-flex items-center text-emerald-600 font-semibold">
+                    Marked
+                  </span>
+                {% else %}
+                  <span class="text-amber-600 font-semibold">&bull; Pending</span>
+                {% endif %}
+              </span>
+
+              <button type="button"
+                      hx-get="/dashboard/teacher/session/{{ cls.timetable_entry_id }}/attendance"
+                      hx-target="#attendance-sheet-slot"
+                      hx-swap="innerHTML"
+                      class="px-3 py-1.5 text-xs font-semibold rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition">
+                Open Sheet
+              </button>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </section>
+
+  <div id="attendance-sheet-slot"></div>
+</div>
+{% endblock %}

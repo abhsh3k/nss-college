@@ -6,7 +6,6 @@ mod events;
 mod news;
 mod notices;
 mod people;
-mod substitutions;
 mod timetable;
 
 use axum::{
@@ -52,11 +51,6 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/timetable", get(timetable::page))
         .route("/admin/timetable/slots", post(timetable::add_slot))
         .route("/admin/timetable/slots/:id/delete", post(timetable::delete_slot))
-<<<<<<< HEAD
-        // Substitute teachers
-        .route("/admin/substitutions", get(substitutions::page).post(substitutions::set))
-        .route("/admin/substitutions/:id/remove", post(substitutions::remove))
-=======
         // Attendance reporting
         .route("/admin/attendance", get(attendance::report))
         .route("/admin/attendance.csv", get(attendance::csv));
@@ -86,7 +80,6 @@ pub fn routes() -> Router<AppState> {
         .merge(imports)
         .merge(academics_and_timetable)
         .merge(publishing)
->>>>>>> c857d6ecb1855cec020ebac0e8e009a8e81b9665
 }
 
 // ---------- small form helpers shared by the admin handlers ----------

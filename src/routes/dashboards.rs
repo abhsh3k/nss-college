@@ -6,7 +6,7 @@ use sqlx::{types::time::OffsetDateTime, FromRow};
 use tower_sessions::Session;
 
 use crate::{
-    auth::{OfficeOrAdmin, Role, StudentOnly},
+    auth::{OfficeOrAdmin, Role, StudentOnly, TeacherOnly},
     error::AppError,
     models::Notice,
     services::{hub, users::{self, Counts}},
@@ -34,8 +34,6 @@ pub async fn admin(
     })
 }
 
-<<<<<<< HEAD
-=======
 pub struct TeacherClassItem {
     pub timetable_entry_id: i64,
     pub course_id: i64,
@@ -144,7 +142,6 @@ pub async fn teacher(
     })
 }
 
->>>>>>> c857d6ecb1855cec020ebac0e8e009a8e81b9665
 // ---------- Student Hub (Layer 4d) ----------
 
 /// Programme details shown under the welcome heading.
@@ -196,56 +193,6 @@ pub struct HubRow {
     pub cells: Vec<Option<HubCell>>,
 }
 
-/// Attendance for one course, inside the detailed attendance section.
-pub struct HubCourseAttendance {
-    pub code: String,
-    pub title: String,
-    pub marked: i64,
-    pub attended: i64,
-    pub absent: i64,
-    pub leave: i64,
-    pub percent_label: String,
-    pub bar_width: String,
-    pub is_low: bool,
-}
-
-/// One month of the attendance trend.
-pub struct HubMonth {
-    pub label: String,
-    pub marked: i64,
-    pub attended: i64,
-    pub percent_label: String,
-    pub bar_width: String,
-    pub is_low: bool,
-}
-
-/// One recently marked session.
-pub struct HubRecent {
-    pub date_label: String,
-    pub time_label: String,
-    pub code: String,
-    pub title: String,
-    pub status_label: &'static str,
-    pub tone: &'static str,
-}
-
-/// The detailed attendance section: overall standing, per-course breakdown,
-/// month-by-month trend and the latest marked sessions.
-pub struct HubAttendance {
-    pub present: i64,
-    pub absent: i64,
-    pub leave: i64,
-    pub unmarked: i64,
-    pub held: i64,
-    pub percent_label: String,
-    pub bar_width: String,
-    pub is_low: bool,
-    pub has_data: bool,
-    pub per_course: Vec<HubCourseAttendance>,
-    pub months: Vec<HubMonth>,
-    pub recent: Vec<HubRecent>,
-}
-
 /// A course card: enrolment details plus the live attendance percentage.
 pub struct HubCourse {
     pub code: String,
@@ -274,28 +221,6 @@ pub struct StudentTemplate {
     rows: Vec<HubRow>,
     courses: Vec<HubCourse>,
     total_credits: i32,
-    attendance: Option<HubAttendance>,
-}
-
-/// Percentage helper shared by every attendance figure on the page.
-fn percent(attended: i64, marked: i64) -> f64 {
-    if marked > 0 {
-        100.0 * attended as f64 / marked as f64
-    } else {
-        0.0
-    }
-}
-
-/// Present/absent/leave tone for a recent session badge.
-fn status_badge(status: &str) -> (&'static str, &'static str) {
-    match status {
-        "present" => (
-            "Present",
-            "border-emerald-200 bg-emerald-50 text-emerald-700",
-        ),
-        "leave" => ("On leave", "border-amber-200 bg-amber-50 text-amber-700"),
-        _ => ("Absent", "border-rose-200 bg-rose-50 text-rose-700"),
-    }
 }
 
 /// "Room 12 · Dr. Name", with sensible fallbacks for missing data.
@@ -337,7 +262,6 @@ pub async fn student(
             rows: Vec::new(),
             courses: Vec::new(),
             total_credits: 0,
-            attendance: None,
         });
     };
 
@@ -452,83 +376,6 @@ pub async fn student(
         })
         .collect();
 
-    // Detailed attendance: overall standing, per course, month trend and recent sessions.
-    let summary = hub::attendance_summary(&s.db, p.id).await?;
-    let per_course: Vec<HubCourseAttendance> = hub::course_attendance_detail(&s.db, p.id)
-        .await?
-        .into_iter()
-        .map(|d| {
-            let percent = percent(d.attended, d.marked);
-            HubCourseAttendance {
-                code: d.code,
-                title: d.title,
-                marked: d.marked,
-                attended: d.attended,
-                absent: d.absent,
-                leave: d.leave,
-                percent_label: if d.marked == 0 {
-                    "—".into()
-                } else {
-                    format!("{percent:.0}%")
-                },
-                bar_width: format!("{}%", percent.round().clamp(0.0, 100.0) as i32),
-                is_low: d.marked > 0 && percent < min_percent as f64,
-            }
-        })
-        .collect();
-
-    let months: Vec<HubMonth> = hub::month_attendance(&s.db, p.id, 6)
-        .await?
-        .into_iter()
-        .map(|m| {
-            let percent = percent(m.attended, m.marked);
-            HubMonth {
-                percent_label: format!("{percent:.0}%"),
-                bar_width: format!("{}%", percent.round().clamp(0.0, 100.0) as i32),
-                is_low: percent < min_percent as f64,
-                label: m.month_label,
-                marked: m.marked,
-                attended: m.attended,
-            }
-        })
-        .collect();
-
-    let recent: Vec<HubRecent> = hub::recent_sessions(&s.db, p.id, 8)
-        .await?
-        .into_iter()
-        .map(|r| {
-            let (status_label, tone) = status_badge(&r.status);
-            HubRecent {
-                date_label: r.date_label,
-                time_label: r.time_label,
-                code: r.code,
-                title: r.title,
-                status_label,
-                tone,
-            }
-        })
-        .collect();
-
-    let overall = percent(summary.present + summary.leave, summary.marked);
-    let attendance = HubAttendance {
-        present: summary.present,
-        absent: summary.absent,
-        leave: summary.leave,
-        unmarked: (summary.held - summary.marked).max(0),
-        held: summary.held,
-        percent_label: if summary.marked == 0 {
-            "—".into()
-        } else {
-            format!("{overall:.0}%")
-        },
-        bar_width: format!("{}%", overall.round().clamp(0.0, 100.0) as i32),
-        is_low: summary.marked > 0 && overall < min_percent as f64,
-        has_data: summary.marked > 0,
-        per_course,
-        months,
-        recent,
-    };
-
     // E-grants students get a warning card when this month's attendance dips
     // below the configured threshold.
     let alert = if p.egrants {
@@ -571,6 +418,5 @@ pub async fn student(
         rows,
         courses,
         total_credits,
-        attendance: Some(attendance),
     })
 }

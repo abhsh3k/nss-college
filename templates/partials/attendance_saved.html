@@ -1,5 +1,0 @@
-{% if let Some(msg) = error %}
-<p role="alert" class="border-l-4 border-rose-500 bg-rose-50 px-4 py-3 font-medium text-rose-800">{{ msg }}</p>
-{% else %}
-<p class="border-l-4 border-emerald-500 bg-emerald-50 px-4 py-3 font-medium text-emerald-800">Saved. {{ present }} present, {{ absent }} absent, {{ on_leave }} on leave. You can still change this up to {{ window_days }} days after the class date.</p>
-{% endif %}

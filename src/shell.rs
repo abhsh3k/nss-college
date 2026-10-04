@@ -33,18 +33,10 @@ fn nav_for(role: Role) -> Vec<NavItem> {
             item("People", "/admin/people", false),
             item("Courses and programmes", "/admin/academics", false),
             item("Timetable", "/admin/timetable", false),
-<<<<<<< HEAD
-            item("Substitutions", "/admin/substitutions", false),
-            item("Attendance reports", "/admin/attendance", true),
-            item("Notices", "/admin/notices", true),
-            item("News", "/admin/news", true),
-            item("Events", "/admin/events", true),
-=======
             item("Attendance reports", "/admin/attendance", false),
             item("Notices", "/admin/notices", false),
             item("News", "/admin/news", false),
             item("Events", "/admin/events", false),
->>>>>>> c857d6ecb1855cec020ebac0e8e009a8e81b9665
             item("Documents", "/admin/documents", true),
             item("Pages", "/admin/pages", true),
             item("Settings", "/admin/settings", true),
@@ -58,16 +50,16 @@ fn nav_for(role: Role) -> Vec<NavItem> {
         ],
         Role::Faculty => vec![
             item("Today", "/teacher", false),
-            item("My timetable", "/teacher/timetable", false),
-            item("Mark attendance", "/teacher/attendance", false),
-            item("Attendance reports", "/teacher/reports", false),
+            item("My timetable", "/teacher/timetable", true),
+            item("Mark attendance", "/teacher/attendance", true),
+            item("Reports", "/teacher/reports", true),
         ],
         Role::Student => vec![
             item("Overview", "/hub", false),
-            item("Timetable", "/hub#timetable", false),
-            item("My courses", "/hub#courses", false),
-            item("Attendance", "/hub#attendance", false),
-            item("Notices", "/hub#notices", false),
+            item("My courses", "/hub/courses", true),
+            item("Timetable", "/hub/timetable", true),
+            item("Attendance", "/hub/attendance", true),
+            item("Notices", "/hub/notices", true),
         ],
         Role::Alumni => vec![],
     }
