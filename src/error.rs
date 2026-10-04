@@ -16,10 +16,16 @@ pub struct ForbiddenTemplate;
 #[template(path = "public/server_error.html")]
 pub struct ServerErrorTemplate;
 
+#[derive(Template)]
+#[template(path = "public/bad_request.html")]
+pub struct BadRequestTemplate;
+
 #[derive(Debug)]
 pub enum AppError {
     NotFound,
     Forbidden,
+    /// The form itself was invalid (bad file type, oversized upload, ...).
+    BadRequest(String),
     Db(sqlx::Error),
     Internal(String),
 }
@@ -43,6 +49,10 @@ impl IntoResponse for AppError {
         match self {
             AppError::NotFound => (StatusCode::NOT_FOUND, NotFoundTemplate).into_response(),
             AppError::Forbidden => (StatusCode::FORBIDDEN, ForbiddenTemplate).into_response(),
+            AppError::BadRequest(msg) => {
+                tracing::info!(message = %msg, "rejected an invalid form");
+                (StatusCode::BAD_REQUEST, BadRequestTemplate).into_response()
+            }
             AppError::Db(e) => {
                 tracing::error!(error = ?e, "database error");
                 (StatusCode::INTERNAL_SERVER_ERROR, ServerErrorTemplate).into_response()

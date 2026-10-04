@@ -19,6 +19,7 @@ csv = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenvy = "0.15"
+calamine = { version = "0.36", default-features = false }
 
 # Argon2 is very slow unoptimised; optimise dependencies even in dev builds.
 [profile.dev.package."*"]

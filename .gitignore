@@ -6,3 +6,6 @@
 
 /tailwindcss.exe
 /tailwindcss
+
+# Plaintext test credentials - never commit
+/usename.txt

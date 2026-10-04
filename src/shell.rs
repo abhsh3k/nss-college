@@ -33,20 +33,27 @@ fn nav_for(role: Role) -> Vec<NavItem> {
             item("People", "/admin/people", false),
             item("Courses and programmes", "/admin/academics", false),
             item("Timetable", "/admin/timetable", false),
+<<<<<<< HEAD
             item("Substitutions", "/admin/substitutions", false),
             item("Attendance reports", "/admin/attendance", true),
             item("Notices", "/admin/notices", true),
             item("News", "/admin/news", true),
             item("Events", "/admin/events", true),
+=======
+            item("Attendance reports", "/admin/attendance", false),
+            item("Notices", "/admin/notices", false),
+            item("News", "/admin/news", false),
+            item("Events", "/admin/events", false),
+>>>>>>> c857d6ecb1855cec020ebac0e8e009a8e81b9665
             item("Documents", "/admin/documents", true),
             item("Pages", "/admin/pages", true),
             item("Settings", "/admin/settings", true),
         ],
         Role::Staff => vec![
             item("Overview", "/admin", false),
-            item("Notices", "/admin/notices", true),
-            item("News", "/admin/news", true),
-            item("Events", "/admin/events", true),
+            item("Notices", "/admin/notices", false),
+            item("News", "/admin/news", false),
+            item("Events", "/admin/events", false),
             item("Documents", "/admin/documents", true),
         ],
         Role::Faculty => vec![

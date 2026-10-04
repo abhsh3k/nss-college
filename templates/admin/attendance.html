@@ -1,0 +1,135 @@
+{% extends "layouts/app.html" %}
+{% block title %}Attendance reports{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Attendance reports</h1>
+<p class="mt-3 max-w-2xl text-ink/80">Attendance that has been marked for the chosen period, lowest percentage first. Anything below {{ low_percent }}% is highlighted.</p>
+
+<form method="get" action="/admin/attendance" class="mt-8 grid max-w-4xl gap-4 sm:grid-cols-2 lg:grid-cols-5">
+  <div>
+    <label for="from" class="block text-sm font-semibold">From</label>
+    <input id="from" name="from" type="date" value="{{ from_value }}" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+  </div>
+  <div>
+    <label for="to" class="block text-sm font-semibold">To</label>
+    <input id="to" name="to" type="date" value="{{ to_value }}" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+  </div>
+  <div>
+    <label for="programme" class="block text-sm font-semibold">Programme</label>
+    <select id="programme" name="programme" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+      <option value="0">All programmes</option>
+      {% for p in programmes %}<option value="{{ p.id }}" {% if p.id == programme_id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="course" class="block text-sm font-semibold">Course</label>
+    <select id="course" name="course" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+      <option value="0">All courses</option>
+      {% for c in courses %}<option value="{{ c.id }}" {% if c.id == course_id %}selected{% endif %}>{{ c.code }} — {{ c.title }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="teacher" class="block text-sm font-semibold">Teacher</label>
+    <select id="teacher" name="teacher" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+      <option value="0">All teachers</option>
+      {% for t in teachers %}<option value="{{ t.id }}" {% if t.id == faculty_id %}selected{% endif %}>{{ t.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="sm:col-span-2 lg:col-span-5">
+    <button type="submit" class="rounded bg-brand px-5 py-2 font-semibold text-chalk hover:bg-ink">Build report</button>
+    <a href="/admin/attendance.csv?from={{ from_value }}&amp;to={{ to_value }}&amp;programme={{ programme_id }}&amp;course={{ course_id }}&amp;teacher={{ faculty_id }}" class="ml-3 rounded border border-ink/40 px-5 py-2 font-semibold hover:bg-mist">Download CSV</a>
+  </div>
+</form>
+
+<dl class="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+  <div class="border-t-4 border-accent pt-3">
+    <dt class="text-sm text-ink/70">Sessions held</dt>
+    <dd class="font-display text-3xl font-semibold">{{ totals.sessions }}</dd>
+  </div>
+  <div class="border-t-4 border-accent pt-3">
+    <dt class="text-sm text-ink/70">Students marked</dt>
+    <dd class="font-display text-3xl font-semibold">{{ totals.students }}</dd>
+  </div>
+  <div class="border-t-4 border-accent pt-3">
+    <dt class="text-sm text-ink/70">Records marked</dt>
+    <dd class="font-display text-3xl font-semibold">{{ totals.marked }}</dd>
+  </div>
+  <div class="border-t-4 border-accent pt-3">
+    <dt class="text-sm text-ink/70">Absences</dt>
+    <dd class="font-display text-3xl font-semibold">{{ totals.absent }}</dd>
+  </div>
+</dl>
+
+{% if !leave_counts %}
+<p class="mt-6 max-w-2xl text-sm text-ink/70">Leave is not counted towards the percentage. <span class="font-semibold">Counted as attended</span> reflects the college setting.</p>
+{% endif %}
+
+<h2 class="mt-12 font-display text-2xl font-semibold">By student</h2>
+<div class="mt-4 overflow-x-auto">
+  <table class="w-full min-w-[52rem] text-left">
+    <thead>
+      <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+        <th scope="col" class="py-2 pr-4 font-medium">Admission no</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Name</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Programme</th>
+        <th scope="col" class="py-2 pr-4 text-right font-medium">Marked</th>
+        <th scope="col" class="py-2 pr-4 text-right font-medium">Attended</th>
+        <th scope="col" class="py-2 pr-4 text-right font-medium">Absent</th>
+        <th scope="col" class="py-2 pr-4 text-right font-medium">Leave</th>
+        <th scope="col" class="py-2 text-right font-medium">%</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr class="border-b border-ink/10 {% if r.is_low %}bg-rose-50{% endif %}">
+        <td class="py-3 pr-4 text-sm">{{ r.admission_no }}</td>
+        <td class="py-3 pr-4 font-medium">{{ r.name }}</td>
+        <td class="py-3 pr-4 text-sm text-ink/80">{{ r.programme }}</td>
+        <td class="py-3 pr-4 text-right text-sm">{{ r.marked }}</td>
+        <td class="py-3 pr-4 text-right text-sm">{{ r.attended }}</td>
+        <td class="py-3 pr-4 text-right text-sm">{{ r.absent }}</td>
+        <td class="py-3 pr-4 text-right text-sm">{{ r.leave }}</td>
+        <td class="py-3 text-right font-semibold {% if r.is_low %}text-brand{% endif %}">{{ r.percent_label }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if rows.is_empty() %}
+  <p class="py-8 text-ink/70">No attendance was marked in this period. Widen the dates, or clear the filters.</p>
+  {% endif %}
+</div>
+
+<h2 class="mt-12 font-display text-2xl font-semibold">By session</h2>
+<div class="mt-4 overflow-x-auto">
+  <table class="w-full min-w-[52rem] text-left">
+    <thead>
+      <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+        <th scope="col" class="py-2 pr-4 font-medium">Date</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Course</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Teacher</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Time</th>
+        <th scope="col" class="py-2 pr-4 text-right font-medium">Marked</th>
+        <th scope="col" class="py-2 pr-4 text-right font-medium">Present</th>
+        <th scope="col" class="py-2 pr-4 text-right font-medium">Absent</th>
+        <th scope="col" class="py-2 text-right font-medium">Leave</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in sessions %}
+      <tr class="border-b border-ink/10">
+        <td class="py-3 pr-4 text-sm">{{ s.date_label }}</td>
+        <td class="py-3 pr-4 font-medium">{{ s.course_code }}<p class="text-sm font-normal text-ink/70">{{ s.course_title }}</p></td>
+        <td class="py-3 pr-4 text-sm">{{ s.teacher }}</td>
+        <td class="py-3 pr-4 text-sm">{{ s.time_label }}</td>
+        <td class="py-3 pr-4 text-right text-sm">{{ s.marked }}</td>
+        <td class="py-3 pr-4 text-right text-sm">{{ s.present }}</td>
+        <td class="py-3 pr-4 text-right text-sm">{{ s.absent }}</td>
+        <td class="py-3 text-right text-sm">{{ s.leave }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if sessions.is_empty() %}
+  <p class="py-8 text-ink/70">No sessions were held in this period.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -8,6 +8,7 @@ mod seo;
 mod services;
 mod shell;
 mod state;
+mod uploads;
 
 use std::time::Duration;
 

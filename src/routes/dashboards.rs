@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use askama::Template;
 use axum::extract::State;
-use sqlx::types::time::OffsetDateTime;
+use sqlx::{types::time::OffsetDateTime, FromRow};
 use tower_sessions::Session;
 
 use crate::{
@@ -34,6 +34,117 @@ pub async fn admin(
     })
 }
 
+<<<<<<< HEAD
+=======
+pub struct TeacherClassItem {
+    pub timetable_entry_id: i64,
+    pub course_id: i64,
+    pub course_code: String,
+    pub course_title: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub room: String,
+    pub is_substitution: bool,
+    pub is_marked: bool,
+}
+
+#[derive(Template)]
+#[template(path = "dashboard/teacher.html")]
+pub struct TeacherTemplate {
+    shell: Shell,
+    today_str: String,
+    classes: Vec<TeacherClassItem>,
+}
+
+/// One class in today's timeline, straight from the query.
+#[derive(FromRow)]
+struct TodayClassRow {
+    timetable_entry_id: i64,
+    course_id: i64,
+    course_code: String,
+    course_title: String,
+    start_time: String,
+    end_time: String,
+    room: String,
+    is_substitution: bool,
+    is_marked: bool,
+}
+
+pub async fn teacher(
+    State(s): State<AppState>,
+    session: Session,
+    TeacherOnly(user): TeacherOnly,
+) -> Result<TeacherTemplate, AppError> {
+    let now = OffsetDateTime::now_utc();
+    let today = now.date();
+    let today_str = today.to_string();
+
+    // Directly returns Monday=1 .. Sunday=7 as i16
+    let weekday_num = today.weekday().number_from_monday() as i16;
+
+    // Fetch faculty ID linked to logged-in user
+    let faculty_id: Option<i64> = sqlx::query_scalar("SELECT id FROM faculty WHERE user_id = $1")
+        .bind(user.id)
+        .fetch_optional(&s.db)
+        .await?;
+
+    let classes = if let Some(faculty_id) = faculty_id {
+        let rows = sqlx::query_as::<_, TodayClassRow>(
+            r#"
+            SELECT
+                te.id AS timetable_entry_id,
+                c.id AS course_id,
+                c.code AS course_code,
+                c.title AS course_title,
+                te.start_time::text AS start_time,
+                te.end_time::text AS end_time,
+                COALESCE(te.room, '') AS room,
+                COALESCE(s.id IS NOT NULL, false) AS is_substitution,
+                COALESCE(att.id IS NOT NULL, false) AS is_marked
+            FROM timetable_entries te
+            JOIN courses c ON c.id = te.course_id
+            LEFT JOIN substitutions s
+                   ON s.timetable_entry_id = te.id
+                  AND s.on_date = $2
+            LEFT JOIN attendance_sessions att
+                   ON att.timetable_entry_id = te.id
+                  AND att.on_date = $2
+            WHERE ((te.faculty_id = $1 AND te.weekday = $3 AND s.id IS NULL)
+               OR s.substitute_faculty_id = $1)
+            ORDER BY te.start_time ASC
+            "#,
+        )
+        .bind(faculty_id)
+        .bind(today)
+        .bind(weekday_num)
+        .fetch_all(&s.db)
+        .await?;
+
+        rows.into_iter()
+            .map(|r| TeacherClassItem {
+                timetable_entry_id: r.timetable_entry_id,
+                course_id: r.course_id,
+                course_code: r.course_code,
+                course_title: r.course_title,
+                start_time: r.start_time,
+                end_time: r.end_time,
+                room: r.room,
+                is_substitution: r.is_substitution,
+                is_marked: r.is_marked,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    Ok(TeacherTemplate {
+        shell: Shell::build(&user, &session).await?,
+        today_str,
+        classes,
+    })
+}
+
+>>>>>>> c857d6ecb1855cec020ebac0e8e009a8e81b9665
 // ---------- Student Hub (Layer 4d) ----------
 
 /// Programme details shown under the welcome heading.
