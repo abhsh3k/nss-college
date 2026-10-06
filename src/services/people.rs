@@ -94,6 +94,11 @@ pub struct NewStudent<'a> {
 
 const ENROLL_SEMESTER_SQL: &str = r#"INSERT INTO enrollments (student_id, course_id)
     SELECT $1, id FROM courses WHERE programme_id = $2 AND semester = $3
+      AND NOT EXISTS (
+          SELECT 1 FROM course_offerings o
+           WHERE o.course_id = courses.id
+             AND o.status = 'published'
+             AND o.selection_mode <> 'FIXED')
     ON CONFLICT DO NOTHING"#;
 
 /// Creates the login, the student record, and enrolls the student in the semester's courses.

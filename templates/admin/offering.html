@@ -1,0 +1,195 @@
+{% extends "layouts/app.html" %}
+{% block title %}{{ offering.code }} — Offering{% endblock %}
+{% block content %}
+<p class="text-sm"><a class="underline underline-offset-4 hover:text-brand" href="/admin/courses/offerings">All offerings</a></p>
+<h1 class="mt-2 font-display text-3xl font-semibold md:text-4xl">{{ offering.code }} — {{ offering.title }}</h1>
+<p class="mt-1 text-ink/80">{{ offering.department }} · {{ offering.year_label }} · Semester {{ offering.semester }} · {{ offering.course_type }} · {{ offering.selection_mode }}{% if offering.choice_group != "" %} ({{ offering.choice_group }}){% endif %}</p>
+<p class="mt-1 text-sm text-ink/70">{{ offering.credits }} credits · {{ offering.enrolled }} enrolled{% if let Some(cap) = offering.capacity %} of {{ cap }} seats{% endif %} ·
+  {% if offering.status == "published" %}<span class="font-semibold text-emerald-700">Published</span>{% else if offering.status == "draft" %}<span class="font-semibold text-amber-700">Draft</span>{% else %}<span class="font-semibold text-ink/50">Archived</span>{% endif %}
+</p>
+
+<div class="mt-6 flex flex-wrap gap-3">
+  {% if can_edit %}
+  {% if offering.status != "published" %}
+  <form method="post" action="/admin/courses/offerings/{{ offering.id }}/status">
+    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+    <input type="hidden" name="status" value="published">
+    <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Publish offering</button>
+  </form>
+  {% else %}
+  <form method="post" action="/admin/courses/offerings/{{ offering.id }}/status">
+    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+    <input type="hidden" name="status" value="draft">
+    <button type="submit" class="rounded border border-ink px-4 py-2 font-semibold text-sm hover:bg-ink hover:text-chalk">Unpublish</button>
+  </form>
+  {% endif %}
+  {% if offering.status == "draft" %}
+  <form method="post" action="/admin/courses/offerings/{{ offering.id }}/delete">
+    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+    <button type="submit" class="rounded border border-rose-500 px-4 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-500 hover:text-white">Delete draft</button>
+  </form>
+  {% endif %}
+  {% endif %}
+</div>
+
+{% if can_edit %}
+<section class="mt-10" aria-labelledby="config">
+  <h2 id="config" class="font-display text-2xl font-semibold">Configuration</h2>
+  <p class="mt-1 text-sm text-ink/70">Semester, course type, selection mode, choice group and seats. Course, academic year and owning department are fixed at creation, and an offering that already has student selections can no longer be re-shaped.</p>
+  <form method="post" action="/admin/courses/offerings/{{ offering.id }}" class="mt-4 grid max-w-4xl gap-4 rounded border border-ink/15 bg-mist p-5 sm:grid-cols-6">
+    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+    <div class="sm:col-span-1">
+      <label for="edit_semester" class="block text-sm font-semibold">Semester</label>
+      <select id="edit_semester" name="semester" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        <option value="1" {% if offering.semester == 1 %}selected{% endif %}>1</option>
+        <option value="2" {% if offering.semester == 2 %}selected{% endif %}>2</option>
+        <option value="3" {% if offering.semester == 3 %}selected{% endif %}>3</option>
+        <option value="4" {% if offering.semester == 4 %}selected{% endif %}>4</option>
+        <option value="5" {% if offering.semester == 5 %}selected{% endif %}>5</option>
+        <option value="6" {% if offering.semester == 6 %}selected{% endif %}>6</option>
+      </select>
+    </div>
+    <div class="sm:col-span-2">
+      <label for="edit_course_type" class="block text-sm font-semibold">Course type</label>
+      <input id="edit_course_type" name="course_type" type="text" required maxlength="60" value="{{ offering.course_type }}" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2" placeholder="e.g. Regular, DSE, SEC">
+    </div>
+    <div class="sm:col-span-2">
+      <label for="edit_selection_mode" class="block text-sm font-semibold">Selection mode</label>
+      <select id="edit_selection_mode" name="selection_mode" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        <option value="INDIVIDUAL_CHOICE" {% if offering.selection_mode == "INDIVIDUAL_CHOICE" %}selected{% endif %}>Individual choice — students pick it</option>
+        <option value="FIXED" {% if offering.selection_mode == "FIXED" %}selected{% endif %}>Fixed — applied automatically</option>
+        <option value="HOD_ASSIGNED" {% if offering.selection_mode == "HOD_ASSIGNED" %}selected{% endif %}>HOD assigned — the department assigns it</option>
+        <option value="COHORT_CHOICE" {% if offering.selection_mode == "COHORT_CHOICE" %}selected{% endif %}>Cohort choice — one decision per batch</option>
+      </select>
+    </div>
+    <div class="sm:col-span-1">
+      <label for="edit_capacity" class="block text-sm font-semibold">Seats</label>
+      <input id="edit_capacity" name="capacity" type="number" min="1" placeholder="∞" {% if let Some(c) = offering.capacity %}value="{{ c }}"{% endif %} class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+    <div class="sm:col-span-3">
+      <label for="edit_choice_group" class="block text-sm font-semibold">Choice group (cohort choice only)</label>
+      <input id="edit_choice_group" name="choice_group" type="text" value="{{ offering.choice_group }}" placeholder="e.g. BCA Specialization" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+    <div class="sm:col-span-6"><button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Save configuration</button></div>
+  </form>
+</section>
+{% endif %}
+
+<section class="mt-10" aria-labelledby="targets">
+  <h2 id="targets" class="font-display text-2xl font-semibold">Who it is open to</h2>
+  <p class="mt-1 text-sm text-ink/70">Target whole programmes, or one programme plus a batch year to address a cohort (e.g. BCA 2026). Each targeted department's HOD must approve before their students see it.</p>
+
+  {% if !targets.is_empty() %}
+  <ul class="mt-3 flex flex-wrap gap-2">
+    {% for t in targets %}
+    <li class="rounded-full border border-ink/30 bg-mist px-3 py-1 text-sm">{{ t.programme }}{% if let Some(y) = t.batch_year %} · batch {{ y }}{% endif %} <span class="text-ink/60">({{ t.department }})</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if can_edit %}
+  <form method="post" action="/admin/courses/offerings/{{ offering.id }}/targets" class="mt-4 max-w-2xl border border-ink/15 bg-mist p-5">
+    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+    <fieldset class="grid gap-2 sm:grid-cols-2">
+      <legend class="font-semibold">Target programmes</legend>
+      {% for p in programmes %}
+      <label class="flex items-center gap-2 text-sm">
+        <input type="checkbox" name="programmes" value="{{ p.0 }}" class="rounded border-ink/40">
+        {{ p.1 }} <span class="text-ink/60">({{ p.2 }})</span>
+      </label>
+      {% endfor %}
+    </fieldset>
+    <div class="mt-4 sm:w-48">
+      <label for="batch_year" class="block font-semibold text-sm">Batch year (optional, cohort)</label>
+      <input id="batch_year" name="batch_year" type="number" min="2000" max="2100" placeholder="e.g. 2026" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+    <button type="submit" class="mt-4 rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Save targets</button>
+  </form>
+  {% endif %}
+
+  {% if !approvals.is_empty() %}
+  <h3 class="mt-6 font-semibold">Receiving departments</h3>
+  <ul class="mt-2 space-y-1 text-sm">
+    {% for a in approvals %}
+    <li>{{ a.department }} —
+      {% if a.status == "approved" %}<span class="font-semibold text-emerald-700">Approved</span>
+      {% else if a.status == "rejected" %}<span class="font-semibold text-rose-700">Rejected</span>{% if a.note != "" %} ({{ a.note }}){% endif %}
+      {% else %}<span class="font-semibold text-amber-700">Awaiting decision</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+<section class="mt-10" aria-labelledby="offering-timetable">
+  <h2 id="offering-timetable" class="font-display text-2xl font-semibold">Weekly periods</h2>
+  <p class="mt-1 text-sm text-ink/70">Entered once for the offering, whichever programmes attend. Enrolled students see these periods in their hub timetable, and attendance is taken per period as usual.</p>
+
+  {% if !periods.is_empty() %}
+  <div class="mt-3 overflow-x-auto">
+    <table class="w-full min-w-[32rem] text-left">
+      <thead>
+        <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+          <th scope="col" class="py-2 pr-4 font-medium">Day</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Time</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Teacher</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Room</th>
+          <th scope="col" class="py-2 font-medium"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in periods %}
+        <tr class="border-b border-ink/10">
+          <td class="py-2 pr-4">{% match t.weekday %}{% when 1 %}Monday{% when 2 %}Tuesday{% when 3 %}Wednesday{% when 4 %}Thursday{% when 5 %}Friday{% when 6 %}Saturday{% when 7 %}Sunday{% else %}Day {{ t.weekday }}{% endmatch %}</td>
+          <td class="py-2 pr-4 font-mono text-sm">{{ t.start_at }}–{{ t.end_at }}</td>
+          <td class="py-2 pr-4 text-sm">{% if t.faculty != "" %}{{ t.faculty }}{% else %}<span class="text-brand">Not assigned</span>{% endif %}</td>
+          <td class="py-2 pr-4 text-sm">{% if t.room != "" %}{{ t.room }}{% else %}—{% endif %}</td>
+          <td class="py-2 text-right">
+            {% if can_edit %}
+            <form method="post" action="/admin/courses/offerings/{{ offering.id }}/periods/{{ t.id }}/delete" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+              <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Remove</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if can_edit %}
+  <form method="post" action="/admin/courses/offerings/{{ offering.id }}/periods" class="mt-4 grid gap-4 rounded border border-ink/15 bg-mist p-5 sm:grid-cols-6">
+    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+    <div class="sm:col-span-1">
+      <label for="weekday" class="block font-semibold text-sm">Day</label>
+      <select id="weekday" name="weekday" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        <option value="1">Mon</option><option value="2">Tue</option><option value="3">Wed</option>
+        <option value="4">Thu</option><option value="5">Fri</option><option value="6">Sat</option>
+      </select>
+    </div>
+    <div class="sm:col-span-1">
+      <label for="start_at" class="block font-semibold text-sm">Start</label>
+      <input id="start_at" name="start_at" type="time" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+    <div class="sm:col-span-1">
+      <label for="end_at" class="block font-semibold text-sm">End</label>
+      <input id="end_at" name="end_at" type="time" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+    <div class="sm:col-span-1">
+      <label for="room" class="block font-semibold text-sm">Room</label>
+      <input id="room" name="room" type="text" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+    <div class="sm:col-span-2">
+      <label for="faculty_id" class="block font-semibold text-sm">Teacher</label>
+      <select id="faculty_id" name="faculty_id" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        <option value="">Assign later</option>
+        {% for t in teachers %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="sm:col-span-6"><button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Add period</button></div>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

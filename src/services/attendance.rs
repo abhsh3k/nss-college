@@ -102,7 +102,13 @@ SELECT to_char(days.d, 'YYYY-MM-DD') AS on_date,
        t.course_id,
        c.code,
        c.title AS course,
-       p.name AS programme,
+       COALESCE(p.name,
+           -- A period of a course offering: show the programmes it is taught to.
+           (SELECT string_agg(DISTINCT pp.name, ' / ' ORDER BY pp.name)
+              FROM course_offering_targets t2
+              JOIN programmes pp ON pp.id = t2.programme_id
+             WHERE t2.offering_id = t.course_offering_id),
+           'Offered course') AS programme,
        t.semester,
        to_char(t.start_time, 'HH24:MI') AS start_at,
        to_char(t.end_time, 'HH24:MI') AS end_at,
@@ -115,7 +121,7 @@ SELECT to_char(days.d, 'YYYY-MM-DD') AS on_date,
 FROM days
 JOIN timetable_entries t ON t.weekday = EXTRACT(ISODOW FROM days.d)::int
 JOIN courses c ON c.id = t.course_id
-JOIN programmes p ON p.id = t.programme_id
+LEFT JOIN programmes p ON p.id = t.programme_id
 LEFT JOIN substitutions sub ON sub.timetable_entry_id = t.id AND sub.on_date = days.d
                            AND sub.substitute_faculty_id = $1
 LEFT JOIN substitutions any_sub ON any_sub.timetable_entry_id = t.id AND any_sub.on_date = days.d
@@ -160,11 +166,14 @@ pub async fn period(
 
 // ---------- Department-wide views (head of department) ----------
 
-/// The department that owns a timetable period's programme.
+/// The department that owns a timetable period's programme — or, for a period
+/// attached to a course offering, the department that offers it.
 pub async fn entry_department(db: &PgPool, entry_id: i64) -> Res<Option<i64>> {
     sqlx::query_scalar(
-        "SELECT p.department_id
-           FROM timetable_entries t JOIN programmes p ON p.id = t.programme_id
+        "SELECT COALESCE(p.department_id, o.offering_department_id)
+           FROM timetable_entries t
+           LEFT JOIN programmes p ON p.id = t.programme_id
+           LEFT JOIN course_offerings o ON o.id = t.course_offering_id
           WHERE t.id = $1",
     )
     .bind(entry_id)
@@ -209,12 +218,13 @@ pub async fn department_courses(
     department: Option<i64>,
 ) -> Res<Vec<DeptCourse>> {
     sqlx::query_as::<_, DeptCourse>(
-        r#"SELECT c.id, c.code, c.title, p.name AS programme, c.semester
+        r#"SELECT c.id, c.code, c.title, COALESCE(p.name, 'Catalogue') AS programme,
+                  COALESCE(c.semester, 0) AS semester
            FROM courses c
-           JOIN programmes p ON p.id = c.programme_id
-          WHERE p.status = 'published'
-            AND ($1::bigint IS NULL OR p.department_id = $1)
-          ORDER BY p.name, c.semester, c.code"#,
+           LEFT JOIN programmes p ON p.id = c.programme_id
+          WHERE (c.programme_id IS NULL OR p.status = 'published')
+            AND ($1::bigint IS NULL OR p.department_id = $1 OR c.department_id = $1)
+          ORDER BY COALESCE(p.name, ''), c.semester, c.code"#,
     )
     .bind(department)
     .fetch_all(db)
@@ -310,11 +320,18 @@ pub async fn teacher_slots(db: &PgPool, faculty_id: i64) -> Res<Vec<TeacherSlot>
         r#"SELECT t.weekday,
                   to_char(t.start_time, 'HH24:MI') AS start_at,
                   to_char(t.end_time, 'HH24:MI') AS end_at,
-                  c.code, c.title AS course, p.name AS programme, t.semester,
+                  c.code, c.title AS course,
+                  COALESCE(p.name,
+                      (SELECT string_agg(DISTINCT pp.name, ' / ' ORDER BY pp.name)
+                         FROM course_offering_targets t2
+                         JOIN programmes pp ON pp.id = t2.programme_id
+                        WHERE t2.offering_id = t.course_offering_id),
+                      'Offered course') AS programme,
+                  t.semester,
                   COALESCE(t.room, '') AS room
            FROM timetable_entries t
            JOIN courses c ON c.id = t.course_id
-           JOIN programmes p ON p.id = t.programme_id
+           LEFT JOIN programmes p ON p.id = t.programme_id
            WHERE t.faculty_id = $1
            ORDER BY t.weekday, t.start_time"#,
     )
@@ -340,12 +357,14 @@ pub async fn upcoming_covers(db: &PgPool, faculty_id: i64) -> Res<Vec<CoverRow>>
         r#"SELECT to_char(sub.on_date, 'Dy DD Mon') AS day_label,
                   to_char(t.start_time, 'HH24:MI') AS start_at,
                   to_char(t.end_time, 'HH24:MI') AS end_at,
-                  c.title AS course, p.name AS programme, t.semester,
+                  c.title AS course,
+                  COALESCE(p.name, 'Offered course') AS programme,
+                  t.semester,
                   COALESCE(orig.name, 'another teacher') AS covering_for
            FROM substitutions sub
            JOIN timetable_entries t ON t.id = sub.timetable_entry_id
            JOIN courses c ON c.id = t.course_id
-           JOIN programmes p ON p.id = t.programme_id
+           LEFT JOIN programmes p ON p.id = t.programme_id
            LEFT JOIN faculty orig ON orig.id = t.faculty_id
            WHERE sub.substitute_faculty_id = $1 AND sub.on_date >= {TODAY}
            ORDER BY sub.on_date, t.start_time
@@ -369,12 +388,17 @@ pub struct TeacherCourse {
 
 pub async fn teacher_courses(db: &PgPool, faculty_id: i64) -> Res<Vec<TeacherCourse>> {
     sqlx::query_as::<_, TeacherCourse>(
-        r#"SELECT DISTINCT c.id, c.code, c.title, p.name AS programme, c.semester
-           FROM courses c JOIN programmes p ON p.id = c.programme_id
+        r#"SELECT DISTINCT c.id, c.code, c.title, COALESCE(p.name, 'Catalogue') AS programme,
+                  COALESCE(c.semester, 0) AS semester
+           FROM courses c
+           LEFT JOIN programmes p ON p.id = c.programme_id
            WHERE c.faculty_id = $1
               OR EXISTS (SELECT 1 FROM timetable_entries t WHERE t.course_id = c.id AND t.faculty_id = $1)
+              OR EXISTS (SELECT 1 FROM course_offerings o WHERE o.course_id = c.id AND o.faculty_id = $1)
               OR EXISTS (SELECT 1 FROM attendance_sessions s WHERE s.course_id = c.id AND s.taught_by = $1)
-           ORDER BY p.name, c.semester, c.code"#,
+           -- DISTINCT: order by the selected expressions (aliases), never the
+           -- underlying columns, or Postgres rejects the query.
+           ORDER BY programme, semester, c.code"#,
     )
     .bind(faculty_id)
     .fetch_all(db)

@@ -1,0 +1,99 @@
+{% extends "layouts/app.html" %}
+{% block title %}Course offerings{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Course offerings</h1>
+<p class="mt-3 max-w-2xl text-ink/80">{{ department_name }} — one offering = one course, one academic year, one semester, with who it is open to and how students choose it. Publish when the targets are set; the receiving departments then approve it for their students.</p>
+
+{% if can_create %}
+<section class="mt-8 max-w-4xl border border-ink/15 bg-mist p-5" aria-labelledby="new-offering">
+  <h2 id="new-offering" class="font-display text-2xl font-semibold">Create an offering</h2>
+  <form method="post" action="/admin/courses/offerings" class="mt-4 grid gap-4 sm:grid-cols-6">
+    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+    <div class="sm:col-span-2">
+      <label for="course_id" class="block font-semibold">Course</label>
+      <select id="course_id" name="course_id" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        {% for c in catalogue %}
+        {% if c.is_active %}
+        <option value="{{ c.id }}">{{ c.code }} — {{ c.title }}{% if c.programme.is_none() %} (catalogue){% endif %}</option>
+        {% endif %}
+        {% endfor %}
+      </select>
+    </div>
+    <div class="sm:col-span-2">
+      <label for="academic_year_id" class="block font-semibold">Academic year</label>
+      <select id="academic_year_id" name="academic_year_id" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        {% for y in years %}
+        <option value="{{ y.id }}" {% if y.is_current %}selected{% endif %}>{{ y.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="sm:col-span-1">
+      <label for="semester" class="block font-semibold">Semester</label>
+      <select id="semester" name="semester" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        {% for n in [1, 2, 3, 4, 5, 6] %}<option value="{{ n }}">{{ n }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="sm:col-span-1">
+      <label for="capacity" class="block font-semibold">Seats</label>
+      <input id="capacity" name="capacity" type="number" min="1" placeholder="∞" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+    <div class="sm:col-span-2">
+      <label for="course_type" class="block font-semibold">Course type</label>
+      <select id="course_type" name="course_type" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        {% for t in ["Regular", "Major", "Minor", "Specialization", "DSE", "MDC", "SEC", "VAC"] %}
+        <option value="{{ t }}">{{ t }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="sm:col-span-2">
+      <label for="selection_mode" class="block font-semibold">Selection mode</label>
+      <select id="selection_mode" name="selection_mode" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        <option value="INDIVIDUAL_CHOICE">Individual choice — students pick it</option>
+        <option value="FIXED">Fixed — all targeted students take it</option>
+        <option value="HOD_ASSIGNED">HOD assigned — receiving HOD assigns</option>
+        <option value="COHORT_CHOICE">Cohort choice — one decision per batch</option>
+      </select>
+    </div>
+    <div class="sm:col-span-2">
+      <label for="choice_group" class="block font-semibold">Choice group (cohort choice only)</label>
+      <input id="choice_group" name="choice_group" type="text" placeholder="e.g. BCA Specialization" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    </div>
+    <div class="sm:col-span-6"><button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Create draft offering</button></div>
+  </form>
+</section>
+{% else %}
+<p class="mt-6 max-w-2xl rounded border border-ink/15 bg-mist p-4 text-sm text-ink/70">You are viewing every department's offerings. Each department's head creates and publishes offerings for their own courses.</p>
+{% endif %}
+
+<div class="mt-8 overflow-x-auto">
+  <table class="w-full min-w-[44rem] text-left">
+    <thead>
+      <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+        <th scope="col" class="py-2 pr-4 font-medium">Course</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Year / Sem</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Type</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Mode</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Enrolled</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Status</th>
+        <th scope="col" class="py-2 font-medium"><span class="sr-only">Actions</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for o in offerings %}
+      <tr class="border-b border-ink/10">
+        <td class="py-2 pr-4"><span class="font-mono font-medium">{{ o.code }}</span> {{ o.title }}</td>
+        <td class="py-2 pr-4 text-sm">{{ o.year_label }} · S{{ o.semester }}</td>
+        <td class="py-2 pr-4 text-sm">{{ o.course_type }}</td>
+        <td class="py-2 pr-4 text-sm">{{ o.selection_mode }}{% if o.choice_group != "" %} <span class="text-ink/60">({{ o.choice_group }})</span>{% endif %}</td>
+        <td class="py-2 pr-4">{{ o.enrolled }}{% if let Some(cap) = o.capacity %}/{{ cap }}{% endif %}</td>
+        <td class="py-2 pr-4 text-sm font-semibold">{% if o.status == "published" %}<span class="text-emerald-700">Published</span>{% else if o.status == "draft" %}<span class="text-amber-700">Draft</span>{% else %}<span class="text-ink/50">Archived</span>{% endif %}</td>
+        <td class="py-2 text-right"><a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses/offerings/{{ o.id }}">Manage<span class="sr-only"> {{ o.code }}</span></a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if offerings.is_empty() %}
+  <p class="mt-3 text-ink/70">No offerings yet. Create one above — for example, offer Communicative English to Semester 3 and target BCA, BBA and B.Com.</p>
+  {% endif %}
+</div>
+{% endblock %}
