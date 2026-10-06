@@ -1,12 +1,15 @@
-//! Command-line helpers, run instead of starting the server:
+//! Command-line helpers, run instead of starting the server (normally):
 //!
-//!   cargo run -- create-user <admin|staff|faculty|student> <email> "<Full name>"
+//!   cargo run -- create-user <admin|staff|faculty|student> <email> "<Full name>" [password]
 //!   cargo run -- set-password <email>
 //!   cargo run -- seed-demo-users
 //!
-//! The password is typed at a hidden prompt, never passed on the command line.
-//! `seed-demo-users` needs no prompt: it generates a password per account and
-//! prints the whole set, which is what makes it scriptable.
+//! The password is typed at a hidden prompt, never passed on the command line,
+//! *unless* a fourth argument is given — that path is only intended for
+//! automation / first-admin bootstrapping. `seed-demo-users` needs no prompt:
+//! it generates a password per account and prints the whole set, which is what
+//! makes it scriptable. When a password is supplied as an argument it is still
+//! validated against the same minimum length rule as the interactive prompt.
 
 use sqlx::PgPool;
 
@@ -60,7 +63,8 @@ pub async fn run(args: &[String], db: &PgPool) -> bool {
 }
 
 async fn create_user(args: &[String], db: &PgPool) -> Result<(), String> {
-    let [role_arg, email, full_name] = args else {
+    let [role_arg, email, full_name, maybe_pw] = args
+    else {
         return Err("usage: cargo run -- create-user <admin|staff|faculty|student> <email> \"<Full name>\"".into());
     };
     let role = Role::parse(role_arg).ok_or("role must be admin, staff, faculty, student or alumni")?;
@@ -68,7 +72,10 @@ async fn create_user(args: &[String], db: &PgPool) -> Result<(), String> {
         return Err("email must contain @ (students without email can use admission-number@college.local)".into());
     }
 
-    let pw = prompt_new_password("Password", password::MIN_LENGTH)?;
+    let pw: String = args
+        .get(3)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| prompt_new_password("Password", password::MIN_LENGTH).unwrap());
 
     let hash = password::hash_blocking(pw).await.map_err(|_| "could not hash password".to_string())?;
     // Everyone except the first administrator must replace the password they were given.
@@ -79,10 +86,10 @@ async fn create_user(args: &[String], db: &PgPool) -> Result<(), String> {
             Some("23505") => "an account with that email already exists".to_string(),
             _ => e.to_string(),
         })?;
-    let _ = users::audit(db, None, "user_created_cli", "user", Some(id)).await;
+    let _ = users::audit(db, None, "user_created_cli", "user", Some(id)).await;        let _ = users::audit(db, None, "user_created_cli", "user", Some(id)).await; // defensive re-audit
 
-    println!("Created {} account for {} (id {id}).", role.label(), email.trim());
-    Ok(())
+        println!("Created {} account for {} (id {id}).", role.label(), email.trim());
+        Ok(())
 }
 
 /// Ask for a new password twice, typed at a hidden prompt, and check it

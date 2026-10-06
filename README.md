@@ -127,7 +127,9 @@ Keep the colours and fonts in `tailwind.config.js` and `styles.html` identical.
     templates/      layouts/ partials/ public/  (hub/ and admin/ come later)
     static/         app assets: css, js, img
     uploads/        user content: notices, events, faculty, documents, news
-    migrations/     0001 core, 0002 academics, 0003 content, 0004 triggers, 0005 starter content
+    migrations/     0001 core, 0002 academics, 0003 content, 0004 triggers, 0005 starter content,
+                    … 0013 course offerings (courses, offerings, targets, approvals, selections,
+                    change requests), 0014 updated_at columns
 
 ## Layers
 
@@ -154,3 +156,50 @@ Keep the colours and fonts in `tailwind.config.js` and `styles.html` identical.
 - The header and footer still carry the college phone number as fixed text. Contact details on the home and contact pages come from `site_settings`.
 - Set `SITE_URL` in `.env` so `sitemap.xml` and `robots.txt` use your real domain.
 - Images on the home page currently hotlink the live site and move to `uploads/` when the content is migrated.
+
+## Known limitations (to do later)
+
+Review of the course management & selection feature (branch `feature/curriculamv2`, verified 6 Oct 2026).
+The feature works end to end — catalogue → offering → publish → cross-department approval → selection
+(FIXED / HOD-assigned / individual choice / cohort choice) → enrollment → timetable and attendance —
+but these gaps remain:
+
+1. **Results section never shows offering courses.** `hub::internal_results` filters on `courses.semester`,
+   which is `NULL` for catalogue courses, so a confirmed offering appears in *Enrolled courses* but not in
+   `/hub` Results ("not enrolled in any courses this semester"). Take the semester from the student's
+   offering/selection instead of the catalogue row.
+2. **No marks/exams entry UI exists at all** (tables exist since migration 0002), and `exams.programme_id`
+   is `NOT NULL`, so an exam can never attach to an offering course. Marks themselves are course-based and
+   would work once a UI and the Results query exist.
+3. **Substitutions skip offering periods**: `attendance::teacher_day` joins `programme_id`, so an offering
+   period never appears in the substitute-teacher candidate list.
+4. **Clash detection is blind to offering periods**, both ways: `academics::clashes` compares
+   `programme_id` (NULL never matches, so class-group collisions are missed) and the offering page's
+   "add period" runs no clash check at all (teacher/room can be double-booked).
+5. **Admin timetable page** (`academics::slots`) filters `programme_id`, so offering periods are missing
+   from the `/admin/timetable` grid; they are only visible on the offering page, `/hub` and teacher pages.
+6. **Attendance reports disagree under a programme filter**: `by_session` filters `c.programme_id` while
+   `totals`/`by_student` filter `st.programme_id` — the session table can be empty while the totals are not.
+   The course-filter dropdown (`course_options`) also hides catalogue courses when a programme is selected.
+7. **Capacity is enforced only at student confirm**; HOD assignment and cohort finalization can exceed it.
+   Decide whether that override is intended, then enforce or document it.
+8. **Catalogue course editing has no UI**: `POST /admin/courses/:id/edit` exists (with audit) but nothing
+   posts to it — the catalogue only offers *Retire*, so typos in code/title/credits need SQL to fix.
+9. **Student actions are not audited**: select/withdraw/confirm/change-request on `/hub/courses` write no
+   `audit_log` rows (all 16 admin/HOD mutations do). Bulk `auto_apply_fixed` rows are only covered by the
+   publish/status audit entry.
+10. **Category taxonomies disagree**: `courses.category` is a fixed CHECK enum, the offering-create select
+    hardcodes a different list, and offering-edit is free text; students only ever see `course_type`.
+    A categories table would make this data-driven as intended.
+11. Minor: no pending-approval badge in the nav; `student_course_selections.state = 'submitted'` is reserved
+    but unused (selections go draft → confirmed directly); ~9 dead-code warnings from struct fields fetched
+    but never rendered in `services/courses.rs`.
+
+Pre-existing bugs, present before this branch (flagged during the same review):
+
+- `/admin/departments/attendance/:entry_id` and `.../save` always return 500 — the route passes one path
+  argument while `mark_form`/`mark_save` take `Path((entry_id, date))`.
+- `src/cli.rs` `create-user`: a duplicated `users::audit` line logs `user_created_cli` twice; `maybe_pw` is
+  bound but unused (the password is read from `args.get(3)`); `prompt_new_password(...).unwrap()` panics
+  instead of returning the error.
+- No study-materials UI either (`study_materials` table exists since 0002).

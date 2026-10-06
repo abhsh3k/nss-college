@@ -1,0 +1,181 @@
+{% extends "layouts/app.html" %}
+{% block title %}Student selections{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Student selections</h1>
+<p class="mt-3 max-w-2xl text-ink/80">Choices your {{ department_name }} students have made, HOD-assigned courses you can place, change requests awaiting your decision, and cohort-wide finalisations. Confirmed choices drive enrollments, so timetable and attendance follow automatically.</p>
+
+{# ---------- Change requests ---------- #}
+<section class="mt-10" aria-labelledby="change-requests">
+  <h2 id="change-requests" class="font-display text-2xl font-semibold">Change requests</h2>
+  {% if requests.is_empty() %}
+  <p class="mt-3 text-ink/70">No pending requests.</p>
+  {% else %}
+  <div class="mt-3 overflow-x-auto">
+    <table class="w-full min-w-[44rem] text-left">
+      <thead>
+        <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+          <th scope="col" class="py-2 pr-4 font-medium">Student</th>
+          <th scope="col" class="py-2 pr-4 font-medium">From → To</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Reason</th>
+          <th scope="col" class="py-2 font-medium"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in requests %}
+        <tr class="border-b border-ink/10">
+          <td class="py-2 pr-4">{{ r.name }}<br><span class="text-sm text-ink/60">{{ r.admission_no }} · {{ r.programme }}</span></td>
+          <td class="py-2 pr-4 text-sm"><span class="font-mono">{{ r.current_code }}</span> → <span class="font-mono font-semibold">{{ r.new_code }}</span></td>
+          <td class="py-2 pr-4 text-sm">{{ r.reason }}</td>
+          <td class="py-2 text-right whitespace-nowrap">
+            <form method="post" action="/admin/courses/selections/changes/{{ r.id }}/decide" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+              <input type="hidden" name="decision" value="approve">
+              <button type="submit" class="rounded bg-brand px-3 py-1.5 text-sm font-semibold text-chalk hover:bg-ink">Approve</button>
+            </form>
+            <form method="post" action="/admin/courses/selections/changes/{{ r.id }}/decide" class="inline ml-2">
+              <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+              <input type="hidden" name="decision" value="reject">
+              <input type="hidden" name="note" value="Not approved at this time.">
+              <button type="submit" class="rounded border border-ink px-3 py-1.5 text-sm font-semibold hover:bg-ink hover:text-chalk">Reject</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+{# ---------- HOD-assigned courses ---------- #}
+{% if !assignable.is_empty() %}
+<section class="mt-10" aria-labelledby="assign">
+  <h2 id="assign" class="font-display text-2xl font-semibold">Assign a course</h2>
+  <p class="mt-1 text-sm text-ink/70">Courses published as &ldquo;HOD assigned&rdquo;: place one on a student of your department and they are enrolled at once. Only students whose semester and batch the offering targets — and whose access you have approved — can be assigned.</p>
+  <form method="post" action="/admin/courses/selections/assign" class="mt-4 flex flex-wrap items-end gap-3 rounded border border-ink/15 bg-mist p-5">
+    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+    <div>
+      <label class="block text-sm font-semibold">Course</label>
+      <select name="offering_id" class="mt-1 rounded border border-ink/40 bg-white px-3 py-2">
+        {% for o in assignable %}
+        <option value="{{ o.id }}">{{ o.code }} — {{ o.title }} · {{ o.year_label }} S{{ o.semester }} ({{ o.department }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-sm font-semibold">Student</label>
+      <select name="student_id" class="mt-1 rounded border border-ink/40 bg-white px-3 py-2">
+        {% for s in students %}
+        <option value="{{ s.id }}">{{ s.name }} · {{ s.admission_no }} · {{ s.programme }} · S{{ s.semester }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Assign</button>
+  </form>
+</section>
+{% endif %}
+
+{# ---------- Cohort finalisation ---------- #}
+<section class="mt-10" aria-labelledby="cohorts">
+  <h2 id="cohorts" class="font-display text-2xl font-semibold">Cohort specializations</h2>
+  <p class="mt-1 text-sm text-ink/70">Finalise one offering per choice group for a whole batch — e.g. AI &amp; Machine Learning versus Full Stack Development for BCA 2026. Every active student of the cohort is confirmed onto the finalised course and enrolled.</p>
+
+  {% if pending_cohorts.is_empty() %}
+  <p class="mt-3 text-ink/70">No cohort decisions pending. Cohort-choice offerings appear here once they target a specific batch.</p>
+  {% endif %}
+
+  {% for p in pending_cohorts %}
+  <div class="mt-4 rounded border border-ink/15 bg-mist p-5">
+    <h3 class="font-semibold">{{ p.cohort_label }} — {{ p.choice_group }}</h3>
+    <form method="post" action="/admin/courses/selections/cohort" class="mt-3 flex flex-wrap items-end gap-3">
+      <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+      <input type="hidden" name="cohort_id" value="{{ p.cohort_id }}">
+      <input type="hidden" name="choice_group" value="{{ p.choice_group }}">
+      <div>
+        <label class="block text-sm font-semibold">Finalise</label>
+        <select name="offering_id" class="mt-1 rounded border border-ink/40 bg-white px-3 py-2">
+          {% for o in p.options %}
+          <option value="{{ o.0 }}">{{ o.1 }} — {{ o.2 }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-semibold">Note</label>
+        <input type="text" name="note" class="mt-1 rounded border border-ink/40 bg-white px-3 py-2" placeholder="Approved in staff council, etc.">
+      </div>
+      <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Finalise for cohort</button>
+    </form>
+  </div>
+  {% endfor %}
+
+  {% if !cohort_decisions.is_empty() %}
+  <h3 class="mt-6 font-semibold">Finalised</h3>
+  <ul class="mt-2 space-y-1 text-sm">
+    {% for d in cohort_decisions %}
+    <li>{{ d.cohort_label }} · {{ d.choice_group }} → <span class="font-mono font-semibold">{{ d.code }}</span> {{ d.title }}{% if d.note != "" %} <span class="text-ink/60">({{ d.note }})</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+{# ---------- All selections ---------- #}
+<section class="mt-10" aria-labelledby="all-selections">
+  <h2 id="all-selections" class="font-display text-2xl font-semibold">All selections</h2>
+  {% if selections.is_empty() %}
+  <p class="mt-3 text-ink/70">No student selections yet.</p>
+  {% else %}
+  <div class="mt-3 overflow-x-auto">
+    <table class="w-full min-w-[48rem] text-left">
+      <thead>
+        <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+          <th scope="col" class="py-2 pr-4 font-medium">Student</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Course</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Offered by</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Mode</th>
+          <th scope="col" class="py-2 pr-4 font-medium">State</th>
+          <th scope="col" class="py-2 font-medium"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in selections %}
+        <tr class="border-b border-ink/10">
+          <td class="py-2 pr-4">{{ s.name }}<br><span class="text-sm text-ink/60">{{ s.admission_no }} · {{ s.programme }} · S{{ s.semester }}</span></td>
+          <td class="py-2 pr-4"><span class="font-mono font-medium">{{ s.code }}</span> {{ s.title }}</td>
+          <td class="py-2 pr-4 text-sm">{{ s.department }}</td>
+          <td class="py-2 pr-4 text-sm">{{ s.selection_mode }}</td>
+          <td class="py-2 text-sm">
+            {% if s.state == "confirmed" %}<span class="font-semibold text-emerald-700">Confirmed</span>
+            {% else if s.state == "locked" %}<span class="font-semibold text-ink">Locked</span>
+            {% else if s.state == "change_requested" %}<span class="font-semibold text-amber-700">Change requested</span>
+            {% else if s.state == "submitted" %}Submitted
+            {% else %}Draft{% endif %}
+          </td>
+          <td class="py-2 text-right whitespace-nowrap">
+            {% if s.state == "confirmed" %}
+            <form method="post" action="/admin/courses/selections/{{ s.selection_id }}/state" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+              <input type="hidden" name="state" value="lock">
+              <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Lock<span class="sr-only"> {{ s.code }}</span></button>
+            </form>
+            {% else if s.state == "locked" %}
+            <form method="post" action="/admin/courses/selections/{{ s.selection_id }}/state" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+              <input type="hidden" name="state" value="unlock">
+              <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Unlock<span class="sr-only"> {{ s.code }}</span></button>
+            </form>
+            {% endif %}
+            {% if s.selection_mode == "HOD_ASSIGNED" && s.state != "locked" %}
+            <form method="post" action="/admin/courses/selections/{{ s.selection_id }}/unassign" class="inline ml-2">
+              <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+              <button type="submit" class="font-semibold text-rose-600 underline underline-offset-4 hover:text-ink">Withdraw<span class="sr-only"> {{ s.code }}</span></button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

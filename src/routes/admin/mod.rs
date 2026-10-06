@@ -2,6 +2,7 @@
 
 mod academics;
 mod attendance;
+mod course_offerings;
 mod departments;
 mod documents;
 mod events;
@@ -44,6 +45,28 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/people/import/credentials.csv", get(people::import_credentials_csv))
         .route("/admin/people/import/finished", post(people::import_finished))
         .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
+
+    // Course offerings and student selection (HOD tools).
+    let course_offerings = Router::new()
+        .route("/admin/courses", get(course_offerings::catalogue))
+        .route("/admin/courses/add", post(course_offerings::add_course))
+        .route("/admin/courses/:id/edit", post(course_offerings::edit_course))
+        .route("/admin/courses/:id/toggle", post(course_offerings::toggle_course))
+        .route("/admin/courses/offerings", get(course_offerings::offerings).post(course_offerings::create_offering))
+        .route("/admin/courses/offerings/:id", get(course_offerings::offering_page).post(course_offerings::edit_offering))
+        .route("/admin/courses/offerings/:id/delete", post(course_offerings::delete_offering))
+        .route("/admin/courses/offerings/:id/targets", post(course_offerings::set_targets))
+        .route("/admin/courses/offerings/:id/status", post(course_offerings::publish))
+        .route("/admin/courses/offerings/:id/periods", post(course_offerings::add_period))
+        .route("/admin/courses/offerings/:id/periods/:entry_id/delete", post(course_offerings::delete_period))
+        .route("/admin/courses/external", get(course_offerings::external))
+        .route("/admin/courses/external/:id/decide", post(course_offerings::decide))
+        .route("/admin/courses/selections", get(course_offerings::selections))
+        .route("/admin/courses/selections/assign", post(course_offerings::assign))
+        .route("/admin/courses/selections/:selection_id/state", post(course_offerings::set_selection_state))
+        .route("/admin/courses/selections/:selection_id/unassign", post(course_offerings::unassign))
+        .route("/admin/courses/selections/changes/:id/decide", post(course_offerings::decide_change))
+        .route("/admin/courses/selections/cohort", post(course_offerings::finalize_cohort));
 
     let academics_and_timetable = Router::new()
         // Programmes and courses
@@ -158,6 +181,7 @@ pub fn routes() -> Router<AppState> {
         .merge(people)
         .merge(imports)
         .merge(academics_and_timetable)
+        .merge(course_offerings)
         .merge(publishing)
         .merge(documents)
         .merge(rank_holders)

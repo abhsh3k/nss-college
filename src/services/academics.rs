@@ -271,6 +271,11 @@ pub async fn delete_course(db: &PgPool, id: i64) -> Res<()> {
 }
 
 /// Enrolls every active student of a programme semester in that semester's courses.
+///
+/// Hybrid enrollment: a course under a published, non-FIXED offering is chosen
+/// by students (or assigned by a HOD / cohort decision), so the bulk enrol keeps
+/// it out and lets the selection system create those enrollments instead.
+/// Fixed courses and courses with no offering behave exactly as before.
 pub async fn enroll_semester(db: &PgPool, programme_id: i64, semester: i32) -> Res<u64> {
     let done = sqlx::query(
         r#"INSERT INTO enrollments (student_id, course_id)
@@ -278,6 +283,11 @@ pub async fn enroll_semester(db: &PgPool, programme_id: i64, semester: i32) -> R
            FROM students s
            JOIN courses c ON c.programme_id = s.programme_id AND c.semester = s.semester
            WHERE s.programme_id = $1 AND s.semester = $2 AND s.is_active
+             AND NOT EXISTS (
+                 SELECT 1 FROM course_offerings o
+                  WHERE o.course_id = c.id
+                    AND o.status = 'published'
+                    AND o.selection_mode <> 'FIXED')
            ON CONFLICT DO NOTHING"#,
     )
     .bind(programme_id)

@@ -2,6 +2,7 @@ mod admin;
 mod auth;
 mod dashboards;
 mod htmx;
+mod hub_courses;
 mod public;
 mod teacher;
 
@@ -35,6 +36,11 @@ pub fn router() -> Router<AppState> {
         // The newer HTMX attendance sheet, kept alongside the pages above.
         .route("/teacher/sheet", get(dashboards::teacher))
         .route("/hub", get(dashboards::student))
+        .route("/hub/courses", get(hub_courses::my_courses))
+        .route("/hub/courses/select", post(hub_courses::select))
+        .route("/hub/courses/withdraw", post(hub_courses::withdraw))
+        .route("/hub/courses/confirm", post(hub_courses::confirm))
+        .route("/hub/courses/change", post(hub_courses::request_change))
         // Add these alongside your existing dashboard routes:
         .route("/dashboard/teacher/session/:entry_id/attendance", axum::routing::get(teacher::get_attendance_sheet))
         .route("/dashboard/teacher/session/:session_id/toggle", axum::routing::post(teacher::toggle_attendance_status))

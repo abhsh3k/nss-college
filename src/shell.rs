@@ -36,6 +36,10 @@ fn nav_for(user: &AuthUser) -> Vec<NavItem> {
             item("Overview", "/admin", false),
             item("People", "/admin/people", false),
             item("Courses and programmes", "/admin/academics", false),
+            item("Course catalogue", "/admin/courses", false),
+            item("Course offerings", "/admin/courses/offerings", false),
+            item("External offerings", "/admin/courses/external", false),
+            item("Student selections", "/admin/courses/selections", false),
             item("Timetable", "/admin/timetable", false),
             item("Substitutions", "/admin/substitutions", false),
             item("Departments", "/admin/departments", false),
@@ -64,6 +68,10 @@ fn nav_for(user: &AuthUser) -> Vec<NavItem> {
             ];
             if user.manages_department() {
                 items.push(item("Courses and programmes", "/admin/academics", false));
+                items.push(item("Course catalogue", "/admin/courses", false));
+                items.push(item("My offerings", "/admin/courses/offerings", false));
+                items.push(item("External offerings", "/admin/courses/external", false));
+                items.push(item("Student selections", "/admin/courses/selections", false));
                 items.push(item("Timetable", "/admin/timetable", false));
                 items.push(item("Substitutions", "/admin/substitutions", false));
                 items.push(item("Students", "/admin/departments", false));
@@ -75,7 +83,7 @@ fn nav_for(user: &AuthUser) -> Vec<NavItem> {
             item("Overview", "/hub", false),
             item("Today's classes", "/hub#today", false),
             item("Timetable", "/hub#timetable", false),
-            item("My courses", "/hub#courses", false),
+            item("My courses", "/hub/courses", false),
             item("Results", "/hub#results", false),
             item("Notices", "/hub#notices", false),
         ],

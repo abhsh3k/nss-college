@@ -49,6 +49,7 @@ pub struct Period {
 
 pub async fn week_schedule(
     db: &PgPool,
+    student_id: i64,
     programme_id: i64,
     semester: i32,
 ) -> Res<Vec<Period>> {
@@ -63,9 +64,19 @@ pub async fn week_schedule(
            FROM timetable_entries te
            JOIN courses c ON c.id = te.course_id
            LEFT JOIN faculty f ON f.id = te.faculty_id
-           WHERE te.programme_id = $1 AND te.semester = $2
+           WHERE (te.programme_id = $2 AND te.semester = $3)
+              OR te.course_offering_id IN (
+                  -- Periods of offerings this student is enrolled in, so a
+                  -- cross-department course appears without re-entering it
+                  -- per programme.
+                  SELECT o.id
+                    FROM course_offerings o
+                    JOIN enrollments e ON e.course_id = o.course_id
+                                       AND e.status = 'active'
+                                       AND e.student_id = $1)
            ORDER BY te.weekday, te.start_time"#,
     )
+    .bind(student_id)
     .bind(programme_id)
     .bind(semester)
     .fetch_all(db)

@@ -321,7 +321,9 @@ pub async fn student(
     let min_percent = hub::setting(&s.db, "attendance_min_percent", 75).await?;
 
     // Today's timeline + the whole week, from one timetable query.
-    let week = hub::week_schedule(&s.db, p.programme_id, p.semester).await?;
+    // Offering periods the student is enrolled in come along with their
+    // programme's class periods.
+    let week = hub::week_schedule(&s.db, p.id, p.programme_id, p.semester).await?;
     let today_periods: Vec<HubPeriod> = week
         .iter()
         .filter(|x| x.weekday == weekday_today)
