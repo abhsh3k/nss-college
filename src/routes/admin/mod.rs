@@ -5,6 +5,7 @@ mod attendance;
 mod course_offerings;
 mod departments;
 mod documents;
+mod exams;
 mod events;
 mod news;
 mod notices;
@@ -94,7 +95,14 @@ pub fn routes() -> Router<AppState> {
         )
         // Attendance reporting
         .route("/admin/attendance", get(attendance::report))
-        .route("/admin/attendance.csv", get(attendance::csv));
+        .route("/admin/attendance.csv", get(attendance::csv))
+        // Exam timetable and semester results, pushed to students by PRN
+        .route("/admin/exams", get(exams::page))
+        .route("/admin/exams/add", post(exams::add))
+        .route("/admin/exams/:id/delete", post(exams::delete))
+        .route("/admin/exams/push", post(exams::push))
+        .route("/admin/exams/unpush", post(exams::unpush))
+        .route("/admin/exams/results", post(exams::push_results));
 
     // Notices, news and events take multipart bodies, so they need a body limit
     // well above axum's 2 MB default.

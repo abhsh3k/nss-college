@@ -24,6 +24,11 @@
     {% if !is_new %}<p class="mt-1 text-sm text-ink/70">The admission number can't be changed.</p>{% endif %}
   </div>
   <div>
+    <label for="prn" class="block font-semibold">PRN <span class="font-normal text-ink/70">(permanent registration number, optional)</span></label>
+    <input id="prn" name="prn" type="text" value="{{ form.prn }}" maxlength="40" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    <p class="mt-1 text-sm text-ink/70">The university's candidate number — used to push semester exam results. Must be unique when set.</p>
+  </div>
+  <div>
     <label for="email" class="block font-semibold">Email <span class="font-normal text-ink/70">(optional)</span></label>
     <input id="email" name="email" type="email" value="{{ form.email }}" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
     <p class="mt-1 text-sm text-ink/70">Students can always sign in with their admission number.</p>

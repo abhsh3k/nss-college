@@ -3,6 +3,7 @@ mod auth;
 mod dashboards;
 mod htmx;
 mod hub_courses;
+mod hub_pages;
 mod public;
 mod teacher;
 
@@ -36,6 +37,9 @@ pub fn router() -> Router<AppState> {
         // The newer HTMX attendance sheet, kept alongside the pages above.
         .route("/teacher/sheet", get(dashboards::teacher))
         .route("/hub", get(dashboards::student))
+        .route("/hub/timetable", get(hub_pages::timetable))
+        .route("/hub/results", get(hub_pages::results))
+        .route("/hub/exams", get(hub_pages::exam_timetable))
         .route("/hub/courses", get(hub_courses::my_courses))
         .route("/hub/courses/select", post(hub_courses::select))
         .route("/hub/courses/withdraw", post(hub_courses::withdraw))

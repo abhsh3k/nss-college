@@ -12,6 +12,8 @@ type Res<T> = Result<T, sqlx::Error>;
 pub struct HubStudent {
     pub id: i64,
     pub admission_no: String,
+    /// The university's permanent registration number, once assigned.
+    pub prn: String,
     pub programme_id: i64,
     pub programme: String,
     pub semester: i32,
@@ -22,6 +24,7 @@ pub async fn student_profile(db: &PgPool, user_id: i64) -> Res<Option<HubStudent
     sqlx::query_as::<_, HubStudent>(
         r#"SELECT st.id,
                   st.admission_no,
+                  COALESCE(st.prn, '') AS prn,
                   st.programme_id,
                   p.name AS programme,
                   st.semester,
@@ -213,48 +216,5 @@ pub async fn student_feed(db: &PgPool, limit: i64) -> Res<Vec<Notice>> {
     .await
 }
 
-// ---------- Internal marks ----------
-
-/// One course's internal assessment total for a student.
-#[derive(Debug, FromRow)]
-pub struct InternalMark {
-    pub course_id: i64,
-    pub code: String,
-    pub title: String,
-    pub credits: i32,
-    pub obtained: f64,
-    pub maximum: f64,
-}
-
-/// Internal marks for one semester, for the courses the student is enrolled in.
-///
-/// Only `published` rows are counted, so a teacher can enter marks as they are
-/// graded without the student seeing half-finished numbers. A course with no
-/// published marks yet still appears, with zero out of zero.
-pub async fn internal_results(
-    db: &PgPool,
-    student_id: i64,
-    semester: i32,
-) -> Res<Vec<InternalMark>> {
-    sqlx::query_as::<_, InternalMark>(
-        r#"SELECT c.id AS course_id, c.code, c.title, c.credits,
-                  COALESCE(sum(m.marks_obtained) FILTER (WHERE m.assessment = 'internal'), 0)::float8 AS obtained,
-                  COALESCE(sum(m.max_marks)       FILTER (WHERE m.assessment = 'internal'), 0)::float8 AS maximum
-           FROM courses c
-           LEFT JOIN marks m
-                  ON m.course_id = c.id
-                 AND m.student_id = $1
-                 AND m.published
-           WHERE c.semester = $2
-             AND EXISTS (SELECT 1 FROM enrollments e
-                          WHERE e.course_id = c.id
-                            AND e.student_id = $1
-                            AND e.status = 'active')
-           GROUP BY c.id, c.code, c.title, c.credits
-           ORDER BY c.code"#,
-    )
-    .bind(student_id)
-    .bind(semester)
-    .fetch_all(db)
-    .await
-}
+// Internal marks moved to `services::exams::results_for`, which reads every
+// semester through the enrollment's own semester.

@@ -70,6 +70,7 @@ pub struct PersonForm {
     full_name: String,
     email: String,
     admission_no: String,
+    prn: String,
     phone: String,
     programme_id: String,
     batch_year: String,
@@ -103,6 +104,7 @@ impl PersonForm {
             full_name: d.full_name.clone(),
             email: d.email.clone(),
             admission_no: d.admission_no.clone(),
+            prn: d.prn.clone(),
             phone: d.phone.clone(),
             programme_id: d.programme_id.to_string(),
             batch_year: if d.batch_year > 0 { d.batch_year.to_string() } else { String::new() },
@@ -439,6 +441,7 @@ pub async fn update(
         role: current.role.clone(),
         is_active: current.is_active,
         admission_no: current.admission_no.clone(), // the admission number is not editable
+        prn: f.prn.trim().to_string(),
         programme_id: c.programme_id,
         batch_year: c.batch_year,
         semester: c.semester,
@@ -452,7 +455,8 @@ pub async fn update(
     };
     if let Err(e) = people::update(&s.db, &updated).await {
         if is_unique_violation(&e) {
-            let msg = "That email is already used by another account.".to_string();
+            let msg = "That email or PRN is already used by another account."
+                .to_string();
             return person_form_page(&s, &session, &user, edit_meta(), f.clone(), Some(msg)).await;
         }
         return Err(e.into());

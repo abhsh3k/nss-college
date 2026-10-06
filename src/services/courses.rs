@@ -700,10 +700,10 @@ async fn enroll(
     course_id: i64,
 ) -> Result<(), AppError> {
     sqlx::query(
-        r#"INSERT INTO enrollments (student_id, course_id)
-           VALUES ($1, $2)
+        r#"INSERT INTO enrollments (student_id, course_id, semester)
+           VALUES ($1, $2, (SELECT semester FROM students WHERE id = $1))
            ON CONFLICT (student_id, course_id)
-           DO UPDATE SET status = 'active'"#,
+           DO UPDATE SET status = 'active', semester = EXCLUDED.semester"#,
     )
     .bind(student_id)
     .bind(course_id)
@@ -996,10 +996,10 @@ pub async fn decide_change_request(
                 .fetch_one(&mut *tx)
                 .await?;
         sqlx::query(
-            r#"INSERT INTO enrollments (student_id, course_id)
-               VALUES ($1, $2)
+            r#"INSERT INTO enrollments (student_id, course_id, semester)
+               VALUES ($1, $2, (SELECT semester FROM students WHERE id = $1))
                ON CONFLICT (student_id, course_id)
-               DO UPDATE SET status = 'active'"#,
+               DO UPDATE SET status = 'active', semester = EXCLUDED.semester"#,
         )
         .bind(student_id)
         .bind(new_course)
@@ -1173,9 +1173,11 @@ pub async fn finalize_cohort_specialization(
     .await?;
     // ...and enroll them, which is what timetable and attendance follow.
     sqlx::query(
-        r#"INSERT INTO enrollments (student_id, course_id)
-           SELECT u.sid, $2 FROM UNNEST($1::bigint[]) AS u(sid)
-           ON CONFLICT (student_id, course_id) DO UPDATE SET status = 'active'"#,
+        r#"INSERT INTO enrollments (student_id, course_id, semester)
+           SELECT u.sid, $2, (SELECT st.semester FROM students st WHERE st.id = u.sid)
+             FROM UNNEST($1::bigint[]) AS u(sid)
+           ON CONFLICT (student_id, course_id)
+           DO UPDATE SET status = 'active', semester = EXCLUDED.semester"#,
     )
     .bind(&students)
     .bind(course_id)
@@ -1314,14 +1316,16 @@ pub async fn auto_apply_fixed(
         // Bring the enrollments in step: one statement covers both the rows
         // just created and anything applied earlier.
         sqlx::query(
-            r#"INSERT INTO enrollments (student_id, course_id)
-               SELECT sc.student_id, o.course_id
+            r#"INSERT INTO enrollments (student_id, course_id, semester)
+               SELECT sc.student_id, o.course_id, st.semester
                  FROM student_course_selections sc
                  JOIN course_offerings o ON o.id = sc.offering_id
+                 JOIN students st ON st.id = sc.student_id
                 WHERE sc.state = 'confirmed'
                   AND ($1::bigint IS NULL OR sc.offering_id = $1)
                   AND ($2::bigint IS NULL OR sc.student_id = $2)
-               ON CONFLICT (student_id, course_id) DO UPDATE SET status = 'active'"#,
+               ON CONFLICT (student_id, course_id)
+               DO UPDATE SET status = 'active', semester = EXCLUDED.semester"#,
         )
         .bind(offering_id)
         .bind(student_id)

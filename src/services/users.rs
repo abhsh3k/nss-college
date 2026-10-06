@@ -21,6 +21,10 @@ pub struct SessionUserRow {
 }
 
 /// Sign in with the account email or, for students, the admission number.
+///
+/// A student account answers only to its admission number — the primary and
+/// sole student identifier — so a student's email address never signs anyone
+/// in; every other role still uses its email.
 pub async fn find_for_login(db: &PgPool, identifier: &str) -> Res<Option<LoginRow>> {
     sqlx::query_as::<_, LoginRow>(
         r#"SELECT u.id,
@@ -29,8 +33,8 @@ pub async fn find_for_login(db: &PgPool, identifier: &str) -> Res<Option<LoginRo
                   (u.locked_until IS NOT NULL AND u.locked_until > now()) AS locked
            FROM users u
            LEFT JOIN students s ON s.user_id = u.id
-           WHERE lower(u.email) = lower($1) OR lower(s.admission_no) = lower($1)
-           ORDER BY (lower(u.email) = lower($1)) DESC
+           WHERE (s.id IS NULL  AND lower(u.email) = lower($1))
+              OR (s.id IS NOT NULL AND lower(s.admission_no) = lower($1))
            LIMIT 1"#,
     )
     .bind(identifier)

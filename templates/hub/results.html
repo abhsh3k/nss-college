@@ -1,0 +1,99 @@
+{% extends "layouts/app.html" %}
+{% block title %}Results{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+  <div class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <h1 class="font-display text-3xl font-semibold md:text-4xl text-gray-900">Results</h1>
+      <p class="mt-1 text-gray-600">Every published mark for the semester you pick — coursework and the internal exam.</p>
+    </div>
+
+    {% if has_profile %}
+    <form method="get" action="/hub/results" class="flex items-end gap-3">
+      <div>
+        <label for="sem" class="block text-sm font-semibold text-gray-700">Semester</label>
+        <select id="sem" name="sem" onchange="this.form.submit()" class="mt-1 rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900">
+          {% for (n, is_sel, is_cur) in semester_opts %}
+          <option value="{{ n }}" {% if is_sel %}selected{% endif %}>Semester {{ n }}{% if is_cur %} — current{% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Show</button>
+      <span class="mb-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">{{ semester_label }}</span>
+    </form>
+    {% endif %}
+  </div>
+
+  {% if !has_profile %}
+  <section class="rounded-xl border-2 border-dashed border-gray-200 bg-white p-8 text-center">
+    <p class="font-medium text-gray-700">Your student record hasn't been set up yet.</p>
+    <p class="mt-1 text-sm text-gray-500">Results will appear here once the office has added you for your semester.</p>
+  </section>
+  {% else if courses.is_empty() %}
+  <section class="rounded-xl border-2 border-dashed border-gray-200 bg-white p-8 text-center">
+    <p class="font-medium text-gray-700">You aren't enrolled in any courses this semester.</p>
+    <p class="mt-1 text-sm text-gray-500">Pick another semester above, or check back once your department enrols you.</p>
+  </section>
+  {% else %}
+
+  {% if any_marks %}
+  <p class="text-sm text-gray-500">Coursework total for {{ semester_label }}: <span class="font-semibold text-gray-800">{{ total_label }}</span></p>
+  {% endif %}
+
+  <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
+    <table class="w-full min-w-[38rem] text-left">
+      <thead>
+        <tr class="border-b-2 border-gray-200 text-sm text-gray-500">
+          <th scope="col" class="py-3 px-4 font-medium">Course</th>
+          <th scope="col" class="py-3 px-4 font-medium">Assessment</th>
+          <th scope="col" class="py-3 px-4 font-medium">Marks</th>
+          <th scope="col" class="py-3 px-4 font-medium">Percent</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in courses %}
+          {% if c.marks.is_empty() %}
+          <tr class="border-b border-gray-100">
+            <td class="py-3 px-4">
+              <span class="font-semibold text-gray-900">{{ c.code }}</span>
+              <span class="block text-sm text-gray-600">{{ c.title }}</span>
+              <span class="text-xs text-gray-500">{{ c.credits }} credits</span>
+            </td>
+            <td class="py-3 px-4 text-sm text-gray-400" colspan="3">No marks published yet</td>
+          </tr>
+          {% else %}
+            {% for m in c.marks %}
+            <tr class="border-b border-gray-100 {% if loop.first %}bg-gray-50/60{% endif %}">
+              <td class="py-3 px-4">
+                {% if loop.first %}
+                <span class="font-semibold text-gray-900">{{ c.code }}</span>
+                <span class="block text-sm text-gray-600">{{ c.title }}</span>
+                <span class="text-xs text-gray-500">{{ c.credits }} credits</span>
+                {% endif %}
+              </td>
+              <td class="py-3 px-4 text-sm font-medium text-gray-800">
+                {{ m.label }}
+                {% if let Some(d) = m.exam_date %}<span class="block text-xs text-gray-500">Held {{ d }}</span>{% endif %}
+              </td>
+              <td class="py-3 px-4 text-sm text-gray-900">{{ m.obtained_label }} / {{ m.max_label }}</td>
+              <td class="py-3 px-4 text-sm text-gray-700">{{ m.percent_label }}</td>
+            </tr>
+            {% endfor %}
+            {% if c.has_marks %}
+            <tr class="border-b-2 border-gray-200 bg-white font-semibold text-gray-900">
+              <td class="py-2 px-4 text-sm text-gray-500 font-normal">Total</td>
+              <td class="py-2 px-4 text-sm"></td>
+              <td class="py-2 px-4 text-sm">{{ c.total_label }}</td>
+              <td class="py-2 px-4 text-sm">{{ c.percent_label }}</td>
+            </tr>
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% endif %}
+</div>
+{% endblock %}

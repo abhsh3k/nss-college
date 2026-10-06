@@ -278,8 +278,8 @@ pub async fn delete_course(db: &PgPool, id: i64) -> Res<()> {
 /// Fixed courses and courses with no offering behave exactly as before.
 pub async fn enroll_semester(db: &PgPool, programme_id: i64, semester: i32) -> Res<u64> {
     let done = sqlx::query(
-        r#"INSERT INTO enrollments (student_id, course_id)
-           SELECT s.id, c.id
+        r#"INSERT INTO enrollments (student_id, course_id, semester)
+           SELECT s.id, c.id, s.semester
            FROM students s
            JOIN courses c ON c.programme_id = s.programme_id AND c.semester = s.semester
            WHERE s.programme_id = $1 AND s.semester = $2 AND s.is_active

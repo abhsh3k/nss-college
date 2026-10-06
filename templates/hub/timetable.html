@@ -1,0 +1,98 @@
+{% extends "layouts/app.html" %}
+{% block title %}Timetable{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+  <div>
+    <h1 class="font-display text-3xl font-semibold md:text-4xl text-gray-900">Timetable</h1>
+    <p class="mt-1 text-lg text-gray-600">Today is <span class="font-medium text-gray-800">{{ today_str }}</span></p>
+  </div>
+
+  {% if !has_profile %}
+  <section class="rounded-xl border-2 border-dashed border-gray-200 bg-white p-8 text-center">
+    <p class="font-medium text-gray-700">Your student record hasn't been set up yet.</p>
+    <p class="mt-1 text-sm text-gray-500">Your timetable will appear here once the office has added you for your semester.</p>
+  </section>
+  {% else %}
+
+  <section id="today" class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-bold text-gray-900">Today's Classes</h2>
+      <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+        {{ today_periods.len() }} Period(s) Scheduled
+      </span>
+    </div>
+
+    {% if today_periods.is_empty() %}
+    <p class="text-gray-500 py-6 text-center border-2 border-dashed border-gray-100 rounded-lg">
+      No classes scheduled for today. Check the weekly timetable below.
+    </p>
+    {% else %}
+    <div class="space-y-3">
+      {% for p in today_periods %}
+      <div class="flex flex-col gap-3 border rounded-lg p-4 sm:flex-row sm:items-center {% if p.is_now %}border-indigo-300 bg-indigo-50/60 shadow-sm{% else %}border-gray-200 bg-gray-50/50{% endif %} {% if p.is_past %}opacity-70{% endif %}">
+        <div class="sm:w-40 sm:shrink-0">
+          <span class="inline-block font-mono text-sm font-semibold text-gray-800">{{ p.start_time }} – {{ p.end_time }}</span>
+          {% if p.is_now %}
+          <span class="ml-2 inline-flex items-center rounded bg-indigo-600 px-2 py-0.5 text-xs font-bold text-white">Now</span>
+          {% endif %}
+          {% if p.is_past %}
+          <span class="ml-2 inline-flex items-center rounded bg-gray-200 px-2 py-0.5 text-xs font-semibold text-gray-600">Done</span>
+          {% endif %}
+        </div>
+        <div class="min-w-0">
+          <h3 class="font-bold text-gray-900 text-base leading-snug">{{ p.code }} &ndash; {{ p.title }}</h3>
+          <p class="text-sm text-gray-600 mt-0.5">{{ p.detail }}</p>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+
+  <section id="timetable" class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-bold text-gray-900">Weekly Timetable</h2>
+    </div>
+
+    {% if has_week %}
+    <div class="overflow-x-auto">
+      <table class="w-full border-collapse text-left text-sm">
+        <thead>
+          <tr class="bg-gray-50 text-xs font-semibold uppercase tracking-wider text-gray-600">
+            <th class="border border-gray-200 px-3 py-2">Time</th>
+            {% for d in days %}
+            <th class="border border-gray-200 px-3 py-2 {% if d.is_today %}bg-indigo-50 text-indigo-700{% endif %}">{{ d.short }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td class="border border-gray-200 bg-gray-50/60 px-3 py-2 font-mono text-xs font-semibold text-gray-500 whitespace-nowrap">{{ row.time }}</td>
+            {% for cell in row.cells %}
+            <td class="border border-gray-200 px-2 py-2 align-top">
+              {% if let Some(c) = cell %}
+              <div class="-mx-1 -my-1 px-1 py-1 {% if c.is_today %}rounded bg-indigo-50{% endif %}">
+                <span class="block font-semibold text-gray-900">{{ c.code }}</span>
+                <span class="block text-xs text-gray-600 leading-snug">{{ c.title }}</span>
+                <span class="mt-0.5 block text-xs text-gray-500">{{ c.detail }}</span>
+              </div>
+              {% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-gray-500 py-6 text-center border-2 border-dashed border-gray-100 rounded-lg">
+      Your timetable hasn't been published yet. It will appear here as soon as your department prepares it.
+    </p>
+    {% endif %}
+  </section>
+
+  {% endif %}
+</div>
+{% endblock %}

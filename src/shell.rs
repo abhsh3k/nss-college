@@ -42,6 +42,7 @@ fn nav_for(user: &AuthUser) -> Vec<NavItem> {
             item("Student selections", "/admin/courses/selections", false),
             item("Timetable", "/admin/timetable", false),
             item("Substitutions", "/admin/substitutions", false),
+            item("Exam timetable", "/admin/exams", false),
             item("Departments", "/admin/departments", false),
             item("Attendance reports", "/admin/attendance", false),
             item("Notices", "/admin/notices", false),
@@ -74,6 +75,7 @@ fn nav_for(user: &AuthUser) -> Vec<NavItem> {
                 items.push(item("Student selections", "/admin/courses/selections", false));
                 items.push(item("Timetable", "/admin/timetable", false));
                 items.push(item("Substitutions", "/admin/substitutions", false));
+                items.push(item("Exam timetable", "/admin/exams", false));
                 items.push(item("Students", "/admin/departments", false));
                 items.push(item("Department attendance", "/admin/departments/attendance", false));
             }
@@ -81,11 +83,10 @@ fn nav_for(user: &AuthUser) -> Vec<NavItem> {
         }
         Role::Student => vec![
             item("Overview", "/hub", false),
-            item("Today's classes", "/hub#today", false),
-            item("Timetable", "/hub#timetable", false),
+            item("Timetable", "/hub/timetable", false),
             item("My courses", "/hub/courses", false),
-            item("Results", "/hub#results", false),
-            item("Notices", "/hub#notices", false),
+            item("Results", "/hub/results", false),
+            item("Exam timetable", "/hub/exams", false),
         ],
         Role::Alumni => vec![],
     };

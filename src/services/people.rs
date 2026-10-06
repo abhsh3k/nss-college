@@ -45,6 +45,8 @@ pub struct PersonDetail {
     pub role: String,
     pub is_active: bool,
     pub admission_no: String,
+    /// The university's permanent registration number (candidate key).
+    pub prn: String,
     pub programme_id: i64,
     pub batch_year: i32,
     pub semester: i32,
@@ -61,6 +63,7 @@ pub async fn detail(db: &PgPool, user_id: i64) -> Res<Option<PersonDetail>> {
     sqlx::query_as::<_, PersonDetail>(
         r#"SELECT u.id, u.full_name, u.email, u.role, u.is_active,
                   COALESCE(s.admission_no, '') AS admission_no,
+                  COALESCE(s.prn, '') AS prn,
                   COALESCE(s.programme_id, 0) AS programme_id,
                   COALESCE(s.batch_year, 0) AS batch_year,
                   COALESCE(s.semester, 1) AS semester,
@@ -92,8 +95,8 @@ pub struct NewStudent<'a> {
     pub egrants: bool,
 }
 
-const ENROLL_SEMESTER_SQL: &str = r#"INSERT INTO enrollments (student_id, course_id)
-    SELECT $1, id FROM courses WHERE programme_id = $2 AND semester = $3
+const ENROLL_SEMESTER_SQL: &str = r#"INSERT INTO enrollments (student_id, course_id, semester)
+    SELECT $1, id, $3 FROM courses WHERE programme_id = $2 AND semester = $3
       AND NOT EXISTS (
           SELECT 1 FROM course_offerings o
            WHERE o.course_id = courses.id
@@ -202,7 +205,7 @@ pub async fn update(db: &PgPool, d: &PersonDetail) -> Res<()> {
         let student_id: Option<i64> = sqlx::query_scalar(
             r#"UPDATE students
                SET name = $2, programme_id = $3, batch_year = $4, semester = $5,
-                   phone = NULLIF($6, ''), egrants = $7
+                   phone = NULLIF($6, ''), egrants = $7, prn = NULLIF($8, '')
                WHERE user_id = $1 RETURNING id"#,
         )
         .bind(d.id)
@@ -212,6 +215,7 @@ pub async fn update(db: &PgPool, d: &PersonDetail) -> Res<()> {
         .bind(d.semester)
         .bind(&d.phone)
         .bind(d.egrants)
+        .bind(&d.prn)
         .fetch_optional(&mut *tx)
         .await?;
         if let Some(student_id) = student_id {
