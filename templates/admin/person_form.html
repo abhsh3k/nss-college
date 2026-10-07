@@ -113,6 +113,17 @@
   </div>
 </form>
 
+{% if let Some(next) = next_semester %}
+<section class="mt-10 max-w-xl border-t border-ink/15 pt-8" aria-labelledby="promote-heading">
+  <h2 id="promote-heading" class="font-display text-2xl font-semibold">Promotion</h2>
+  <p class="mt-2 text-ink/80">Currently in Semester {{ form.semester }}. Moving up files nothing under the new semester: results and enrolments stay with the semester they belong to, so every past semester stays readable.</p>
+  <form method="post" action="/admin/people/{{ user_id }}/promote" onsubmit="return confirm('Move this student to Semester {{ next }}?')" class="mt-4">
+    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+    <button type="submit" class="rounded border border-ink px-4 py-2 font-semibold hover:bg-ink hover:text-chalk">Promote to Semester {{ next }}</button>
+  </form>
+</section>
+{% endif %}
+
 {% if !is_new %}
 <section class="mt-14 max-w-xl border-t border-ink/15 pt-8" aria-labelledby="acct-heading">
   <h2 id="acct-heading" class="font-display text-2xl font-semibold">Account</h2>

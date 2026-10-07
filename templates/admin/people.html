@@ -26,6 +26,29 @@
   <button type="submit" class="rounded border border-ink px-4 py-2 font-semibold hover:bg-ink hover:text-chalk">Search</button>
 </form>
 
+<form method="post" action="/admin/people/promote" onsubmit="return confirm('Move everyone in that semester up one semester?')" class="mt-6 flex max-w-3xl flex-wrap items-end gap-3 rounded border border-ink/15 bg-mist p-4">
+  <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+  <div>
+    <label for="promote-programme" class="block text-sm font-semibold">End-of-term promotion</label>
+    <select id="promote-programme" name="programme" required class="mt-1 w-60 rounded border border-ink/40 bg-white px-3 py-2">
+      <option value="">Choose a programme</option>
+      {% for p in programmes %}
+      <option value="{{ p.id }}">{{ p.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="promote-semester" class="block text-sm font-semibold">Semester they are in</label>
+    <select id="promote-semester" name="semester" class="mt-1 w-40 rounded border border-ink/40 bg-white px-3 py-2">
+      {% for n in 1..8 %}
+      <option value="{{ n }}">Semester {{ n }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Promote to the next semester</button>
+  <p class="basis-full text-sm text-ink/70">Moves every active student of that programme up one semester. Their results stay filed under the semester they were earned in, so their Results page keeps every past semester.</p>
+</form>
+
 <div class="mt-6 overflow-x-auto">
   <table class="w-full min-w-[40rem] text-left">
     <thead>

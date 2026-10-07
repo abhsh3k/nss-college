@@ -2,9 +2,17 @@
 //!
 //! The head of department assembles an exam timetable for a programme and
 //! semester and pushes it: students then see the timetable between the push
-//! and the date of the last exam. Semester results are pushed as rows keyed
-//! by the student's PRN — the university's candidate key — and published for
-//! the student's Results page straight away.
+//! and the date of the last exam.
+//!
+//! Two kinds of result are pushed, each under its own key:
+//!
+//! * the university's semester exam, keyed by the student's PRN;
+//! * an internal exam the college itself conducts, keyed by the admission
+//!   number and named, so one course can carry several of them.
+//!
+//! Both are filed against the semester picked on the page, so a result pushed
+//! after the student has been promoted still reads back under the semester it
+//! was earned in.
 
 use sqlx::{FromRow, PgPool};
 
@@ -254,6 +262,9 @@ pub struct ResultMark {
     pub max_label: String,
     pub percent_label: String,
     pub exam_date: Option<String>,
+    /// True for coursework (internal, assignment, practical, external); the
+    /// coursework total on the Results page only adds these rows.
+    pub is_coursework: bool,
 }
 
 /// One course in the Results table, with every published assessment row.
@@ -268,21 +279,30 @@ pub struct ResultCourse {
     pub has_marks: bool,
 }
 
-fn assessment_label(assessment: &str) -> String {
-    match assessment {
-        "internal" => "Internal".into(),
-        "assignment" => "Assignment".into(),
-        "practical" => "Practical".into(),
-        "exam" => "Internal exam".into(),
-        "external" => "External".into(),
-        other => {
-            let mut c = other.chars();
-            match c.next() {
-                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-                None => String::new(),
+/// How a mark line reads on the student's Results page: the exam kind wins
+/// over the raw assessment, because the same `exam` assessment covers both the
+/// university's semester result and a college internal exam.
+fn assessment_label(assessment: &str, exam_kind: &str, exam_name: &str) -> String {
+    let base = match exam_kind {
+        "university" => "University exam".to_string(),
+        "internal" if exam_name.is_empty() => "Internal exam".to_string(),
+        "internal" => format!("Internal exam — {exam_name}"),
+        _ => match assessment {
+            "internal" => "Internal".into(),
+            "assignment" => "Assignment".into(),
+            "practical" => "Practical".into(),
+            "exam" => "Exam".into(),
+            "external" => "External".into(),
+            other => {
+                let mut c = other.chars();
+                match c.next() {
+                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                    None => String::new(),
+                }
             }
-        }
-    }
+        },
+    };
+    base
 }
 
 fn label(v: f64) -> String {
@@ -293,8 +313,9 @@ fn label(v: f64) -> String {
     }
 }
 
-/// Every semester this student has (or had) enrollments for, always including
-/// the current one, so the selector can offer all of them.
+/// Every semester this student has results for: the ones they enrolled in,
+/// the one they are in now, and any semester a result was filed under — so a
+/// student three semesters in can still read semester one and two.
 pub async fn result_semesters(db: &PgPool, student_id: i64) -> Res<Vec<i32>> {
     let rows = sqlx::query_scalar::<_, i32>(
         r#"SELECT DISTINCT sem FROM (
@@ -303,6 +324,9 @@ pub async fn result_semesters(db: &PgPool, student_id: i64) -> Res<Vec<i32>> {
                 WHERE e.student_id = $1
                UNION
                SELECT semester FROM students WHERE id = $1
+               UNION
+               SELECT semester FROM marks
+                WHERE student_id = $1 AND published AND semester IS NOT NULL
            ) t
            WHERE sem IS NOT NULL
            ORDER BY sem"#,
@@ -313,25 +337,59 @@ pub async fn result_semesters(db: &PgPool, student_id: i64) -> Res<Vec<i32>> {
     Ok(rows)
 }
 
-/// Results for one semester: one block per enrolled course, one line per
-/// published mark (internal, assignment, practical, and the pushed internal
-/// exam result). Courses with nothing published still appear.
+/// Results for one semester: one block per course, one line per published mark
+/// (coursework, the college's internal exams, and the university's semester
+/// exam). Courses with nothing published still appear.
+///
+/// Two sources are joined: the enrollments of that semester, and any result
+/// filed under it — a result stands on its own once it exists, so promotion
+/// away from the semester can never take it off the page.
 pub async fn results_for(db: &PgPool, student_id: i64, semester: i32) -> Res<Vec<ResultCourse>> {
-    let rows = sqlx::query_as::<_, (String, String, i32, Option<String>, Option<f64>, Option<f64>, Option<String>)>(
+    let rows = sqlx::query_as::<_, (
+        String,
+        String,
+        i32,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<f64>,
+        Option<f64>,
+        Option<String>,
+    )>(
         r#"SELECT c.code, c.title, c.credits,
-                  m.assessment, m.marks_obtained::float8, m.max_marks::float8,
+                  m.assessment, m.exam_kind, m.exam_name,
+                  m.marks_obtained::float8, m.max_marks::float8,
                   to_char(ex.exam_date, 'Dy DD Mon YYYY')
-           FROM enrollments e
-           JOIN courses c ON c.id = e.course_id
-           LEFT JOIN marks m
-                  ON m.course_id = e.course_id
-                 AND m.student_id = e.student_id
-                 AND m.published
-           LEFT JOIN exams ex ON ex.id = m.exam_id
-           WHERE e.student_id = $1
-             AND e.status = 'active'
-             AND COALESCE(e.semester, c.semester) = $2
-           ORDER BY c.code, m.assessment"#,
+             FROM enrollments e
+             JOIN courses c ON c.id = e.course_id
+             LEFT JOIN marks m
+                    ON m.course_id = e.course_id
+                   AND m.student_id = e.student_id
+                   AND m.published
+                   AND (m.semester = $2 OR m.semester IS NULL)
+             LEFT JOIN exams ex ON ex.id = m.exam_id
+            WHERE e.student_id = $1
+              AND e.status = 'active'
+              AND COALESCE(e.semester, c.semester) = $2
+           UNION ALL
+           SELECT c.code, c.title, c.credits,
+                  m.assessment, m.exam_kind, m.exam_name,
+                  m.marks_obtained::float8, m.max_marks::float8,
+                  to_char(ex.exam_date, 'Dy DD Mon YYYY')
+             FROM marks m
+             JOIN courses c ON c.id = m.course_id
+             LEFT JOIN exams ex ON ex.id = m.exam_id
+            WHERE m.student_id = $1
+              AND m.published
+              AND m.semester = $2
+              AND NOT EXISTS (
+                  SELECT 1
+                    FROM enrollments e JOIN courses ec ON ec.id = e.course_id
+                   WHERE e.student_id = m.student_id
+                     AND e.course_id = m.course_id
+                     AND e.status = 'active'
+                     AND COALESCE(e.semester, ec.semester) = $2)
+            ORDER BY 1, 4, 5, 6"#,
     )
     .bind(student_id)
     .bind(semester)
@@ -341,7 +399,7 @@ pub async fn results_for(db: &PgPool, student_id: i64, semester: i32) -> Res<Vec
     let mut out: Vec<ResultCourse> = Vec::new();
     // Raw sums kept alongside the blocks so totals never round twice.
     let mut sums: Vec<(f64, f64)> = Vec::new();
-    for (code, title, credits, assessment, obtained, maximum, exam_date) in rows {
+    for (code, title, credits, assessment, exam_kind, exam_name, obtained, maximum, exam_date) in rows {
         let same_course = out
             .last()
             .map(|c| c.code == code && c.title == title)
@@ -358,10 +416,16 @@ pub async fn results_for(db: &PgPool, student_id: i64, semester: i32) -> Res<Vec
             });
             sums.push((0.0, 0.0));
         }
-        let (Some(assessment), Some(obtained), Some(maximum)) = (assessment, obtained, maximum)
+        let (
+            Some(assessment),
+            Some(exam_kind),
+            Some(obtained),
+            Some(maximum),
+        ) = (assessment, exam_kind, obtained, maximum)
         else {
             continue; // course with no published marks yet
         };
+        let exam_name = exam_name.unwrap_or_default();
         let last = out.len() - 1;
         let percent = if maximum > 0.0 {
             100.0 * obtained / maximum
@@ -369,11 +433,12 @@ pub async fn results_for(db: &PgPool, student_id: i64, semester: i32) -> Res<Vec
             0.0
         };
         out[last].marks.push(ResultMark {
-            label: assessment_label(&assessment),
+            label: assessment_label(&assessment, &exam_kind, &exam_name),
             obtained_label: label(obtained),
             max_label: label(maximum),
             percent_label: format!("{percent:.0}%"),
             exam_date,
+            is_coursework: exam_kind != "university" && exam_kind != "internal",
         });
         sums[last].0 += obtained;
         sums[last].1 += maximum;
@@ -396,14 +461,63 @@ pub async fn results_for(db: &PgPool, student_id: i64, semester: i32) -> Res<Vec
 
 // ---------- Results push (head of department side) ----------
 
-/// One parsed line of the paste box: `PRN COURSE OBTAINED/MAX`,
-/// `PRN COURSE OBTAINED MAX` (exam by default) or
-/// `PRN COURSE ASSESSMENT OBTAINED MAX`.
+/// Which exam a push belongs to. It decides the key the rows are matched on,
+/// how the result is filed, and how the student's Results page labels it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PushKind {
+    /// The university's semester exam, matched on the PRN.
+    University,
+    /// An internal exam the college itself conducts, matched on the
+    /// admission number and named, so a course can carry several.
+    Internal,
+}
+
+impl PushKind {
+    pub fn parse(raw: &str) -> Self {
+        if raw.trim().eq_ignore_ascii_case("internal") {
+            PushKind::Internal
+        } else {
+            PushKind::University
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PushKind::University => "university",
+            PushKind::Internal => "internal",
+        }
+    }
+
+    /// What the first column of a row carries, for the form's help text.
+    pub fn key_label(self) -> &'static str {
+        match self {
+            PushKind::University => "PRN",
+            PushKind::Internal => "admission number",
+        }
+    }
+
+    /// What an internal row is called when it does not carry its own name.
+    fn default_exam_name(self) -> &'static str {
+        "Internal exam"
+    }
+}
+
+/// One parsed line of the paste box.
+///
+/// University rows: `PRN COURSE OBTAINED/MAX`, `PRN COURSE OBTAINED MAX`
+/// (the semester exam by default) or `PRN COURSE ASSESSMENT OBTAINED MAX`.
+///
+/// Internal rows: `ADMISSION_NO COURSE EXAM_NAME OBTAINED/MAX`, with the exam
+/// name left out when the marks come as a ratio or as two numbers
+/// (`ADMISSION_NO COURSE 42/50`).
 #[derive(Debug, Clone)]
 pub struct PushRow {
-    pub prn: String,
+    /// The student's PRN or admission number, depending on [`PushKind`].
+    pub key: String,
     pub course: String,
     pub assessment: String,
+    /// The internal exam's own name; empty for every other kind.
+    pub exam_name: String,
     pub obtained: f64,
     pub max: f64,
 }
@@ -417,12 +531,32 @@ pub struct PushProblem {
 
 const ASSESSMENTS: [&str; 5] = ["internal", "external", "practical", "assignment", "exam"];
 
+/// Comma- or tab-separated when the line looks like one, space-separated
+/// otherwise, with double quotes protecting a field that carries spaces
+/// (`2501 BCA101 "Internal 1" 42/50`). Empty fields survive in the
+/// delimited form, as they do in a spreadsheet export.
 fn split_fields(line: &str) -> Vec<String> {
-    if line.contains(',') || line.contains('\t') {
-        line.split([',', '\t']).map(|f| f.trim().to_string()).collect()
-    } else {
-        line.split_whitespace().map(|f| f.to_string()).collect()
+    let delimited = line.contains(',') || line.contains('\t');
+    let sep = |c: char| if delimited { c == ',' || c == '\t' } else { c.is_whitespace() };
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    for c in line.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            _ if !quoted && sep(c) => {
+                if delimited || !cur.is_empty() {
+                    out.push(cur.trim().to_string());
+                    cur.clear();
+                }
+            }
+            _ => cur.push(c),
+        }
     }
+    if delimited || !cur.is_empty() {
+        out.push(cur.trim().to_string());
+    }
+    out
 }
 
 fn ratio(part: &str) -> Option<(f64, f64)> {
@@ -432,8 +566,107 @@ fn ratio(part: &str) -> Option<(f64, f64)> {
     Some((obtained, max))
 }
 
-/// Parse the paste box, collecting a per-line problem for anything malformed.
-pub fn parse_push(text: &str) -> (Vec<PushRow>, Vec<PushProblem>) {
+/// The first column is a header like `prn` or `admission_no`, not a student.
+fn is_header_row(fields: &[String]) -> bool {
+    fields
+        .first()
+        .map(|f| {
+            let norm: String = f
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect::<String>()
+                .to_ascii_lowercase();
+            matches!(norm.as_str(), "prn" | "admissionno" | "admno" | "admission" | "key")
+        })
+        .unwrap_or(false)
+}
+
+/// A university semester-exam row, or the reason the line is unusable.
+fn university_row(fields: &[String]) -> Result<PushRow, String> {
+    let row = |assessment: String, obtained: f64, max: f64| PushRow {
+        key: fields[0].clone(),
+        course: fields[1].clone(),
+        assessment,
+        exam_name: String::new(),
+        obtained,
+        max,
+    };
+    match fields.len() {
+        3 => ratio(&fields[2])
+            .map(|(o, m)| row("exam".into(), o, m))
+            .ok_or_else(|| "write the marks as obtained/max, e.g. 42/50".to_string()),
+        4 if ASSESSMENTS.contains(&fields[2].to_ascii_lowercase().as_str()) => ratio(&fields[3])
+            .map(|(o, m)| row(fields[2].to_ascii_lowercase(), o, m))
+            .ok_or_else(|| "write the marks as obtained/max, e.g. 42/50".to_string()),
+        4 => match (fields[2].parse::<f64>(), fields[3].parse::<f64>()) {
+            (Ok(obtained), Ok(max)) => Ok(row("exam".into(), obtained, max)),
+            _ => Err("expected two numbers: obtained and max".to_string()),
+        },
+        5 => {
+            let assessment = fields[2].to_ascii_lowercase();
+            if !ASSESSMENTS.contains(&assessment.as_str()) {
+                return Err(format!("assessment must be one of: {}", ASSESSMENTS.join(", ")));
+            }
+            match (fields[3].parse::<f64>(), fields[4].parse::<f64>()) {
+                (Ok(obtained), Ok(max)) => Ok(row(assessment, obtained, max)),
+                _ => Err("expected two numbers: obtained and max".to_string()),
+            }
+        }
+        _ => Err("expected 3, 4 or 5 fields (PRN, course, [assessment], obtained, max)".to_string()),
+    }
+}
+
+/// A college internal-exam row: `admission_no course exam_name obtained/max`.
+fn internal_row(fields: &[String]) -> Result<PushRow, String> {
+    let default_name = PushKind::Internal.default_exam_name();
+    // Empty or whitespace-only names fall back to the generic one, so two
+    // unnamed pushes still agree instead of piling up as separate exams.
+    let row = |name: &str, obtained: f64, max: f64| {
+        let exam_name = if name.trim().is_empty() {
+            default_name.to_string()
+        } else {
+            name.trim().to_string()
+        };
+        PushRow {
+            key: fields[0].clone(),
+            course: fields[1].clone(),
+            assessment: "exam".into(),
+            exam_name,
+            obtained,
+            max,
+        }
+    };
+    match fields.len() {
+        3 => ratio(&fields[2])
+            .map(|(o, m)| row(default_name, o, m))
+            .ok_or_else(|| "write the marks as obtained/max, e.g. 42/50".to_string()),
+        4 => {
+            // `admission_no course 42 50` (no name) or `… course name 42/50`.
+            if let (Ok(obtained), Ok(max)) = (fields[2].parse::<f64>(), fields[3].parse::<f64>()) {
+                Ok(row(default_name, obtained, max))
+            } else {
+                ratio(&fields[3])
+                    .map(|(o, m)| row(&fields[2], o, m))
+                    .ok_or_else(|| {
+                        "write the exam name, then the marks as obtained/max, e.g. \"Internal 1 42/50\""
+                            .to_string()
+                    })
+            }
+        }
+        5 => match (fields[3].parse::<f64>(), fields[4].parse::<f64>()) {
+            (Ok(obtained), Ok(max)) => Ok(row(&fields[2], obtained, max)),
+            _ => Err("expected two numbers: obtained and max".to_string()),
+        },
+        _ => Err(
+            "expected 3, 4 or 5 fields (admission no, course, [exam name], obtained, max)"
+                .to_string(),
+        ),
+    }
+}
+
+/// Parse the paste box for one kind of exam, collecting a per-line problem
+/// for anything malformed.
+pub fn parse_push(text: &str, kind: PushKind) -> (Vec<PushRow>, Vec<PushProblem>) {
     let mut rows = Vec::new();
     let mut problems = Vec::new();
     for (i, raw) in text.lines().enumerate() {
@@ -444,105 +677,42 @@ pub fn parse_push(text: &str) -> (Vec<PushRow>, Vec<PushProblem>) {
         }
         let fields = split_fields(line);
         // A header row like `prn,course,marks` is common in exports.
-        if fields.first().map(|f| f.eq_ignore_ascii_case("prn")).unwrap_or(false) {
+        if is_header_row(&fields) {
             continue;
         }
-        let mut push = |prn: String, course: String, assessment: String, obtained: f64, max: f64| {
-            rows.push(PushRow {
-                prn,
-                course,
-                assessment,
-                obtained,
-                max,
-            })
+        let built = if fields.len() < 2 {
+            Err(format!(
+                "expected 3, 4 or 5 fields ({}, course, [exam name], obtained, max)",
+                kind.key_label()
+            ))
+        } else {
+            match kind {
+                PushKind::University => university_row(&fields),
+                PushKind::Internal => internal_row(&fields),
+            }
         };
-        match fields.len() {
-            3 => match ratio(&fields[2]) {
-                Some((obtained, max)) => push(
-                    fields[0].clone(),
-                    fields[1].clone(),
-                    "exam".into(),
-                    obtained,
-                    max,
-                ),
-                None => problems.push(PushProblem {
-                    line: line_no,
-                    text: line.to_string(),
-                    problem: "write the marks as obtained/max, e.g. 42/50".into(),
-                }),
-            },
-            4 if ASSESSMENTS.contains(&fields[2].to_ascii_lowercase().as_str()) => {
-                match ratio(&fields[3]) {
-                    Some((obtained, max)) => push(
-                        fields[0].clone(),
-                        fields[1].clone(),
-                        fields[2].to_ascii_lowercase(),
-                        obtained,
-                        max,
-                    ),
-                    None => problems.push(PushProblem {
-                        line: line_no,
-                        text: line.to_string(),
-                        problem: "write the marks as obtained/max, e.g. 42/50".into(),
-                    }),
-                }
-            }
-            4 => match (fields[2].parse::<f64>(), fields[3].parse::<f64>()) {
-                (Ok(obtained), Ok(max)) => push(
-                    fields[0].clone(),
-                    fields[1].clone(),
-                    "exam".into(),
-                    obtained,
-                    max,
-                ),
-                _ => problems.push(PushProblem {
-                    line: line_no,
-                    text: line.to_string(),
-                    problem: "expected two numbers: obtained and max".into(),
-                }),
-            },
-            5 => {
-                let assessment = fields[2].to_ascii_lowercase();
-                if !ASSESSMENTS.contains(&assessment.as_str()) {
-                    problems.push(PushProblem {
-                        line: line_no,
-                        text: line.to_string(),
-                        problem: format!("assessment must be one of: {}", ASSESSMENTS.join(", ")),
-                    });
-                } else {
-                    match (fields[3].parse::<f64>(), fields[4].parse::<f64>()) {
-                        (Ok(obtained), Ok(max)) => {
-                            push(fields[0].clone(), fields[1].clone(), assessment, obtained, max)
-                        }
-                        _ => problems.push(PushProblem {
-                            line: line_no,
-                            text: line.to_string(),
-                            problem: "expected two numbers: obtained and max".into(),
-                        }),
-                    }
-                }
-            }
-            _ => problems.push(PushProblem {
+        match built {
+            Ok(row) => rows.push(row),
+            Err(problem) => problems.push(PushProblem {
                 line: line_no,
                 text: line.to_string(),
-                problem: "expected 3, 4 or 5 fields (PRN, course, [assessment], obtained, max)".into(),
+                problem,
             }),
         }
     }
     (rows, problems)
 }
 
-/// A student found by PRN, plus what the push needs to check and file it.
-/// (The type itself crosses into the route, so it is public; its fields stay
-/// private to this module.)
+/// A student found by the push's key, plus what the push needs to check and
+/// file the row. (The type itself crosses into the route, so it is public;
+/// its fields stay private to this module.)
 pub struct Candidate {
     student_id: i64,
     programme_id: i64,
-    semester: i32,
     course_id: i64,
 }
 
-/// Validate every row against the database: the PRN must find an active
+/// Validate every row against the database: the key must find an active
 /// student the manager may act for, the course must be real and belong to the
 /// student's programme (catalogue courses belong to everyone), and the marks
 /// must fit. Returns the rows that are good to file, with a problem per line
@@ -550,6 +720,7 @@ pub struct Candidate {
 pub async fn validate_push(
     db: &PgPool,
     department: Option<i64>,
+    kind: PushKind,
     rows: &[PushRow],
 ) -> Res<(Vec<(PushRow, Candidate)>, Vec<PushProblem>)> {
     let mut good = Vec::new();
@@ -559,10 +730,17 @@ pub async fn validate_push(
         let fail = |problems: &mut Vec<PushProblem>, text: String, problem: String| {
             problems.push(PushProblem { line, text, problem })
         };
-        let text = format!(
-            "{} {} {} {}/{}",
-            row.prn, row.course, row.assessment, row.obtained, row.max
-        );
+        // What the line is echoed back as in the problem list.
+        let text = match kind {
+            PushKind::Internal => format!(
+                "{} {} {} {}/{}",
+                row.key, row.course, row.exam_name, row.obtained, row.max
+            ),
+            PushKind::University => format!(
+                "{} {} {} {}/{}",
+                row.key, row.course, row.assessment, row.obtained, row.max
+            ),
+        };
         if !ASSESSMENTS.contains(&row.assessment.as_str()) {
             fail(
                 &mut problems,
@@ -579,15 +757,34 @@ pub async fn validate_push(
             );
             continue;
         }
-        let candidate = sqlx::query_as::<_, (i64, i64, i32)>(
-            r#"SELECT id, programme_id, semester FROM students
-               WHERE prn = $1 AND is_active"#,
-        )
-        .bind(&row.prn)
-        .fetch_optional(db)
-        .await?;
-        let Some((student_id, programme_id, semester)) = candidate else {
-            fail(&mut problems, text, "no active student with that PRN".into());
+        // The university exam is the candidate's PRN; an internal exam is the
+        // college's own list, which is keyed by admission number.
+        let candidate = match kind {
+            PushKind::University => {
+                sqlx::query_as::<_, (i64, i64)>(
+                    r#"SELECT id, programme_id FROM students
+                       WHERE prn = $1 AND is_active"#,
+                )
+                .bind(&row.key)
+                .fetch_optional(db)
+                .await?
+            }
+            PushKind::Internal => {
+                sqlx::query_as::<_, (i64, i64)>(
+                    r#"SELECT id, programme_id FROM students
+                       WHERE lower(btrim(admission_no)) = lower(btrim($1)) AND is_active"#,
+                )
+                .bind(&row.key)
+                .fetch_optional(db)
+                .await?
+            }
+        };
+        let Some((student_id, programme_id)) = candidate else {
+            let what = match kind {
+                PushKind::University => "PRN",
+                PushKind::Internal => "admission number",
+            };
+            fail(&mut problems, text, format!("no active student with that {what}"));
             continue;
         };
         if !crate::services::academics::may_manage_programme(db, programme_id, department).await? {
@@ -625,7 +822,6 @@ pub async fn validate_push(
             Candidate {
                 student_id,
                 programme_id,
-                semester,
                 course_id,
             },
         ));
@@ -633,16 +829,26 @@ pub async fn validate_push(
     Ok((good, problems))
 }
 
-/// File the validated rows: published immediately, upserted on
-/// (student, course, assessment) so re-pushing corrects a result. Exam rows
-/// attach to the student's published exam for that course when one exists.
-pub async fn push_marks(db: &PgPool, rows: &[(PushRow, Candidate)]) -> Res<u64> {
+/// File the validated rows: published immediately, upserted per
+/// (student, course, assessment, kind, exam name) so re-pushing corrects a
+/// result without disturbing the other kind. `semester` is the semester the
+/// results are filed under — the one picked on the page — which is what lets
+/// a result pushed after promotion still read back under the semester it was
+/// earned in.
+///
+/// An internal row attaches to the college's published exam for that course
+/// and semester when one exists, so the date shows beside the score; a
+/// university row carries no college exam date.
+pub async fn push_marks(
+    db: &PgPool,
+    kind: PushKind,
+    semester: i32,
+    rows: &[(PushRow, Candidate)],
+) -> Res<u64> {
     let mut tx = db.begin().await?;
     let mut filed = 0u64;
     for (row, c) in rows {
-        // An exam result attaches to the published exam it belongs to, so the
-        // student's result page can show the exam date alongside the score.
-        let exam_id: Option<i64> = if row.assessment == "exam" {
+        let exam_id: Option<i64> = if kind == PushKind::Internal {
             sqlx::query_scalar(
                 r#"SELECT id FROM exams
                    WHERE course_id = $1 AND programme_id = $2 AND semester = $3
@@ -651,21 +857,31 @@ pub async fn push_marks(db: &PgPool, rows: &[(PushRow, Candidate)]) -> Res<u64> 
             )
             .bind(c.course_id)
             .bind(c.programme_id)
-            .bind(c.semester)
+            .bind(semester)
             .fetch_optional(&mut *tx)
             .await?
         } else {
             None
         };
+        // A university push files the semester exam under its own kind; any
+        // coursework row it carries along stays coursework.
+        let exam_kind = match kind {
+            PushKind::Internal => "internal",
+            PushKind::University if row.assessment == "exam" => "university",
+            PushKind::University => "coursework",
+        };
+        let exam_name = if exam_kind == "internal" { row.exam_name.as_str() } else { "" };
         sqlx::query(
             r#"INSERT INTO marks (student_id, course_id, exam_id, assessment,
-                                  marks_obtained, max_marks, published)
-               VALUES ($1, $2, $3, $4, $5, $6, true)
-               ON CONFLICT (student_id, course_id, assessment)
+                                  marks_obtained, max_marks, published,
+                                  exam_kind, exam_name, semester)
+               VALUES ($1, $2, $3, $4, $5, $6, true, $7, $8, $9)
+               ON CONFLICT (student_id, course_id, assessment, exam_kind, exam_name)
                DO UPDATE SET marks_obtained = EXCLUDED.marks_obtained,
                              max_marks      = EXCLUDED.max_marks,
                              exam_id        = COALESCE(EXCLUDED.exam_id, marks.exam_id),
                              published      = true,
+                             semester       = EXCLUDED.semester,
                              updated_at     = now()"#,
         )
         .bind(c.student_id)
@@ -674,10 +890,97 @@ pub async fn push_marks(db: &PgPool, rows: &[(PushRow, Candidate)]) -> Res<u64> 
         .bind(&row.assessment)
         .bind(row.obtained)
         .bind(row.max)
+        .bind(exam_kind)
+        .bind(exam_name)
+        .bind(semester)
         .execute(&mut *tx)
         .await?;
         filed += 1;
     }
     tx.commit().await?;
     Ok(filed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn one(text: &str, kind: PushKind) -> PushRow {
+        let (rows, problems) = parse_push(text, kind);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(rows.len(), 1);
+        rows.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn university_rows_are_keyed_by_prn() {
+        let row = one("2025BCA0001 BCA101 42/50", PushKind::University);
+        assert_eq!(row.key, "2025BCA0001");
+        assert_eq!(row.course, "BCA101");
+        assert_eq!(row.assessment, "exam");
+        assert_eq!(row.exam_name, "");
+        assert_eq!((row.obtained, row.max), (42.0, 50.0));
+
+        let row = one("2025BCA0001 BCA101 42 50", PushKind::University);
+        assert_eq!((row.obtained, row.max), (42.0, 50.0));
+
+        let row = one("2025BCA0001,BCA101,internal,18,25", PushKind::University);
+        assert_eq!(row.assessment, "internal");
+        assert_eq!((row.obtained, row.max), (18.0, 25.0));
+    }
+
+    #[test]
+    fn internal_rows_are_keyed_by_admission_number_and_named() {
+        let row = one("2501 BCA101 \"Internal 1\" 42/50", PushKind::Internal);
+        assert_eq!(row.key, "2501");
+        assert_eq!(row.course, "BCA101");
+        assert_eq!(row.assessment, "exam");
+        assert_eq!(row.exam_name, "Internal 1");
+        assert_eq!((row.obtained, row.max), (42.0, 50.0));
+
+        let row = one("2501,BCA101,Internal 2,42,50", PushKind::Internal);
+        assert_eq!(row.exam_name, "Internal 2");
+        assert_eq!((row.obtained, row.max), (42.0, 50.0));
+
+        // The name may be left out; both shapes fall back to the same one.
+        assert_eq!(one("2501 BCA101 42/50", PushKind::Internal).exam_name, "Internal exam");
+        assert_eq!(one("2501 BCA101 42 50", PushKind::Internal).exam_name, "Internal exam");
+    }
+
+    #[test]
+    fn header_rows_are_skipped_for_both_keys() {
+        let (rows, problems) = parse_push(
+            "admission_no,course,marks\n2501 BCA101 42/50",
+            PushKind::Internal,
+        );
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(rows.len(), 1);
+
+        let (rows, problems) = parse_push(
+            "PRN,Course,Marks\n2025BCA0001 BCA101 42/50",
+            PushKind::University,
+        );
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(rows.len(), 1);
+    }
+
+    #[test]
+    fn a_bad_line_is_a_problem_not_a_silent_drop() {
+        let (rows, problems) = parse_push("2501 BCA101 42/50\n2501 BCA101", PushKind::Internal);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].line, 2);
+    }
+
+    #[test]
+    fn labels_tell_the_two_exams_apart() {
+        assert_eq!(assessment_label("exam", "university", ""), "University exam");
+        assert_eq!(
+            assessment_label("exam", "internal", "Internal 1"),
+            "Internal exam — Internal 1"
+        );
+        assert_eq!(assessment_label("exam", "internal", ""), "Internal exam");
+        assert_eq!(assessment_label("internal", "coursework", ""), "Internal");
+        assert_eq!(assessment_label("assignment", "coursework", ""), "Assignment");
+    }
 }

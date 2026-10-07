@@ -23,6 +23,8 @@ pub const MAX_ROWS: usize = 500;
 #[derive(Debug, Clone)]
 pub struct ParsedRow {
     pub admission_no: String,
+    /// The university's permanent registration number, when the file has one.
+    pub prn: String,
     pub name: String,
     pub email: String,
     pub phone: String,
@@ -170,6 +172,16 @@ const ADMISSION: &[&str] = &[
     "rollno",
     "usn",
 ];
+const PRN: &[&str] = &[
+    "prn",
+    "permanent_no",
+    "permanent_number",
+    "permanent_registration_no",
+    "permanent_registration_number",
+    "permanent_reg_no",
+    "registration_no",
+    "registration_number",
+];
 const NAME: &[&str] = &["name", "student_name", "full_name", "fullname", "student"];
 const EMAIL: &[&str] = &["email", "email_address", "emailaddress", "e_mail", "mail"];
 const PHONE: &[&str] = &["phone", "phone_no", "phoneno", "mobile", "mobile_no", "contact"];
@@ -208,6 +220,8 @@ fn rows_from(table: &[Vec<String>]) -> Result<Parsed, String> {
     let Some(c_name) = column(&headers, NAME) else {
         return Err("The first line must have a column called name.".into());
     };
+    // PRN is accepted but not required: older lists simply omit the column.
+    let c_prn = column(&headers, PRN);
     let (c_email, c_phone) = (
         column(&headers, EMAIL),
         column(&headers, PHONE),
@@ -225,6 +239,7 @@ fn rows_from(table: &[Vec<String>]) -> Result<Parsed, String> {
     for raw in data.iter().take(MAX_ROWS) {
         let mut row = ParsedRow {
             admission_no: cell_text_at(raw, Some(c_adm)),
+            prn: cell_text_at(raw, c_prn),
             name: cell_text_at(raw, Some(c_name)),
             email: cell_text_at(raw, c_email),
             phone: cell_text_at(raw, c_phone),
@@ -309,13 +324,14 @@ pub async fn stage(
     for (i, row) in rows.iter().enumerate() {
         sqlx::query(
             r#"INSERT INTO import_rows
-                 (batch_id, line_no, admission_no, name, email, phone,
+                 (batch_id, line_no, admission_no, prn, name, email, phone,
                   programme_text, semester_text, year_text, note)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"#,
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#,
         )
         .bind(batch_id)
         .bind(i as i32 + 2)
         .bind(&row.admission_no)
+        .bind(&row.prn)
         .bind(&row.name)
         .bind(&row.email)
         .bind(&row.phone)
@@ -354,6 +370,7 @@ pub struct StagedRow {
     pub id: i64,
     pub line_no: i32,
     pub admission_no: String,
+    pub prn: String,
     pub name: String,
     pub email: String,
     pub phone: String,
@@ -379,7 +396,7 @@ pub async fn programme_names(db: &PgPool) -> Res<Vec<String>> {
         .await
 }
 
-const ROWS_SQL: &str = r#"SELECT r.id, r.line_no, r.admission_no, r.name, r.email, r.phone,
+const ROWS_SQL: &str = r#"SELECT r.id, r.line_no, r.admission_no, r.prn, r.name, r.email, r.phone,
           r.programme_text, r.semester_text, r.year_text, r.include, r.status, r.note,
           b.programme_id AS batch_programme_id, p.name AS batch_programme_name,
           b.semester AS batch_semester, b.batch_year AS batch_year,
@@ -480,6 +497,7 @@ impl StagedRow {
 pub struct RowEdit {
     pub id: i64,
     pub admission_no: String,
+    pub prn: String,
     pub name: String,
     pub email: String,
     pub phone: String,
@@ -494,13 +512,14 @@ pub async fn save_rows(db: &PgPool, batch_id: i64, edits: &[RowEdit]) -> Res<()>
     for e in edits {
         sqlx::query(
             r#"UPDATE import_rows
-               SET admission_no = $3, name = $4, email = $5, phone = $6,
-                   programme_text = $7, semester_text = $8, year_text = $9, include = $10
+               SET admission_no = $3, prn = $4, name = $5, email = $6, phone = $7,
+                   programme_text = $8, semester_text = $9, year_text = $10, include = $11
                WHERE id = $1 AND batch_id = $2"#,
         )
         .bind(e.id)
         .bind(batch_id)
         .bind(e.admission_no.trim())
+        .bind(e.prn.trim())
         .bind(e.name.trim())
         .bind(e.email.trim())
         .bind(e.phone.trim())
@@ -642,16 +661,31 @@ mod tests {
 
     #[test]
     fn reads_a_csv_list() {
-        let csv = "admission_no,name,email,phone\n\
-                   2501,Asha K,,9876500000\n\
-                   2502,Rahul M,rahul@example.com,\n";
+        let csv = "admission_no,prn,name,email,phone\n\
+                   2501,PRN0001,Asha K,,9876500000\n\
+                   2502,PRN0002,Rahul M,rahul@example.com,\n";
         let parsed = parse(csv.as_bytes(), "list.csv").unwrap();
         assert_eq!(parsed.dropped, 0);
         assert_eq!(parsed.rows.len(), 2);
         assert_eq!(parsed.rows[0].admission_no, "2501");
+        assert_eq!(parsed.rows[0].prn, "PRN0001");
         assert_eq!(parsed.rows[0].name, "Asha K");
         assert_eq!(parsed.rows[0].phone, "9876500000");
+        assert_eq!(parsed.rows[1].prn, "PRN0002");
         assert!(parsed.rows.iter().all(|r| r.error.is_empty()));
+    }
+
+    #[test]
+    fn prn_is_accepted_and_optional() {
+        // The new structure carries a PRN column...
+        let with_prn = "admission_no,prn,name\n2501,PRN0001,Asha K\n";
+        assert_eq!(parse(with_prn.as_bytes(), "list.csv").unwrap().rows[0].prn, "PRN0001");
+        // ...and a looser spelling of the header still counts.
+        let loose = "Admission No.,Permanent Registration No,Name\n2501,PRN0001,Asha K\n";
+        assert_eq!(parse(loose.as_bytes(), "list.csv").unwrap().rows[0].prn, "PRN0001");
+        // Older files without the column still import.
+        let without = "admission_no,name\n2501,Asha K\n";
+        assert_eq!(parse(without.as_bytes(), "list.csv").unwrap().rows[0].prn, "");
     }
 
     #[test]

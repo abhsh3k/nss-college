@@ -185,20 +185,22 @@ pub async fn results(
 
     let courses = exams::results_for(&s.db, p.id, selected).await?;
     let any_marks = courses.iter().any(|c| c.has_marks);
+    // The coursework total: internal, assignment and practical marks, without
+    // the internal exam or the university exam.
     let obtained: f64 = courses
         .iter()
         .flat_map(|c| c.marks.iter())
-        .filter(|m| m.label == "Internal" || m.label == "Assignment" || m.label == "Practical")
+        .filter(|m| m.is_coursework)
         .map(|m| m.obtained_label.parse::<f64>().unwrap_or(0.0))
         .sum();
     let maximum: f64 = courses
         .iter()
         .flat_map(|c| c.marks.iter())
-        .filter(|m| m.label == "Internal" || m.label == "Assignment" || m.label == "Practical")
+        .filter(|m| m.is_coursework)
         .map(|m| m.max_label.parse::<f64>().unwrap_or(0.0))
         .sum();
     let total_label = if maximum > 0.0 {
-        format!("{obtained:.0} / {maximum:.0} internal")
+        format!("{obtained:.0} / {maximum:.0} coursework")
     } else {
         "—".into()
     };

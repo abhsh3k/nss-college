@@ -84,6 +84,8 @@ pub async fn detail(db: &PgPool, user_id: i64) -> Res<Option<PersonDetail>> {
 
 pub struct NewStudent<'a> {
     pub admission_no: &'a str,
+    /// The permanent registration number; empty means none on file.
+    pub prn: &'a str,
     pub name: &'a str,
     pub email: &'a str,
     pub programme_id: i64,
@@ -121,11 +123,12 @@ pub async fn create_student(db: &PgPool, s: &NewStudent<'_>, password_hash: &str
     .fetch_one(&mut *tx)
     .await?;
     let student_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO students (user_id, admission_no, name, programme_id, batch_year, semester, phone)
-           VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, '')) RETURNING id"#,
+        r#"INSERT INTO students (user_id, admission_no, prn, name, programme_id, batch_year, semester, phone)
+           VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7, NULLIF($8, '')) RETURNING id"#,
     )
     .bind(user_id)
     .bind(s.admission_no)
+    .bind(s.prn)
     .bind(s.name)
     .bind(s.programme_id)
     .bind(s.batch_year)
@@ -141,6 +144,59 @@ pub async fn create_student(db: &PgPool, s: &NewStudent<'_>, password_hash: &str
         .await?;
     tx.commit().await?;
     Ok(user_id)
+}
+
+/// The highest semester a student can be moved to: the edit form goes up to
+/// eight, and a student there is at the end of the course.
+pub const MAX_SEMESTER: i32 = 8;
+
+/// What happened when a student was asked to move up a semester.
+pub enum Promoted {
+    /// Moved into the returned semester.
+    To(i32),
+    /// Already in the final semester.
+    AtEnd,
+    /// The account is not a student, so there is nothing to promote.
+    NotAStudent,
+}
+
+/// Moves one student up one semester at the end of a term. Only the student's
+/// own semester moves: enrollments and results stay filed under the semester
+/// they belong to, so the Results page keeps every past semester.
+pub async fn promote(db: &PgPool, user_id: i64) -> Res<Promoted> {
+    let current: Option<i32> =
+        sqlx::query_scalar("SELECT semester FROM students WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_optional(db)
+            .await?;
+    let Some(current) = current else {
+        return Ok(Promoted::NotAStudent);
+    };
+    if current >= MAX_SEMESTER {
+        return Ok(Promoted::AtEnd);
+    }
+    sqlx::query("UPDATE students SET semester = semester + 1 WHERE user_id = $1")
+        .bind(user_id)
+        .execute(db)
+        .await?;
+    Ok(Promoted::To(current + 1))
+}
+
+/// Promotes every active student of a programme who is sitting in
+/// `from_semester` — the end-of-term roll for a whole class. Returns how many
+/// moved.
+pub async fn promote_cohort(db: &PgPool, programme_id: i64, from_semester: i32) -> Res<u64> {
+    let done = sqlx::query(
+        r#"UPDATE students SET semester = semester + 1
+           WHERE programme_id = $1 AND semester = $2
+             AND is_active AND semester < $3"#,
+    )
+    .bind(programme_id)
+    .bind(from_semester)
+    .bind(MAX_SEMESTER)
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected())
 }
 
 pub struct NewTeacher<'a> {

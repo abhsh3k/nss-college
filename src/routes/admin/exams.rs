@@ -2,9 +2,11 @@
 //!
 //! The editor assembles exam rows for a programme and semester and pushes
 //! them as a group: students then see the timetable between the push and the
-//! date of the last exam. Results are pushed as rows keyed by the student's
-//! PRN — the university's candidate key — and publish straight to the
-//! student's Results page. Every write re-checks the programme's department.
+//! date of the last exam. Results are pushed as rows under one of two keys —
+//! the student's PRN for the university's semester exam, the admission number
+//! for an internal exam the college itself conducts — and publish straight to
+//! the student's Results page under the semester picked on the page. Every
+//! write re-checks the programme's department.
 
 use askama::Template;
 use axum::{
@@ -21,7 +23,7 @@ use crate::{
     error::AppError,
     services::{
         academics::{self, ProgrammeOption},
-        exams::{self, ExamCourseOption, ExamEntry, ExamGroup, PushProblem},
+        exams::{self, ExamCourseOption, ExamEntry, ExamGroup, PushKind, PushProblem},
         users,
     },
     shell::{self, Shell},
@@ -64,6 +66,8 @@ pub struct ResultsForm {
     csrf_token: String,
     programme: String,
     semester: String,
+    /// "university" (keyed by PRN) or "internal" (keyed by admission number).
+    kind: String,
     rows: String,
 }
 
@@ -87,6 +91,8 @@ pub struct ExamsTemplate {
     entries: Vec<ExamEntry>,
     group: ExamGroup,
     results_rows: String,
+    /// Which push box is selected: university (PRN) or internal (admission no).
+    results_kind: String,
     problems: Vec<PushProblem>,
     notice: Option<String>,
 }
@@ -98,6 +104,7 @@ async fn render(
     programme_id: i64,
     semester: i32,
     results_rows: String,
+    results_kind: String,
     problems: Vec<PushProblem>,
     notice: Option<String>,
 ) -> Result<ExamsTemplate, AppError> {
@@ -118,6 +125,7 @@ async fn render(
             last_date_label: None,
         },
         results_rows,
+        results_kind,
         problems,
         notice,
     };
@@ -156,8 +164,18 @@ pub async fn page(
         .and_then(parse_i32)
         .filter(|v| (1..=12).contains(v))
         .unwrap_or(1);
-    render(&s, &session, &manager, programme_id, semester, String::new(), Vec::new(), None)
-        .await
+    render(
+        &s,
+        &session,
+        &manager,
+        programme_id,
+        semester,
+        String::new(),
+        PushKind::University.as_str().to_string(),
+        Vec::new(),
+        None,
+    )
+    .await
 }
 
 /// A plain `YYYY-MM-DD` calendar date (validated without pulling in a date
@@ -347,8 +365,9 @@ pub async fn unpush(
     )))
 }
 
-/// The PRN paste box. Renders in place with per-line problems so nothing the
-/// head typed is lost.
+/// The results paste box — university rows keyed by PRN, internal rows keyed
+/// by admission number. Renders in place with per-line problems so nothing
+/// the head typed is lost.
 pub async fn push_results(
     State(s): State<AppState>,
     session: Session,
@@ -357,13 +376,14 @@ pub async fn push_results(
 ) -> Result<ExamsTemplate, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
     let semester = parse_i32(&f.semester).filter(|v| (1..=12).contains(v)).unwrap_or(1);
+    let kind = PushKind::parse(&f.kind);
     // Stay on the timetable that was open, so the outcome renders in place.
     let programme_id = selected_programme(&s, manager.department(), Some(f.programme.as_str())).await?;
     // A head's rows only ever land on their own department's programmes;
     // validate_push checks each student's programme against `department`.
     let department = manager.department();
 
-    let (parsed, mut problems) = exams::parse_push(&f.rows);
+    let (parsed, mut problems) = exams::parse_push(&f.rows, kind);
     if parsed.is_empty() && problems.is_empty() {
         problems.push(PushProblem {
             line: 0,
@@ -371,13 +391,15 @@ pub async fn push_results(
             problem: "Paste at least one result row.".into(),
         });
     }
-    let (good, more) = exams::validate_push(&s.db, department, &parsed).await?;
+    let (good, more) = exams::validate_push(&s.db, department, kind, &parsed).await?;
     problems.extend(more);
 
     let filed = if good.is_empty() {
         None
     } else {
-        let n = exams::push_marks(&s.db, &good).await?;
+        // Filed under the semester picked on the page, not the semester the
+        // student happens to have reached.
+        let n = exams::push_marks(&s.db, kind, semester, &good).await?;
         users::audit(
             &s.db,
             Some(manager.user.id),
@@ -390,7 +412,10 @@ pub async fn push_results(
     };
 
     let notice = match filed {
-        Some(n) if problems.is_empty() => Some(format!("Filed {n} result row(s).")),
+        Some(n) if problems.is_empty() => Some(format!(
+            "Filed {n} {} result row(s) under semester {semester}.",
+            kind.as_str()
+        )),
         Some(n) => Some(format!("Filed {n} row(s); the rest need fixing (see below).")),
         None => None,
     };
@@ -401,6 +426,7 @@ pub async fn push_results(
         programme_id,
         semester,
         f.rows,
+        kind.as_str().to_string(),
         problems,
         notice,
     )

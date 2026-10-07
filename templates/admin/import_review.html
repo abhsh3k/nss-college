@@ -32,13 +32,14 @@
   </div>
 
   <div class="mt-4 overflow-x-auto">
-    <table class="w-full min-w-[68rem] text-left text-sm">
+    <table class="w-full min-w-[74rem] text-left text-sm">
       <caption class="sr-only">Students read from the uploaded file. Edit any cell, tick the rows to create, then save.</caption>
       <thead>
         <tr class="border-b-2 border-ink/20 text-ink/70">
           <th scope="col" class="py-2 pr-2 font-medium">Save</th>
           <th scope="col" class="py-2 pr-3 font-medium">Line</th>
           <th scope="col" class="py-2 pr-3 font-medium">Admission no.</th>
+          <th scope="col" class="py-2 pr-3 font-medium">PRN</th>
           <th scope="col" class="py-2 pr-3 font-medium">Name</th>
           <th scope="col" class="py-2 pr-3 font-medium">Email (optional)</th>
           <th scope="col" class="py-2 pr-3 font-medium">Phone</th>
@@ -55,6 +56,7 @@
           <td class="py-2 pr-2"><span class="rounded bg-mist px-2 py-1 text-xs font-semibold">Created</span></td>
           <td class="py-2 pr-3 tabular-nums text-ink/60">{{ r.line_no }}</td>
           <td class="py-2 pr-3"><input type="hidden" name="row_id" value="{{ r.id }}"><input type="hidden" name="admission_no" value="{{ r.admission_no }}"><span class="font-mono">{{ r.admission_no }}</span></td>
+          <td class="py-2 pr-3"><input type="hidden" name="prn" value="{{ r.prn }}"><span class="font-mono">{{ r.prn }}</span></td>
           <td class="py-2 pr-3"><input type="hidden" name="name" value="{{ r.name }}">{{ r.name }}</td>
           <td class="py-2 pr-3"><input type="hidden" name="email" value="{{ r.email }}">{{ r.email }}</td>
           <td class="py-2 pr-3"><input type="hidden" name="phone" value="{{ r.phone }}">{{ r.phone }}</td>
@@ -68,6 +70,9 @@
           <td class="py-2 pr-3">
             <input type="hidden" name="row_id" value="{{ r.id }}">
             <input type="text" name="admission_no" value="{{ r.admission_no }}" aria-label="Admission number for line {{ r.line_no }}" class="w-28 rounded border border-ink/40 bg-white px-2 py-1 font-mono">
+          </td>
+          <td class="py-2 pr-3">
+            <input type="text" name="prn" value="{{ r.prn }}" aria-label="PRN for line {{ r.line_no }}" class="w-28 rounded border border-ink/40 bg-white px-2 py-1 font-mono">
           </td>
           <td class="py-2 pr-3"><input type="text" name="name" value="{{ r.name }}" aria-label="Name for line {{ r.line_no }}" class="w-44 rounded border border-ink/40 bg-white px-2 py-1"></td>
           <td class="py-2 pr-3"><input type="text" name="email" value="{{ r.email }}" aria-label="Email for line {{ r.line_no }}" class="w-52 rounded border border-ink/40 bg-white px-2 py-1"></td>

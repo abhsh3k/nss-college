@@ -36,7 +36,10 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/people/new", get(people::new_form))
         .route("/admin/people/:id", get(people::edit_form).post(people::update))
         .route("/admin/people/:id/reset-password", post(people::reset_password))
-        .route("/admin/people/:id/active", post(people::set_active));
+        .route("/admin/people/:id/active", post(people::set_active))
+        // End-of-term promotion: one student, or a whole programme's semester.
+        .route("/admin/people/:id/promote", post(people::promote_one))
+        .route("/admin/people/promote", post(people::promote_cohort));
 
     // The import takes a whole class list, so it needs the same body limit as
     // the publishing forms.

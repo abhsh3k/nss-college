@@ -322,6 +322,7 @@ pub async fn seed_demo_users(db: &PgPool) -> Result<Vec<String>, String> {
                     db,
                     &people::NewStudent {
                         admission_no: &adm,
+                        prn: "",
                         name: &name,
                         email: &email,
                         programme_id,

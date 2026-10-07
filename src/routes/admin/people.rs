@@ -39,6 +39,8 @@ pub struct PeopleTemplate {
     role: String,
     q: String,
     people: Vec<PersonRow>,
+    /// Offered by the end-of-term promotion panel.
+    programmes: Vec<ProgrammeOption>,
 }
 
 pub async fn list(
@@ -57,6 +59,7 @@ pub async fn list(
         people: people::list(&s.db, &role, &q).await?,
         role,
         q,
+        programmes: academics::programme_options(&s.db).await?,
     })
 }
 
@@ -134,6 +137,22 @@ pub struct PersonFormTemplate {
     programmes: Vec<ProgrammeOption>,
     departments: Vec<DepartmentOption>,
     error: Option<String>,
+    /// The semester an existing student would move into, or None when there is
+    /// no promotion on offer (new form, or not a student).
+    next_semester: Option<i32>,
+}
+
+/// Promotion is offered on an existing student who is not already at the top
+/// semester the edit form knows about.
+fn next_semester(is_new: bool, form: &PersonForm) -> Option<i32> {
+    if is_new || form.kind != "student" {
+        return None;
+    }
+    form.semester
+        .parse::<i32>()
+        .ok()
+        .filter(|n| (1..people::MAX_SEMESTER).contains(n))
+        .map(|n| n + 1)
 }
 
 async fn departments(db: &sqlx::PgPool) -> Result<Vec<DepartmentOption>, AppError> {
@@ -170,6 +189,7 @@ pub async fn new_form(
         is_active: true,
         is_self: false,
         form: PersonForm::blank(kind),
+        next_semester: None,
         programmes: academics::programme_options(&s.db).await?,
         departments: departments(&s.db).await?,
         error: None,
@@ -183,13 +203,16 @@ pub async fn edit_form(
     Path(id): Path<i64>,
 ) -> Result<PersonFormTemplate, AppError> {
     let d = people::detail(&s.db, id).await?.ok_or(AppError::NotFound)?;
+    let form = PersonForm::from_detail(&d);
+    let next = next_semester(false, &form);
     Ok(PersonFormTemplate {
         shell: Shell::build(&user, &session).await?,
         is_new: false,
         user_id: d.id,
         is_active: d.is_active,
         is_self: d.id == user.id,
-        form: PersonForm::from_detail(&d),
+        form,
+        next_semester: next,
         programmes: academics::programme_options(&s.db).await?,
         departments: departments(&s.db).await?,
         error: None,
@@ -202,6 +225,7 @@ struct Checked {
     name: String,
     email: String,
     admission_no: String,
+    prn: String,
     phone: String,
     programme_id: i64,
     batch_year: i32,
@@ -256,6 +280,7 @@ fn check(f: &PersonForm) -> Result<Checked, String> {
         name,
         email,
         admission_no,
+        prn: f.prn.trim().to_string(),
         phone: f.phone.trim().to_string(),
         programme_id,
         batch_year,
@@ -289,6 +314,7 @@ async fn person_form_page(
         user_id: meta.user_id,
         is_active: meta.is_active,
         is_self: meta.is_self,
+        next_semester: next_semester(meta.is_new, &form),
         form,
         programmes: academics::programme_options(&s.db).await?,
         departments: departments(&s.db).await?,
@@ -339,6 +365,7 @@ pub async fn create(
                 &s.db,
                 &NewStudent {
                     admission_no: &c.admission_no,
+                    prn: &c.prn,
                     name: &c.name,
                     email: &c.email,
                     programme_id: c.programme_id,
@@ -524,6 +551,83 @@ pub async fn set_active(
     .await?;
     shell::flash(&session, if active { "Account re-activated." } else { "Account deactivated. They can no longer sign in." }).await?;
     Ok(Redirect::to("/admin/people"))
+}
+
+// ---------- Promotion ----------
+
+/// A form carrying nothing but the token, for a one-button action.
+#[derive(Deserialize)]
+pub struct CsrfForm {
+    csrf_token: String,
+}
+
+/// The end-of-term roll: programme plus the semester to promote from.
+#[derive(Deserialize)]
+pub struct PromoteForm {
+    csrf_token: String,
+    programme: String,
+    semester: String,
+}
+
+/// Moves one student into the next semester. Results and enrollments stay
+/// filed under the semester they were earned in, so nothing leaves the page.
+pub async fn promote_one(
+    State(s): State<AppState>,
+    session: Session,
+    AdminOnly(user): AdminOnly,
+    Path(id): Path<i64>,
+    Form(f): Form<CsrfForm>,
+) -> Result<Redirect, AppError> {
+    csrf::verify(&session, &f.csrf_token).await?;
+    match people::promote(&s.db, id).await? {
+        people::Promoted::To(next) => {
+            users::audit(&s.db, Some(user.id), "student_promoted", "user", Some(id)).await?;
+            shell::flash(&session, format!("Moved to Semester {next}. Past results stay where they were earned.")).await?;
+        }
+        people::Promoted::AtEnd => {
+            shell::flash(&session, "Already in the final semester, so there is nothing to promote.").await?;
+        }
+        people::Promoted::NotAStudent => {
+            shell::flash(&session, "That account is not a student.").await?;
+        }
+    }
+    Ok(Redirect::to(&format!("/admin/people/{id}")))
+}
+
+/// Promotes a whole class at the end of the term: every active student of the
+/// programme sitting in the chosen semester moves up one.
+pub async fn promote_cohort(
+    State(s): State<AppState>,
+    session: Session,
+    AdminOnly(user): AdminOnly,
+    Form(f): Form<PromoteForm>,
+) -> Result<Response, AppError> {
+    csrf::verify(&session, &f.csrf_token).await?;
+    let programme_id = parse_i64(&f.programme).filter(|v| *v > 0);
+    let semester = parse_i32(&f.semester).filter(|v| (1..people::MAX_SEMESTER).contains(v));
+    let (Some(programme_id), Some(semester)) = (programme_id, semester) else {
+        shell::flash(&session, "Choose a programme and a semester to promote from.").await?;
+        return Ok(Redirect::to("/admin/people?role=student").into_response());
+    };
+    let moved = people::promote_cohort(&s.db, programme_id, semester).await?;
+    users::audit(
+        &s.db,
+        Some(user.id),
+        "students_promoted",
+        "programme",
+        Some(programme_id),
+    )
+    .await?;
+    let msg = if moved == 0 {
+        format!("No active student was sitting in semester {semester} — nothing moved.")
+    } else {
+        format!(
+            "Promoted {moved} student(s) from semester {semester} to semester {}.",
+            semester + 1
+        )
+    };
+    shell::flash(&session, msg).await?;
+    Ok(Redirect::to("/admin/people?role=student").into_response())
 }
 
 // ---------- File import of students ----------
@@ -743,6 +847,8 @@ pub struct ReviewForm {
     #[serde(default)]
     admission_no: Vec<String>,
     #[serde(default)]
+    prn: Vec<String>,
+    #[serde(default)]
     name: Vec<String>,
     #[serde(default)]
     email: Vec<String>,
@@ -762,8 +868,9 @@ pub struct ReviewForm {
 }
 
 /// One editable column of the review table, as it arrives from the form.
-const EDIT_COLUMNS: [&str; 7] = [
+const EDIT_COLUMNS: [&str; 8] = [
     "admission_no",
+    "prn",
     "name",
     "email",
     "phone",
@@ -852,12 +959,13 @@ fn collect_edits(form: &uploads::ParsedForm) -> Option<Vec<RowEdit>> {
             Some(RowEdit {
                 id,
                 admission_no: columns[0][i].clone(),
-                name: columns[1][i].clone(),
-                email: columns[2][i].clone(),
-                phone: columns[3][i].clone(),
-                programme_text: columns[4][i].clone(),
-                semester_text: columns[5][i].clone(),
-                year_text: columns[6][i].clone(),
+                prn: columns[1][i].clone(),
+                name: columns[2][i].clone(),
+                email: columns[3][i].clone(),
+                phone: columns[4][i].clone(),
+                programme_text: columns[5][i].clone(),
+                semester_text: columns[6][i].clone(),
+                year_text: columns[7][i].clone(),
                 include: include[i],
             })
         })
@@ -883,13 +991,27 @@ async fn commit(
         .collect();
     let taken_admission = taken(&s.db, "SELECT lower(admission_no) FROM students WHERE lower(admission_no) = ANY($1)", &admission_nos).await?;
     let taken_email = taken(&s.db, "SELECT lower(email) FROM users WHERE lower(email) = ANY($1)", &emails).await?;
+    // The PRN is the university's candidate key, so it carries a unique index.
+    let prns: Vec<String> = wanted
+        .iter()
+        .filter(|r| !r.prn.trim().is_empty())
+        .map(|r| r.prn.trim().to_lowercase())
+        .collect();
+    let taken_prn = taken(
+        &s.db,
+        "SELECT lower(prn) FROM students WHERE prn IS NOT NULL AND lower(prn) = ANY($1)",
+        &prns,
+    )
+    .await?;
 
     let mut seen: HashSet<String> = HashSet::new();
+    let mut seen_prn: HashSet<String> = HashSet::new();
     let mut creds = Vec::new();
     let (mut created, mut skipped) = (0usize, 0usize);
 
     for row in &wanted {
         let admission_no = row.admission_no.trim().to_string();
+        let prn = row.prn.trim().to_string();
         let name = row.name.trim().to_string();
 
         // A row that cannot be created is reported and stepped over, never fatal.
@@ -910,6 +1032,20 @@ async fn commit(
         if taken_admission.contains(&admission_no.to_lowercase()) {
             skipped += 1;
             let reason = "Skipped: that admission number already exists.";
+            mark_skipped(s, row.id, reason).await?;
+            creds.push(skip(reason));
+            continue;
+        }
+        if !prn.is_empty() && !seen_prn.insert(prn.to_lowercase()) {
+            skipped += 1;
+            let reason = "Skipped: that PRN appears twice in the file.";
+            mark_skipped(s, row.id, reason).await?;
+            creds.push(skip(reason));
+            continue;
+        }
+        if !prn.is_empty() && taken_prn.contains(&prn.to_lowercase()) {
+            skipped += 1;
+            let reason = "Skipped: that PRN already exists.";
             mark_skipped(s, row.id, reason).await?;
             creds.push(skip(reason));
             continue;
@@ -938,6 +1074,7 @@ async fn commit(
             &s.db,
             &NewStudent {
                 admission_no: &admission_no,
+                prn: &prn,
                 name: &name,
                 email: &email,
                 programme_id: row.programme_id().unwrap_or_default(),
@@ -958,7 +1095,7 @@ async fn commit(
             }
             Err(e) if is_unique_violation(&e) => {
                 skipped += 1;
-                let reason = "Skipped: that admission number or email already exists.";
+                let reason = "Skipped: that admission number, PRN or email already exists.";
                 mark_skipped(s, row.id, reason).await?;
                 creds.push(skip(reason));
             }
