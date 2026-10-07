@@ -92,8 +92,15 @@ pub struct NewStudent<'a> {
     pub phone: &'a str,
 }
 
-const ENROLL_SEMESTER_SQL: &str = r#"INSERT INTO enrollments (student_id, course_id, semester)
-    SELECT $1, id, $3 FROM courses WHERE programme_id = $2 AND semester = $3
+const ENROLL_SEMESTER_SQL: &str = r#"INSERT INTO enrollments (student_id, course_id, semester, offering_id)
+    SELECT $1, id, $3,
+           -- The fixed offering behind this row, when there is one, so the
+           -- offering's seat count sees the enrollment.
+           (SELECT o.id FROM course_offerings o
+             WHERE o.course_id = courses.id AND o.status = 'published'
+               AND o.selection_mode = 'FIXED' AND o.semester = $3
+             ORDER BY o.id LIMIT 1)
+      FROM courses WHERE programme_id = $2 AND semester = $3
       AND NOT EXISTS (
           SELECT 1 FROM course_offerings o
            WHERE o.course_id = courses.id

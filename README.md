@@ -34,6 +34,13 @@ Sign in as the IT admin, then use the sidebar:
   semester's courses automatically; use "Enroll students" after adding courses later.
 - **Timetable**: choose programme and semester, then add periods per day. Clashes (same teacher, room or class at overlapping
   times) are refused with an explanation. Everything updates without reloading the page.
+  A published course offering is scheduled from the same page (the offering picker): the panel lists that
+  offering's periods and adds or removes them in place, with the same clash rules — the offering page's
+  "add period" form stays as the secondary path.
+- **Work queue** (`/admin/work-queue`, first item for a head of department): the real work in one list —
+  pending external offering approvals, unanswered change requests, cohort decisions that are not finalised,
+  published offerings with no timetable periods, and offerings with no seats left. Every row links to the
+  catalogue, offering-detail or selections page that handles it; those pages are unchanged.
 
 After pulling this update, rebuild the CSS (new classes were added) and restart:
 
@@ -129,7 +136,8 @@ Keep the colours and fonts in `tailwind.config.js` and `styles.html` identical.
     uploads/        user content: notices, events, faculty, documents, news
     migrations/     0001 core, 0002 academics, 0003 content, 0004 triggers, 0005 starter content,
                     … 0013 course offerings (courses, offerings, targets, approvals, selections,
-                    change requests), 0014 updated_at columns
+                    change requests), 0014 updated_at columns, 0015 studash, 0016 page menu,
+                    0017 enrollments.offering_id
 
 ## Layers
 
@@ -149,6 +157,10 @@ Keep the colours and fonts in `tailwind.config.js` and `styles.html` identical.
 
 ## Notes
 
+- An enrollment records which offering produced it (`enrollments.offering_id`, migration 0017, back-filled
+  from confirmed selections). Seat counts, the capacity check at confirm/assign, and an offering period's
+  attendance roster all read that column: the roster for an offering period lists only the students holding
+  a confirmed or locked selection for that offering, never every student ever enrolled in the course.
 - Informational pages (about, IQAC, fees, ...) live in the `pages` and `page_sections` tables and are served by path, so a page added to the database works without a restart. Pages with no sections show a short "still preparing" message.
 - Queries use `sqlx::query_as` at runtime rather than the compile-time macros, so the project builds without a database.
 - Students, the timetable and attendance now have models and queries in `services/hub.rs` (Student Hub).
@@ -173,11 +185,14 @@ but these gaps remain:
    would work once a UI and the Results query exist.
 3. **Substitutions skip offering periods**: `attendance::teacher_day` joins `programme_id`, so an offering
    period never appears in the substitute-teacher candidate list.
-4. **Clash detection is blind to offering periods**, both ways: `academics::clashes` compares
-   `programme_id` (NULL never matches, so class-group collisions are missed) and the offering page's
-   "add period" runs no clash check at all (teacher/room can be double-booked).
-5. **Admin timetable page** (`academics::slots`) filters `programme_id`, so offering periods are missing
-   from the `/admin/timetable` grid; they are only visible on the offering page, `/hub` and teacher pages.
+4. **Clash detection still misses offering-vs-offering overlap**: a programme slot and an offering slot now
+   see each other (`academics::clashes` and `academics::offering_clashes` share the same teacher/room/class
+   rules, and the offering page's "add period" clash-checks too), but two *different* offerings that target
+   the same programme can still be scheduled on top of one another — "same class" covers programme periods
+   and the offering's own periods only.
+5. **Programme timetable grid** (`academics::slots`) still filters `programme_id`, so offering periods are
+   not in the grid rows; they now have their own panel on the same `/admin/timetable` page (offering picker),
+   and are also visible on the offering page, `/hub` and teacher pages.
 6. **Attendance reports disagree under a programme filter**: `by_session` filters `c.programme_id` while
    `totals`/`by_student` filter `st.programme_id` — the session table can be empty while the totals are not.
    The course-filter dropdown (`course_options`) also hides catalogue courses when a programme is selected.

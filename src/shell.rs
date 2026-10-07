@@ -34,6 +34,7 @@ fn nav_for(user: &AuthUser) -> Vec<NavItem> {
     let nav = match user.role {
         Role::Admin => vec![
             item("Overview", "/admin", false),
+            item("Work queue", "/admin/work-queue", false),
             item("People", "/admin/people", false),
             item("Courses and programmes", "/admin/academics", false),
             item("Course catalogue", "/admin/courses", false),
@@ -68,6 +69,7 @@ fn nav_for(user: &AuthUser) -> Vec<NavItem> {
                 item("Attendance sheet", "/teacher/sheet", false),
             ];
             if user.manages_department() {
+                items.push(item("Work queue", "/admin/work-queue", false));
                 items.push(item("Courses and programmes", "/admin/academics", false));
                 items.push(item("Course catalogue", "/admin/courses", false));
                 items.push(item("My offerings", "/admin/courses/offerings", false));

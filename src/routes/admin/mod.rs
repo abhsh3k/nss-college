@@ -15,6 +15,7 @@ mod rank_holders;
 mod settings;
 mod substitutions;
 mod timetable;
+mod work_queue;
 
 use axum::{
     extract::DefaultBodyLimit,
@@ -69,6 +70,10 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/courses/selections/changes/:id/decide", post(course_offerings::decide_change))
         .route("/admin/courses/selections/cohort", post(course_offerings::finalize_cohort));
 
+    // The HOD landing page: every queue above in one list, with links back to
+    // the pages that already handle each kind of decision.
+    let work_queue = Router::new().route("/admin/work-queue", get(work_queue::page));
+
     let academics_and_timetable = Router::new()
         // Programmes and courses
         .route("/admin/academics", get(academics::index))
@@ -81,6 +86,12 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/timetable", get(timetable::page))
         .route("/admin/timetable/slots", post(timetable::add_slot))
         .route("/admin/timetable/slots/:id/delete", post(timetable::delete_slot))
+        // Periods of a course offering, scheduled from the same page.
+        .route("/admin/timetable/offering-periods", post(timetable::add_offering_slot))
+        .route(
+            "/admin/timetable/offering-periods/:id/delete",
+            post(timetable::delete_offering_slot),
+        )
         // Substitutes (head of department)
         .route("/admin/substitutions", get(substitutions::page).post(substitutions::set))
         .route("/admin/substitutions/:id/remove", post(substitutions::remove))
@@ -190,6 +201,7 @@ pub fn routes() -> Router<AppState> {
         .merge(imports)
         .merge(academics_and_timetable)
         .merge(course_offerings)
+        .merge(work_queue)
         .merge(publishing)
         .merge(documents)
         .merge(rank_holders)

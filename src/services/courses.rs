@@ -228,8 +228,7 @@ pub async fn offering(db: &PgPool, id: i64) -> Res<Option<Offering>> {
                   COALESCE(f.name, '') AS faculty_name, o.status,
                   (SELECT count(*) FROM enrollments e
                     JOIN students est ON est.id = e.student_id AND est.is_active
-                   WHERE e.course_id = o.course_id AND e.status = 'active'
-                     AND est.semester = o.semester) AS enrolled,
+                   WHERE e.offering_id = o.id AND e.status = 'active') AS enrolled,
                   EXISTS (SELECT 1 FROM course_offering_targets t WHERE t.offering_id = o.id) AS has_target
            FROM course_offerings o
            JOIN courses c ON c.id = o.course_id
@@ -268,14 +267,117 @@ pub async fn offerings_for_department(db: &PgPool, department: Option<i64>) -> R
                   o.course_type, o.selection_mode, o.choice_group, o.capacity, o.status,
                   (SELECT count(*) FROM enrollments e
                     JOIN students est ON est.id = e.student_id AND est.is_active
-                   WHERE e.course_id = o.course_id AND e.status = 'active'
-                     AND est.semester = o.semester) AS enrolled
+                   WHERE e.offering_id = o.id AND e.status = 'active') AS enrolled
            FROM course_offerings o
            JOIN courses c ON c.id = o.course_id
            JOIN departments d ON d.id = o.offering_department_id
            JOIN academic_years y ON y.id = o.academic_year_id
            WHERE ($1::bigint IS NULL OR o.offering_department_id = $1)
            ORDER BY y.start_year DESC, o.semester, c.code"#,
+    )
+    .bind(department)
+    .fetch_all(db)
+    .await
+}
+
+/// Published offerings whose periods a manager may schedule right now: their
+/// own department's, or every department's for the IT admin. Drives the
+/// timetable page's offering picker.
+#[derive(Debug, FromRow)]
+pub struct SchedulableOffering {
+    pub id: i64,
+    pub code: String,
+    pub title: String,
+    pub year_label: String,
+    pub semester: i32,
+    pub department: String,
+}
+
+pub async fn schedulable_offerings(db: &PgPool, department: Option<i64>) -> Res<Vec<SchedulableOffering>> {
+    sqlx::query_as::<_, SchedulableOffering>(
+        r#"SELECT o.id, c.code, c.title, y.label AS year_label, o.semester,
+                  od.name AS department
+             FROM course_offerings o
+             JOIN courses c ON c.id = o.course_id
+             JOIN academic_years y ON y.id = o.academic_year_id
+             JOIN departments od ON od.id = o.offering_department_id
+            WHERE o.status = 'published'
+              AND ($1::bigint IS NULL OR o.offering_department_id = $1)
+            ORDER BY y.start_year DESC, o.semester, c.code"#,
+    )
+    .bind(department)
+    .fetch_all(db)
+    .await
+}
+
+// ---------- The work queue (one page for everything awaiting a decision) ----------
+
+/// A published offering with no timetable periods: students can select it and
+/// enroll, but there is no class to teach or take attendance for.
+#[derive(Debug, FromRow)]
+pub struct UnscheduledOffering {
+    pub id: i64,
+    pub code: String,
+    pub title: String,
+    pub year_label: String,
+    pub semester: i32,
+    pub department: String,
+    pub selection_mode: String,
+}
+
+pub async fn unscheduled_offerings(db: &PgPool, department: Option<i64>) -> Res<Vec<UnscheduledOffering>> {
+    sqlx::query_as::<_, UnscheduledOffering>(
+        r#"SELECT o.id, c.code, c.title, y.label AS year_label, o.semester,
+                  od.name AS department, o.selection_mode
+             FROM course_offerings o
+             JOIN courses c ON c.id = o.course_id
+             JOIN academic_years y ON y.id = o.academic_year_id
+             JOIN departments od ON od.id = o.offering_department_id
+            WHERE o.status = 'published'
+              AND ($1::bigint IS NULL OR o.offering_department_id = $1)
+              AND NOT EXISTS (
+                  SELECT 1 FROM timetable_entries t WHERE t.course_offering_id = o.id)
+            ORDER BY y.start_year DESC, o.semester, c.code"#,
+    )
+    .bind(department)
+    .fetch_all(db)
+    .await
+}
+
+/// Published offerings whose seats are gone. Seats are counted from
+/// `enrollments.offering_id`, so only this offering's own enrollments fill it.
+#[derive(Debug, FromRow)]
+pub struct CapacityWarning {
+    pub id: i64,
+    pub code: String,
+    pub title: String,
+    pub year_label: String,
+    pub semester: i32,
+    pub department: String,
+    pub capacity: i64,
+    pub enrolled: i64,
+}
+
+pub async fn capacity_warnings(db: &PgPool, department: Option<i64>) -> Res<Vec<CapacityWarning>> {
+    sqlx::query_as::<_, CapacityWarning>(
+        r#"SELECT w.id, w.code, w.title, w.year_label, w.semester, w.department,
+                  w.capacity, w.enrolled
+             FROM (
+                 SELECT o.id, c.code, c.title, y.label AS year_label, o.semester,
+                        od.name AS department, o.capacity::bigint AS capacity,
+                        (SELECT count(*) FROM enrollments e
+                           JOIN students est ON est.id = e.student_id AND est.is_active
+                          WHERE e.offering_id = o.id AND e.status = 'active') AS enrolled
+                   FROM course_offerings o
+                   JOIN courses c ON c.id = o.course_id
+                   JOIN academic_years y ON y.id = o.academic_year_id
+                   JOIN departments od ON od.id = o.offering_department_id
+                  WHERE o.status = 'published'
+                    AND o.capacity IS NOT NULL
+                    AND ($1::bigint IS NULL OR o.offering_department_id = $1)
+             ) w
+            WHERE w.enrolled >= w.capacity
+            ORDER BY (w.enrolled - w.capacity) DESC, w.code"#,
     )
     .bind(department)
     .fetch_all(db)
@@ -649,9 +751,9 @@ pub async fn withdraw_selection(db: &PgPool, student_id: i64, offering_id: i64) 
 /// have a free seat if it sets a capacity. Runs inside the caller's
 /// transaction and returns the course to enroll in.
 ///
-/// Seats taken = the course's active enrollments counted only among students
-/// in the offering's semester, so students from earlier years of the same
-/// course never hold this year's seats.
+/// Seats taken = this offering's own active enrollments, read from
+/// `enrollments.offering_id`. Students of the same course under another
+/// offering (or an earlier year's run of it) never hold this offering's seats.
 async fn offering_for_confirm(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     offering_id: i64,
@@ -661,8 +763,7 @@ async fn offering_for_confirm(
         r#"SELECT o.course_id, o.selection_mode, o.capacity,
                   (SELECT count(*) FROM enrollments e
                     JOIN students est ON est.id = e.student_id AND est.is_active
-                   WHERE e.course_id = o.course_id AND e.status = 'active'
-                     AND est.semester = o.semester)
+                   WHERE e.offering_id = o.id AND e.status = 'active')
              FROM course_offerings o
             WHERE o.id = $1 AND o.status = 'published'"#,
     )
@@ -694,19 +795,27 @@ async fn offering_for_confirm(
 
 /// The enrollment the rest of the college already runs on: timetable and
 /// attendance hang off it, whichever way the selection was decided.
+///
+/// `offering_id` records which offering produced it, so seat counts, capacity
+/// checks and an offering period's roster all read this row instead of
+/// guessing from the course. Programmed bulk enrollment (no offering) leaves
+/// it NULL.
 async fn enroll(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     student_id: i64,
     course_id: i64,
+    offering_id: i64,
 ) -> Result<(), AppError> {
     sqlx::query(
-        r#"INSERT INTO enrollments (student_id, course_id, semester)
-           VALUES ($1, $2, (SELECT semester FROM students WHERE id = $1))
+        r#"INSERT INTO enrollments (student_id, course_id, semester, offering_id)
+           VALUES ($1, $2, (SELECT semester FROM students WHERE id = $1), $3)
            ON CONFLICT (student_id, course_id)
-           DO UPDATE SET status = 'active', semester = EXCLUDED.semester"#,
+           DO UPDATE SET status = 'active', semester = EXCLUDED.semester,
+                         offering_id = EXCLUDED.offering_id"#,
     )
     .bind(student_id)
     .bind(course_id)
+    .bind(offering_id)
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -739,7 +848,7 @@ pub async fn confirm_selection(db: &PgPool, student_id: i64, offering_id: i64) -
         ));
     }
 
-    enroll(&mut tx, student_id, course_id).await?;
+    enroll(&mut tx, student_id, course_id, offering_id).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -996,21 +1105,24 @@ pub async fn decide_change_request(
                 .fetch_one(&mut *tx)
                 .await?;
         sqlx::query(
-            r#"INSERT INTO enrollments (student_id, course_id, semester)
-               VALUES ($1, $2, (SELECT semester FROM students WHERE id = $1))
+            r#"INSERT INTO enrollments (student_id, course_id, semester, offering_id)
+               VALUES ($1, $2, (SELECT semester FROM students WHERE id = $1), $3)
                ON CONFLICT (student_id, course_id)
-               DO UPDATE SET status = 'active', semester = EXCLUDED.semester"#,
+               DO UPDATE SET status = 'active', semester = EXCLUDED.semester,
+                             offering_id = EXCLUDED.offering_id"#,
         )
         .bind(student_id)
         .bind(new_course)
+        .bind(new_offering_id)
         .execute(&mut *tx)
         .await?;
         sqlx::query(
             r#"UPDATE enrollments SET status = 'dropped'
-                WHERE student_id = $1 AND course_id = $2"#,
+                WHERE student_id = $1 AND course_id = $2 AND $3::bigint <> $2"#,
         )
         .bind(student_id)
         .bind(old_course)
+        .bind(new_course)
         .execute(&mut *tx)
         .await?;
     } else {
@@ -1173,14 +1285,16 @@ pub async fn finalize_cohort_specialization(
     .await?;
     // ...and enroll them, which is what timetable and attendance follow.
     sqlx::query(
-        r#"INSERT INTO enrollments (student_id, course_id, semester)
-           SELECT u.sid, $2, (SELECT st.semester FROM students st WHERE st.id = u.sid)
+        r#"INSERT INTO enrollments (student_id, course_id, semester, offering_id)
+           SELECT u.sid, $2, (SELECT st.semester FROM students st WHERE st.id = u.sid), $3
              FROM UNNEST($1::bigint[]) AS u(sid)
            ON CONFLICT (student_id, course_id)
-           DO UPDATE SET status = 'active', semester = EXCLUDED.semester"#,
+           DO UPDATE SET status = 'active', semester = EXCLUDED.semester,
+                         offering_id = EXCLUDED.offering_id"#,
     )
     .bind(&students)
     .bind(course_id)
+    .bind(offering_id)
     .execute(&mut *tx)
     .await?;
 
@@ -1316,8 +1430,8 @@ pub async fn auto_apply_fixed(
         // Bring the enrollments in step: one statement covers both the rows
         // just created and anything applied earlier.
         sqlx::query(
-            r#"INSERT INTO enrollments (student_id, course_id, semester)
-               SELECT sc.student_id, o.course_id, st.semester
+            r#"INSERT INTO enrollments (student_id, course_id, semester, offering_id)
+               SELECT sc.student_id, o.course_id, st.semester, sc.offering_id
                  FROM student_course_selections sc
                  JOIN course_offerings o ON o.id = sc.offering_id
                  JOIN students st ON st.id = sc.student_id
@@ -1325,7 +1439,8 @@ pub async fn auto_apply_fixed(
                   AND ($1::bigint IS NULL OR sc.offering_id = $1)
                   AND ($2::bigint IS NULL OR sc.student_id = $2)
                ON CONFLICT (student_id, course_id)
-               DO UPDATE SET status = 'active', semester = EXCLUDED.semester"#,
+               DO UPDATE SET status = 'active', semester = EXCLUDED.semester,
+                             offering_id = EXCLUDED.offering_id"#,
         )
         .bind(offering_id)
         .bind(student_id)
@@ -1422,7 +1537,7 @@ pub async fn assign_selection(
         ));
     }
 
-    enroll(&mut tx, student_id, course_id).await?;
+    enroll(&mut tx, student_id, course_id, offering_id).await?;
     tx.commit().await?;
     Ok(())
 }

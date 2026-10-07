@@ -278,16 +278,22 @@ pub async fn delete_course(db: &PgPool, id: i64) -> Res<()> {
 /// Fixed courses and courses with no offering behave exactly as before.
 pub async fn enroll_semester(db: &PgPool, programme_id: i64, semester: i32) -> Res<u64> {
     let done = sqlx::query(
-        r#"INSERT INTO enrollments (student_id, course_id, semester)
-           SELECT s.id, c.id, s.semester
-           FROM students s
-           JOIN courses c ON c.programme_id = s.programme_id AND c.semester = s.semester
-           WHERE s.programme_id = $1 AND s.semester = $2 AND s.is_active
-             AND NOT EXISTS (
-                 SELECT 1 FROM course_offerings o
-                  WHERE o.course_id = c.id
-                    AND o.status = 'published'
-                    AND o.selection_mode <> 'FIXED')
+        r#"INSERT INTO enrollments (student_id, course_id, semester, offering_id)
+           SELECT s.id, c.id, s.semester,
+                  -- A fixed offering produced this row when one exists, so
+                  -- seats are counted against it rather than the bare course.
+                  (SELECT o.id FROM course_offerings o
+                    WHERE o.course_id = c.id AND o.status = 'published'
+                      AND o.selection_mode = 'FIXED' AND o.semester = s.semester
+                    ORDER BY o.id LIMIT 1)
+             FROM students s
+             JOIN courses c ON c.programme_id = s.programme_id AND c.semester = s.semester
+            WHERE s.programme_id = $1 AND s.semester = $2 AND s.is_active
+              AND NOT EXISTS (
+                  SELECT 1 FROM course_offerings o
+                   WHERE o.course_id = c.id
+                     AND o.status = 'published'
+                     AND o.selection_mode <> 'FIXED')
            ON CONFLICT DO NOTHING"#,
     )
     .bind(programme_id)
@@ -372,11 +378,20 @@ pub async fn course_teacher(db: &PgPool, course_id: i64) -> Res<i64> {
 }
 
 /// Existing periods that overlap the new one and share its teacher, room or class.
+///
+/// "Same class" covers both halves of the timetable: another period of this
+/// programme and semester, and a period of a course offering that targets this
+/// programme in this semester (an offering period has `programme_id` NULL, so
+/// a plain `t.programme_id = $6` comparison would never see it).
 pub async fn clashes(db: &PgPool, n: &NewSlot) -> Res<Vec<Clash>> {
     sqlx::query_as::<_, Clash>(
         r#"SELECT COALESCE(t.faculty_id = NULLIF($4, 0), false) AS same_teacher,
                   COALESCE(t.room IS NOT NULL AND t.room <> '' AND lower(t.room) = lower($5), false) AS same_room,
-                  (t.programme_id = $6 AND t.semester = $7) AS same_class,
+                  (t.programme_id = $6 AND t.semester = $7)
+                  OR (t.course_offering_id IS NOT NULL AND t.semester = $7
+                      AND EXISTS (SELECT 1 FROM course_offering_targets tg
+                                   WHERE tg.offering_id = t.course_offering_id
+                                     AND tg.programme_id = $6)) AS same_class,
                   c.title AS course,
                   to_char(t.start_time, 'HH24:MI') AS start_at,
                   to_char(t.end_time, 'HH24:MI') AS end_at
@@ -385,7 +400,11 @@ pub async fn clashes(db: &PgPool, n: &NewSlot) -> Res<Vec<Clash>> {
              AND t.start_time < $3::time AND t.end_time > $2::time
              AND ( COALESCE(t.faculty_id = NULLIF($4, 0), false)
                    OR COALESCE(t.room IS NOT NULL AND t.room <> '' AND lower(t.room) = lower($5), false)
-                   OR (t.programme_id = $6 AND t.semester = $7) )"#,
+                   OR (t.programme_id = $6 AND t.semester = $7)
+                   OR (t.course_offering_id IS NOT NULL AND t.semester = $7
+                       AND EXISTS (SELECT 1 FROM course_offering_targets tg
+                                    WHERE tg.offering_id = t.course_offering_id
+                                      AND tg.programme_id = $6)) )"#,
     )
     .bind(n.weekday)
     .bind(&n.start_at)
@@ -423,4 +442,93 @@ pub async fn delete_slot(db: &PgPool, id: i64) -> Res<()> {
         .execute(db)
         .await?;
     Ok(())
+}
+
+// ---------- Periods of a course offering ----------
+
+/// The periods already scheduled for one course offering.
+pub async fn offering_slots(db: &PgPool, offering_id: i64) -> Res<Vec<SlotRow>> {
+    sqlx::query_as::<_, SlotRow>(
+        r#"SELECT t.id, t.weekday,
+                  to_char(t.start_time, 'HH24:MI') AS start_at,
+                  to_char(t.end_time, 'HH24:MI') AS end_at,
+                  c.code, c.title AS course,
+                  COALESCE(f.name, '') AS teacher,
+                  COALESCE(t.room, '') AS room
+           FROM timetable_entries t
+           JOIN courses c ON c.id = t.course_id
+           LEFT JOIN faculty f ON f.id = t.faculty_id
+           WHERE t.course_offering_id = $1
+           ORDER BY t.weekday, t.start_time"#,
+    )
+    .bind(offering_id)
+    .fetch_all(db)
+    .await
+}
+
+pub struct NewOfferingSlot {
+    pub offering_id: i64,
+    pub faculty_id: i64, // 0 = none
+    pub weekday: i16,
+    pub start_at: String, // HH:MM
+    pub end_at: String,   // HH:MM
+    pub room: String,     // may be empty
+}
+
+/// Overlapping periods that share this offering's teacher, room or class.
+///
+/// "Same class" is the offering itself plus any programme class the offering
+/// targets in the same semester: those students are booked twice otherwise.
+pub async fn offering_clashes(db: &PgPool, n: &NewOfferingSlot) -> Res<Vec<Clash>> {
+    sqlx::query_as::<_, Clash>(
+        r#"SELECT COALESCE(t.faculty_id = NULLIF($3, 0), false) AS same_teacher,
+                  COALESCE(t.room IS NOT NULL AND t.room <> '' AND lower(t.room) = lower($4), false) AS same_room,
+                  (t.course_offering_id = $1)
+                  OR (t.programme_id IS NOT NULL AND t.semester = (SELECT o.semester FROM course_offerings o WHERE o.id = $1)
+                      AND EXISTS (SELECT 1 FROM course_offering_targets tg
+                                   WHERE tg.offering_id = $1 AND tg.programme_id = t.programme_id)) AS same_class,
+                  c.title AS course,
+                  to_char(t.start_time, 'HH24:MI') AS start_at,
+                  to_char(t.end_time, 'HH24:MI') AS end_at
+           FROM timetable_entries t JOIN courses c ON c.id = t.course_id
+           WHERE t.weekday = $2
+             AND t.start_time < $6::time AND t.end_time > $5::time
+             AND ( COALESCE(t.faculty_id = NULLIF($3, 0), false)
+                   OR COALESCE(t.room IS NOT NULL AND t.room <> '' AND lower(t.room) = lower($4), false)
+                   OR t.course_offering_id = $1
+                   OR (t.programme_id IS NOT NULL
+                       AND t.semester = (SELECT o.semester FROM course_offerings o WHERE o.id = $1)
+                       AND EXISTS (SELECT 1 FROM course_offering_targets tg
+                                    WHERE tg.offering_id = $1 AND tg.programme_id = t.programme_id)) )"#,
+    )
+    .bind(n.offering_id)
+    .bind(n.weekday)
+    .bind(n.faculty_id)
+    .bind(&n.room)
+    .bind(&n.start_at)
+    .bind(&n.end_at)
+    .fetch_all(db)
+    .await
+}
+
+/// Add one period to a course offering. The row carries the offering's course
+/// and semester and leaves `programme_id` NULL — the constraint on the table
+/// says exactly one of the two is set.
+pub async fn add_offering_slot(db: &PgPool, n: &NewOfferingSlot) -> Res<i64> {
+    sqlx::query_scalar(
+        r#"INSERT INTO timetable_entries
+               (course_offering_id, programme_id, semester, course_id, faculty_id,
+                weekday, start_time, end_time, room)
+           SELECT $1, NULL, o.semester, o.course_id, NULLIF($3, 0), $2, $4::time, $5::time, NULLIF($6, '')
+             FROM course_offerings o WHERE o.id = $1
+           RETURNING id"#,
+    )
+    .bind(n.offering_id)
+    .bind(n.weekday)
+    .bind(n.faculty_id)
+    .bind(&n.start_at)
+    .bind(&n.end_at)
+    .bind(&n.room)
+    .fetch_one(db)
+    .await
 }

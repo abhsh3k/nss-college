@@ -240,6 +240,13 @@ pub struct RosterRow {
     pub recorded: bool,
 }
 
+/// Who is on the sheet for one period.
+///
+/// A programme class takes every active enrollment of its course. A period
+/// that belongs to a course offering is narrower: only the students holding a
+/// confirmed (or locked) selection *for that offering* are on it, so a mixed
+/// group sees the students who actually chose the offering instead of every
+/// student ever enrolled in the underlying course.
 pub async fn roster(db: &PgPool, course_id: i64, entry_id: i64, date: &str) -> Res<Vec<RosterRow>> {
     sqlx::query_as::<_, RosterRow>(
         r#"SELECT st.id AS student_id, st.name, st.admission_no,
@@ -250,6 +257,15 @@ pub async fn roster(db: &PgPool, course_id: i64, entry_id: i64, date: &str) -> R
            LEFT JOIN attendance_sessions s ON s.timetable_entry_id = $2 AND s.on_date = $3::date
            LEFT JOIN attendance_records r ON r.session_id = s.id AND r.student_id = st.id
            WHERE e.course_id = $1 AND e.status = 'active'
+             AND ( -- the offering this period belongs to, if it has one
+                  NOT EXISTS (SELECT 1 FROM timetable_entries te
+                               WHERE te.id = $2 AND te.course_offering_id IS NOT NULL)
+                  OR EXISTS (SELECT 1 FROM timetable_entries te
+                              JOIN student_course_selections sel
+                                ON sel.offering_id = te.course_offering_id
+                               AND sel.student_id = st.id
+                              WHERE te.id = $2
+                                AND sel.state IN ('confirmed', 'locked')))
            ORDER BY st.name, st.admission_no"#,
     )
     .bind(course_id)

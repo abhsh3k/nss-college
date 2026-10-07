@@ -829,6 +829,36 @@ pub async fn add_period(
         return Ok(Redirect::to(&format!("/admin/courses/offerings/{id}")));
     }
 
+    // Same clash rules as the timetable page: a teacher, room or class is
+    // never double-booked, whichever of the two paths added the period.
+    let clashes = crate::services::academics::offering_clashes(
+        &s.db,
+        &crate::services::academics::NewOfferingSlot {
+            offering_id: id,
+            faculty_id,
+            weekday,
+            start_at: start.clone(),
+            end_at: end.clone(),
+            room: f.room.trim().to_string(),
+        },
+    )
+    .await?;
+    if let Some(c) = clashes.first() {
+        let who = if c.same_class {
+            "that class already has"
+        } else if c.same_teacher {
+            "the teacher is already teaching"
+        } else {
+            "the room is already used for"
+        };
+        shell::flash(
+            &session,
+            format!("Clash: {who} {} ({}–{}).", c.course, c.start_at, c.end_at),
+        )
+        .await?;
+        return Ok(Redirect::to(&format!("/admin/courses/offerings/{id}")));
+    }
+
     match sqlx::query_scalar::<_, i64>(
         r#"INSERT INTO timetable_entries
                (course_offering_id, programme_id, semester, course_id, faculty_id,
@@ -875,7 +905,20 @@ pub async fn delete_period(
     .bind(entry_id)
     .bind(id)
     .execute(&s.db)
-    .await?;
+    .await;
+    let deleted = match deleted {
+        Ok(d) => d,
+        // Attendance already taken for this period: keep the row and say why.
+        Err(e) if crate::error::is_foreign_key_violation(&e) => {
+            shell::flash(
+                &session,
+                "Attendance has already been taken for this period, so it can't be removed.",
+            )
+            .await?;
+            return Ok(Redirect::to(&format!("/admin/courses/offerings/{id}")));
+        }
+        Err(e) => return Err(e.into()),
+    };
     if deleted.rows_affected() > 0 {
         users::audit(&s.db, Some(manager.user.id), "offering_period_removed", "timetable_entry", Some(entry_id)).await?;
         shell::flash(&session, "Period removed.").await?;

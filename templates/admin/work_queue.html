@@ -1,0 +1,201 @@
+{% extends "layouts/app.html" %}
+{% block title %}Work queue{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Work queue</h1>
+<p class="mt-3 max-w-2xl text-ink/80">Everything waiting on {{ department_name }}, in one place. Each row links to the page that already handles that kind of decision — the catalogue, the offering pages and the selections page stay as they are.</p>
+
+<ul class="mt-5 flex flex-wrap gap-2 text-sm">
+  <li class="rounded border border-ink/20 bg-mist px-3 py-1"><span class="font-semibold">{{ approvals.len() }}</span> approval{% if approvals.len() != 1 %}s{% endif %}</li>
+  <li class="rounded border border-ink/20 bg-mist px-3 py-1"><span class="font-semibold">{{ requests.len() }}</span> change request{% if requests.len() != 1 %}s{% endif %}</li>
+  <li class="rounded border border-ink/20 bg-mist px-3 py-1"><span class="font-semibold">{{ pending_cohorts.len() }}</span> cohort decision{% if pending_cohorts.len() != 1 %}s{% endif %}</li>
+  <li class="rounded border border-ink/20 bg-mist px-3 py-1"><span class="font-semibold">{{ unscheduled.len() }}</span> offering{% if unscheduled.len() != 1 %}s{% endif %} without a timetable</li>
+  <li class="rounded border border-ink/20 bg-mist px-3 py-1"><span class="font-semibold">{{ capacity.len() }}</span> full seat list{% if capacity.len() != 1 %}s{% endif %}</li>
+</ul>
+
+{% if approvals.is_empty() && requests.is_empty() && pending_cohorts.is_empty() && unscheduled.is_empty() && capacity.is_empty() %}
+<p class="mt-8 max-w-2xl border-l-4 border-accent bg-mist px-4 py-3 font-medium">Nothing is waiting. Every approval, change request and cohort decision is settled and every published offering has its periods.</p>
+{% endif %}
+
+{# ---------- Pending external approvals ---------- #}
+<section class="mt-10" aria-labelledby="queue-approvals">
+  <div class="flex flex-wrap items-baseline justify-between gap-2">
+    <h2 id="queue-approvals" class="font-display text-2xl font-semibold">External offerings to decide</h2>
+    <a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses/external">Open external offerings</a>
+  </div>
+  {% if approvals.is_empty() %}
+  <p class="mt-3 text-ink/70">No other department is waiting on a decision from you.</p>
+  {% else %}
+  <div class="mt-3 overflow-x-auto">
+    <table class="w-full min-w-[44rem] text-left">
+      <thead>
+        <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+          <th scope="col" class="py-2 pr-4 font-medium">Course</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Offered by</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Year / Sem</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Mode</th>
+          <th scope="col" class="py-2 font-medium"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in approvals %}
+        <tr class="border-b border-ink/10">
+          <td class="py-2 pr-4"><span class="font-mono font-medium">{{ a.code }}</span> {{ a.title }}</td>
+          <td class="py-2 pr-4 text-sm">{{ a.department }}</td>
+          <td class="py-2 pr-4 text-sm">{{ a.year_label }} · S{{ a.semester }}</td>
+          <td class="py-2 pr-4 text-sm">{{ a.selection_mode }}</td>
+          <td class="py-2 text-right whitespace-nowrap"><a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses/external">Approve or reject<span class="sr-only"> {{ a.code }}</span></a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+{# ---------- Pending change requests ---------- #}
+<section class="mt-10" aria-labelledby="queue-changes">
+  <div class="flex flex-wrap items-baseline justify-between gap-2">
+    <h2 id="queue-changes" class="font-display text-2xl font-semibold">Change requests</h2>
+    <a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses/selections">Open student selections</a>
+  </div>
+  {% if requests.is_empty() %}
+  <p class="mt-3 text-ink/70">No student is waiting to move between courses.</p>
+  {% else %}
+  <div class="mt-3 overflow-x-auto">
+    <table class="w-full min-w-[44rem] text-left">
+      <thead>
+        <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+          <th scope="col" class="py-2 pr-4 font-medium">Student</th>
+          <th scope="col" class="py-2 pr-4 font-medium">From → To</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Reason</th>
+          <th scope="col" class="py-2 font-medium"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in requests %}
+        <tr class="border-b border-ink/10">
+          <td class="py-2 pr-4">{{ r.name }}<br><span class="text-sm text-ink/60">{{ r.admission_no }} · {{ r.programme }}</span></td>
+          <td class="py-2 pr-4 text-sm"><span class="font-mono">{{ r.current_code }}</span> → <span class="font-mono font-semibold">{{ r.new_code }}</span></td>
+          <td class="py-2 pr-4 text-sm">{{ r.reason }}</td>
+          <td class="py-2 text-right whitespace-nowrap"><a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses/selections">Decide<span class="sr-only"> {{ r.name }}'s request</span></a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+{# ---------- Cohort decisions ---------- #}
+<section class="mt-10" aria-labelledby="queue-cohorts">
+  <div class="flex flex-wrap items-baseline justify-between gap-2">
+    <h2 id="queue-cohorts" class="font-display text-2xl font-semibold">Cohort decisions not finalised</h2>
+    <a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses/selections">Open student selections</a>
+  </div>
+  {% if pending_cohorts.is_empty() %}
+  <p class="mt-3 text-ink/70">Every cohort-choice offering targeting a batch has its decision.</p>
+  {% else %}
+  <ul class="mt-3 space-y-3">
+    {% for p in pending_cohorts %}
+    <li class="rounded border border-ink/15 bg-mist p-4">
+      <p class="font-semibold">{{ p.cohort_label }} — {{ p.choice_group }}</p>
+      <p class="mt-1 text-sm text-ink/70">Choose one of
+        {% for o in p.options %}<span class="font-mono">{{ o.1 }}</span>{{ o.2 }}{% if !loop.last %}, {% endif %}{% endfor %}
+        — no student can select any of them until you do.
+      </p>
+      <a class="mt-2 inline-block font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses/selections">Finalise<span class="sr-only"> {{ p.cohort_label }} {{ p.choice_group }}</span></a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+{# ---------- Published offerings with no periods ---------- #}
+<section class="mt-10" aria-labelledby="queue-timetable">
+  <div class="flex flex-wrap items-baseline justify-between gap-2">
+    <h2 id="queue-timetable" class="font-display text-2xl font-semibold">Published offerings with no timetable</h2>
+    <a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/timetable">Open the timetable</a>
+  </div>
+  {% if unscheduled.is_empty() %}
+  <p class="mt-3 text-ink/70">Every published offering has at least one period.</p>
+  {% else %}
+  <p class="mt-1 text-sm text-ink/70">Students can already select these, but there is no class to teach or take attendance for.</p>
+  <div class="mt-3 overflow-x-auto">
+    <table class="w-full min-w-[44rem] text-left">
+      <thead>
+        <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+          <th scope="col" class="py-2 pr-4 font-medium">Course</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Offered by</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Year / Sem</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Mode</th>
+          <th scope="col" class="py-2 font-medium"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in unscheduled %}
+        <tr class="border-b border-ink/10">
+          <td class="py-2 pr-4"><span class="font-mono font-medium">{{ u.code }}</span> {{ u.title }}</td>
+          <td class="py-2 pr-4 text-sm">{{ u.department }}</td>
+          <td class="py-2 pr-4 text-sm">{{ u.year_label }} · S{{ u.semester }}</td>
+          <td class="py-2 pr-4 text-sm">{{ u.selection_mode }}</td>
+          <td class="py-2 text-right whitespace-nowrap">
+            <a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/timetable?offering={{ u.id }}">Add periods<span class="sr-only"> to {{ u.code }}</span></a>
+            <a class="ml-3 font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses/offerings/{{ u.id }}">Offering page<span class="sr-only"> for {{ u.code }}</span></a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+{# ---------- Full seat lists ---------- #}
+<section class="mt-10" aria-labelledby="queue-capacity">
+  <div class="flex flex-wrap items-baseline justify-between gap-2">
+    <h2 id="queue-capacity" class="font-display text-2xl font-semibold">Capacity warnings</h2>
+    <a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses/offerings">Open course offerings</a>
+  </div>
+  {% if capacity.is_empty() %}
+  <p class="mt-3 text-ink/70">No published offering is full.</p>
+  {% else %}
+  <p class="mt-1 text-sm text-ink/70">Seats are counted from the enrollments that name this offering, so only its own students fill it.</p>
+  <div class="mt-3 overflow-x-auto">
+    <table class="w-full min-w-[40rem] text-left">
+      <thead>
+        <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+          <th scope="col" class="py-2 pr-4 font-medium">Course</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Offered by</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Year / Sem</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Seats</th>
+          <th scope="col" class="py-2 font-medium"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in capacity %}
+        <tr class="border-b border-ink/10">
+          <td class="py-2 pr-4"><span class="font-mono font-medium">{{ c.code }}</span> {{ c.title }}</td>
+          <td class="py-2 pr-4 text-sm">{{ c.department }}</td>
+          <td class="py-2 pr-4 text-sm">{{ c.year_label }} · S{{ c.semester }}</td>
+          <td class="py-2 pr-4 text-sm">
+            {% if c.enrolled > c.capacity %}<span class="font-semibold text-rose-600">{{ c.enrolled }}/{{ c.capacity }} — over-subscribed</span>
+            {% else %}<span class="font-semibold text-amber-700">{{ c.enrolled }}/{{ c.capacity }} — full</span>{% endif %}
+          </td>
+          <td class="py-2 text-right whitespace-nowrap"><a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses/offerings/{{ c.id }}">Manage<span class="sr-only"> {{ c.code }}</span></a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+{# ---------- The pages this queue drills into ---------- #}
+<nav class="mt-12 border-t border-ink/15 pt-6 text-sm" aria-label="Course pages">
+  <span class="text-ink/70">Go straight to:</span>
+  <a class="ml-3 font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses">Course catalogue</a>
+  <a class="ml-3 font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses/offerings">Course offerings</a>
+  <a class="ml-3 font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses/selections">Student selections</a>
+  <a class="ml-3 font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses/external">External offerings</a>
+</nav>
+{% endblock %}
