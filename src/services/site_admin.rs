@@ -186,6 +186,12 @@ pub struct PageInput {
     pub title: String,
     pub lede: String,
     pub status: String,
+    /// Which header menu the page sits in, or `none` to leave it out.
+    pub nav_group: String,
+    /// The words the menu shows; falls back to the title when empty.
+    pub nav_label: String,
+    /// Position inside its group, lowest first.
+    pub nav_sort: i32,
 }
 
 #[derive(Debug, FromRow)]
@@ -195,6 +201,47 @@ pub struct PageEdit {
     pub title: String,
     pub lede: String,
     pub status: String,
+    pub nav_group: String,
+    pub nav_label: String,
+    pub nav_sort: i32,
+}
+
+/// The menu groups the header draws, in the order they appear.
+pub const NAV_GROUPS: [&str; 6] = [
+    "none",
+    "utility",
+    "top",
+    "about",
+    "academics",
+    "student-life",
+];
+
+/// The human name of each group, for the select on the page form.
+pub fn nav_group_label(group: &str) -> &'static str {
+    match group {
+        "utility" => "Top strip (IQAC, Placement, ...)",
+        "top" => "Main menu, top level (Alumni, News, ...)",
+        "about" => "Main menu: About",
+        "academics" => "Main menu: Academics",
+        "student-life" => "Main menu: Student life",
+        _ => "Not in the menu",
+    }
+}
+
+/// Accepts a posted group, falling back to "none" so a hand-crafted form
+/// cannot put a link in a menu the header has no group for.
+pub fn clean_nav_group(value: &str) -> String {
+    let value = value.trim();
+    if NAV_GROUPS.contains(&value) {
+        value.to_string()
+    } else {
+        "none".to_string()
+    }
+}
+
+/// Accepts a posted position, falling back to 0 (first in the group).
+pub fn clean_nav_sort(value: &str) -> i32 {
+    value.trim().parse::<i32>().ok().filter(|n| (0..=999).contains(n)).unwrap_or(0)
 }
 
 /// Paths the router answers itself. Editing the title of one of these still
@@ -234,20 +281,26 @@ pub async fn pages(db: &PgPool, status: &str) -> Res<Vec<PageRow>> {
 }
 
 pub async fn page_for_edit(db: &PgPool, id: i64) -> Res<Option<PageEdit>> {
-    sqlx::query_as::<_, PageEdit>("SELECT id, path, title, lede, status FROM pages WHERE id = $1")
-        .bind(id)
-        .fetch_optional(db)
-        .await
+    sqlx::query_as::<_, PageEdit>(
+        "SELECT id, path, title, lede, status, nav_group, nav_label, nav_sort FROM pages WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await
 }
 
 pub async fn create_page(db: &PgPool, p: &PageInput) -> Res<i64> {
     sqlx::query_scalar(
-        r#"INSERT INTO pages (path, title, lede, status) VALUES ($1, $2, $3, $4) RETURNING id"#,
+        r#"INSERT INTO pages (path, title, lede, status, nav_group, nav_label, nav_sort)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id"#,
     )
     .bind(&p.path)
     .bind(&p.title)
     .bind(&p.lede)
     .bind(crate::services::content_admin::clean_status(&p.status))
+    .bind(clean_nav_group(&p.nav_group))
+    .bind(p.nav_label.trim())
+    .bind(p.nav_sort)
     .fetch_one(db)
     .await
     .map_err(|e| match e {
@@ -259,14 +312,19 @@ pub async fn create_page(db: &PgPool, p: &PageInput) -> Res<i64> {
 }
 
 pub async fn update_page(db: &PgPool, id: i64, p: &PageInput) -> Res<()> {
-    sqlx::query("UPDATE pages SET path = $2, title = $3, lede = $4, status = $5 WHERE id = $1")
-        .bind(id)
-        .bind(&p.path)
-        .bind(&p.title)
-        .bind(&p.lede)
-        .bind(crate::services::content_admin::clean_status(&p.status))
-        .execute(db)
-        .await?;
+    sqlx::query(
+        "UPDATE pages SET path = $2, title = $3, lede = $4, status = $5, nav_group = $6, nav_label = $7, nav_sort = $8 WHERE id = $1",
+    )
+    .bind(id)
+    .bind(&p.path)
+    .bind(&p.title)
+    .bind(&p.lede)
+    .bind(crate::services::content_admin::clean_status(&p.status))
+    .bind(clean_nav_group(&p.nav_group))
+    .bind(p.nav_label.trim())
+    .bind(p.nav_sort)
+    .execute(db)
+    .await?;
     Ok(())
 }
 
@@ -297,23 +355,29 @@ pub struct SectionRow {
     pub heading: String,
     pub body: String,
     pub photo: Option<String>,
+    /// The caption drawn under the photo.
+    pub caption: String,
+    /// False when the section is kept but not shown to visitors.
+    pub published: bool,
     pub opts: DisplayOptions,
 }
 
 pub async fn sections(db: &PgPool, page_id: i64) -> Res<Vec<SectionRow>> {
-    let sql = "SELECT id, heading, body, photo_path,
+    let sql = "SELECT id, heading, body, photo_path, photo_caption, published,
                       layout, grid_columns, image_align, text_align, photo_shape, photo_size
                FROM page_sections WHERE page_id = $1 ORDER BY sort_order, id";
-    let rows: Vec<(i64, String, String, Option<String>, String, i32, String, String, String, String)> =
+    let rows: Vec<(i64, String, String, Option<String>, String, bool, String, i32, String, String, String, String)> =
         sqlx::query_as(sql).bind(page_id).fetch_all(db).await?;
 
     Ok(rows
         .into_iter()
-        .map(|(id, heading, body, photo, l, c, ia, ta, ps, pz)| SectionRow {
+        .map(|(id, heading, body, photo, caption, published, l, c, ia, ta, ps, pz)| SectionRow {
             id,
             heading,
             body,
             photo,
+            caption,
+            published,
             opts: DisplayOptions::from_row(&l, c, &ia, &ta, &ps, &pz),
         })
         .collect())
@@ -339,23 +403,27 @@ pub async fn create_section(
     heading: &str,
     body: &str,
     photo: &str,
+    caption: &str,
+    published: bool,
     opts: &DisplayOptions,
 ) -> Res<i64> {
     let (layout, columns, image_align, text_align, photo_shape, photo_size) = opts.to_row();
     sqlx::query_scalar(
         r#"INSERT INTO page_sections
-             (page_id, heading, body, sort_order, photo_path,
+             (page_id, heading, body, sort_order, photo_path, photo_caption, published,
               layout, grid_columns, image_align, text_align, photo_shape, photo_size)
            VALUES ($1, $2, $3,
                    COALESCE((SELECT max(sort_order) + 1 FROM page_sections WHERE page_id = $1), 1),
-                   NULLIF($4, ''),
-                   $5, $6, $7, $8, $9, $10)
+                   NULLIF($4, ''), $5, $6,
+                   $7, $8, $9, $10, $11, $12)
            RETURNING id"#,
     )
     .bind(page_id)
     .bind(heading)
     .bind(body)
     .bind(photo)
+    .bind(caption.trim())
+    .bind(published)
     .bind(layout)
     .bind(columns)
     .bind(image_align)
@@ -372,20 +440,25 @@ pub async fn update_section(
     heading: &str,
     body: &str,
     photo: &str,
+    caption: &str,
+    published: bool,
     opts: &DisplayOptions,
 ) -> Res<()> {
     let (layout, columns, image_align, text_align, photo_shape, photo_size) = opts.to_row();
     sqlx::query(
         r#"UPDATE page_sections
            SET heading = $2, body = $3, photo_path = NULLIF($4, ''),
-               layout = $5, grid_columns = $6, image_align = $7,
-               text_align = $8, photo_shape = $9, photo_size = $10
+               photo_caption = $5, published = $6,
+               layout = $7, grid_columns = $8, image_align = $9,
+               text_align = $10, photo_shape = $11, photo_size = $12
            WHERE id = $1"#,
     )
     .bind(id)
     .bind(heading)
     .bind(body)
     .bind(photo)
+    .bind(caption.trim())
+    .bind(published)
     .bind(layout)
     .bind(columns)
     .bind(image_align)
@@ -585,24 +658,30 @@ pub struct HomeSectionRow {
     pub heading: String,
     pub body: String,
     pub photo: Option<String>,
+    /// The caption drawn under the photo.
+    pub caption: String,
+    /// False when the block is kept but not shown to visitors.
+    pub published: bool,
     pub opts: DisplayOptions,
 }
 
 pub async fn home_sections(db: &PgPool) -> Res<Vec<HomeSectionRow>> {
-    let sql = "SELECT section_key, heading, body, photo_path,
+    let sql = "SELECT section_key, heading, body, photo_path, photo_caption, published,
                       layout, grid_columns, image_align, text_align, photo_shape, photo_size
                FROM home_sections ORDER BY sort_order, section_key";
-    let rows: Vec<(String, String, String, Option<String>, String, i32, String, String, String, String)> =
+    let rows: Vec<(String, String, String, Option<String>, String, bool, String, i32, String, String, String, String)> =
         sqlx::query_as(sql).fetch_all(db).await?;
 
     Ok(rows
         .into_iter()
         .map(
-            |(section_key, heading, body, photo, l, c, ia, ta, ps, pz)| HomeSectionRow {
+            |(section_key, heading, body, photo, caption, published, l, c, ia, ta, ps, pz)| HomeSectionRow {
                 section_key,
                 heading,
                 body,
                 photo,
+                caption,
+                published,
                 opts: DisplayOptions::from_row(&l, c, &ia, &ta, &ps, &pz),
             },
         )
@@ -629,20 +708,25 @@ pub async fn update_home_section(
     heading: &str,
     body: &str,
     photo: &str,
+    caption: &str,
+    published: bool,
     opts: &DisplayOptions,
 ) -> Res<bool> {
     let (layout, columns, image_align, text_align, photo_shape, photo_size) = opts.to_row();
     let updated = sqlx::query(
         r#"UPDATE home_sections
            SET heading = $2, body = $3, photo_path = NULLIF($4, ''),
-               layout = $5, grid_columns = $6, image_align = $7,
-               text_align = $8, photo_shape = $9, photo_size = $10
+               photo_caption = $5, published = $6,
+               layout = $7, grid_columns = $8, image_align = $9,
+               text_align = $10, photo_shape = $11, photo_size = $12
            WHERE section_key = $1"#,
     )
     .bind(key)
     .bind(heading)
     .bind(body)
     .bind(photo)
+    .bind(caption.trim())
+    .bind(published)
     .bind(layout)
     .bind(columns)
     .bind(image_align)

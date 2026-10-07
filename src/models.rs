@@ -102,6 +102,8 @@ pub struct PageSection {
     pub heading: String,
     pub body: String,
     pub photo: Option<String>,
+    /// A caption drawn under the photo, when the admin wrote one.
+    pub caption: String,
     pub opts: DisplayOptions,
 }
 
@@ -121,6 +123,18 @@ impl PageSection {
 pub struct Phone {
     pub display: String,
     pub tel: String,
+}
+
+/// One link in the public header menu.
+///
+/// The menu is drawn from `pages`: each row picks the group it sits in, the
+/// words it is labelled with, and its position. Groups with no links are left
+/// out of the header entirely, so taking the last page out of a menu removes
+/// the menu.
+#[derive(Debug, Clone)]
+pub struct NavItem {
+    pub label: String,
+    pub href: String,
 }
 
 /// Every college fact the layouts and public pages render. Loaded from
@@ -161,6 +175,16 @@ pub struct SiteInfo {
     pub error_400_body: String,
     pub error_500_heading: String,
     pub error_500_body: String,
+
+    /// The dark strip above the header: IQAC, Placement, Gallery, RTI, Fees.
+    pub utility_nav: Vec<NavItem>,
+    /// Top-level links after the three menus (Alumni, News). "Contact" is a
+    /// route of its own rather than a page row, so the header draws it after
+    /// this group.
+    pub top_nav: Vec<NavItem>,
+    pub about_nav: Vec<NavItem>,
+    pub academics_nav: Vec<NavItem>,
+    pub student_life_nav: Vec<NavItem>,
 }
 
 /// One homepage block, from `home_sections`.
@@ -170,6 +194,10 @@ pub struct HomeSection {
     pub heading: String,
     pub body: String,
     pub photo: Option<String>,
+    /// A caption drawn under the photo, when the admin wrote one.
+    pub caption: String,
+    /// False when the admin has taken the block offline.
+    pub published: bool,
     pub opts: DisplayOptions,
 }
 
@@ -185,6 +213,10 @@ pub struct HomeStat {
 pub struct HomeCopy {
     /// Each block's uploaded photo, keyed by `section_key`.
     pub photos: HashMap<String, String>,
+    /// Each block's photo caption, keyed by `section_key`.
+    pub captions: HashMap<String, String>,
+    /// Whether the admin has put each block online, keyed by `section_key`.
+    pub published: HashMap<String, bool>,
     /// Each block's display choices, keyed by `section_key`, so a home block can
     /// be a card grid or plain prose like any other section.
     pub layouts: HashMap<String, DisplayOptions>,
@@ -230,6 +262,20 @@ impl HomeCopy {
     /// True when the block has a photo, so the template can skip the markup.
     pub fn has_photo(&self, key: &str) -> bool {
         self.photos.contains_key(key)
+    }
+
+    /// The caption written for a block's photo, or an empty string.
+    pub fn caption(&self, key: &str) -> &str {
+        self.captions.get(key).map(String::as_str).unwrap_or("")
+    }
+
+    /// True unless the admin has taken the block offline.
+    ///
+    /// A block missing from the table (a database that lost the seeded rows)
+    /// counts as published, so the home page never blanks itself out by
+    /// accident.
+    pub fn is_published(&self, key: &str) -> bool {
+        self.published.get(key).copied().unwrap_or(true)
     }
 
     /// The display choices for a home block.

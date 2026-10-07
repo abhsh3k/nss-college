@@ -70,8 +70,17 @@ pub fn router() -> Router<AppState> {
         .route("/robots.txt", get(seo::robots))
         .route("/sitemap.xml", get(seo::sitemap))
         .route("/healthz", get(public::health))
-        .merge(protected)
         // Informational pages (about, IQAC, fees, ...) are looked up by path in the database,
         // so pages created in the admin dashboard work without a restart.
         .fallback(public::page_or_404)
+        // The public pages are rendered from the database, so an edit made in
+        // the admin must not be hidden behind a cached copy. `no-cache` makes
+        // the browser revalidate every time, on the routes above and on the
+        // fallback alike. It is applied before the merge, so the signed-in
+        // pages keep their stricter `no-store` from their own layer.
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache"),
+        ))
+        .merge(protected)
 }

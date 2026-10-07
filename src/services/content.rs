@@ -158,20 +158,23 @@ pub async fn page_sections(db: &PgPool, page_id: i64) -> Res<Vec<PageSection>> {
     // The six display columns come straight from the section's own row, so a page
     // section carries its own look. They are read as plain values and folded into
     // a `DisplayOptions` here, because the stored strings are cleaned on the way in.
+    // Sections the admin has taken offline are not read at all.
     let sql = format!(
-        r#"SELECT heading, body, photo_path,
+        r#"SELECT heading, body, photo_path, photo_caption,
                   layout, grid_columns, image_align, text_align, photo_shape, photo_size
-           FROM page_sections WHERE page_id = $1 ORDER BY sort_order, id"#
+           FROM page_sections WHERE page_id = $1 AND published
+           ORDER BY sort_order, id"#
     );
-    let rows: Vec<(String, String, Option<String>, String, i32, String, String, String, String)> =
+    let rows: Vec<(String, String, Option<String>, String, String, i32, String, String, String, String)> =
         sqlx::query_as(&sql).bind(page_id).fetch_all(db).await?;
 
     Ok(rows
         .into_iter()
-        .map(|(heading, body, photo, l, c, ia, ta, ps, pz)| PageSection {
+        .map(|(heading, body, photo, caption, l, c, ia, ta, ps, pz)| PageSection {
             heading,
             body,
             photo,
+            caption,
             opts: DisplayOptions::from_row(&l, c, &ia, &ta, &ps, &pz),
         })
         .collect())
@@ -219,6 +222,33 @@ pub async fn site_info(db: &PgPool) -> Res<SiteInfo> {
             .replace("{year}", &fill_year)
     };
 
+    // The header menu, drawn from `pages` so a page created in the admin shows
+    // up in the menu without a template edit. Draft pages drop out; a page with
+    // no group set is one the header never draws.
+    let nav_rows: Vec<(String, String, String)> = sqlx::query_as(
+        r#"SELECT nav_group, COALESCE(NULLIF(nav_label, ''), title), path
+           FROM pages
+           WHERE status = 'published' AND nav_group <> 'none'
+           ORDER BY nav_sort, id"#,
+    )
+    .fetch_all(db)
+    .await?;
+    let links = |group: &str| -> Vec<NavItem> {
+        nav_rows
+            .iter()
+            .filter(|(g, _, _)| g == group)
+            .map(|(_, label, path)| NavItem {
+                label: label.clone(),
+                href: path.clone(),
+            })
+            .collect()
+    };
+    let utility_nav = links("utility");
+    let top_nav = links("top");
+    let about_nav = links("about");
+    let academics_nav = links("academics");
+    let student_life_nav = links("student-life");
+
     Ok(SiteInfo {
         name,
         tagline: get("site_tagline"),
@@ -249,6 +279,11 @@ pub async fn site_info(db: &PgPool) -> Res<SiteInfo> {
         error_400_body: get("error_400_body"),
         error_500_heading: get("error_500_heading"),
         error_500_body: fill(get("error_500_body")),
+        utility_nav,
+        top_nav,
+        about_nav,
+        academics_nav,
+        student_life_nav,
     })
 }
 
@@ -266,20 +301,22 @@ pub fn current_year() -> i32 {
 /// The homepage copy, addressed by `home_sections.section_key`.
 pub async fn home_copy(db: &PgPool) -> Res<HomeCopy> {
     let sql = format!(
-        r#"SELECT section_key, heading, body, photo_path,
+        r#"SELECT section_key, heading, body, photo_path, photo_caption, published,
                   layout, grid_columns, image_align, text_align, photo_shape, photo_size
            FROM home_sections ORDER BY sort_order, section_key"#
     );
-    let raw: Vec<(String, String, String, Option<String>, String, i32, String, String, String, String)> =
+    let raw: Vec<(String, String, String, Option<String>, String, bool, String, i32, String, String, String, String)> =
         sqlx::query_as(&sql).fetch_all(db).await?;
     let rows: Vec<HomeSection> = raw
         .into_iter()
         .map(
-            |(section_key, heading, body, photo, l, c, ia, ta, ps, pz)| HomeSection {
+            |(section_key, heading, body, photo, caption, published, l, c, ia, ta, ps, pz)| HomeSection {
                 section_key,
                 heading,
                 body,
                 photo,
+                caption,
+                published,
                 opts: DisplayOptions::from_row(&l, c, &ia, &ta, &ps, &pz),
             },
         )
@@ -292,7 +329,7 @@ pub async fn home_copy(db: &PgPool) -> Res<HomeCopy> {
     };
     let stats = rows
         .iter()
-        .filter(|r| r.section_key.starts_with("stat_"))
+        .filter(|r| r.section_key.starts_with("stat_") && r.published)
         .map(|r| HomeStat {
             label: r.heading.clone(),
             value: r.body.clone(),
@@ -316,6 +353,15 @@ pub async fn home_copy(db: &PgPool) -> Res<HomeCopy> {
         photos: rows
             .iter()
             .filter_map(|r| r.photo.clone().map(|p| (r.section_key.clone(), p)))
+            .collect(),
+        captions: rows
+            .iter()
+            .filter(|r| !r.caption.is_empty())
+            .map(|r| (r.section_key.clone(), r.caption.clone()))
+            .collect(),
+        published: rows
+            .iter()
+            .map(|r| (r.section_key.clone(), r.published))
             .collect(),
         layouts: rows.iter().map(|r| (r.section_key.clone(), r.opts)).collect(),
         hero_heading,

@@ -93,3 +93,62 @@ html { -webkit-text-size-adjust: 100%; }
 
   body.nav-locked { overflow: hidden; }
 }
+
+/* ---------- Home page hero slideshow ----------
+   Five campus photos crossfade behind the hero headline. One long 30s
+   animation per slide, offset by --hero-i (0..4) so a new photo starts every
+   6s. The first slide is also the poster: it is shown alone when the visitor
+   prefers reduced motion. */
+#hero-slideshow {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+#hero-slideshow img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 35%;
+  opacity: 0;
+  animation: hero-slide 30s infinite;
+  animation-delay: calc(var(--hero-i, 0) * 6s);
+}
+
+/* Fade in over 1.2s, hold for ~4.2s, fade out over 1.2s, then wait out the
+   rest of the 30s cycle until the delay brings this slide back around. */
+@keyframes hero-slide {
+  0%   { opacity: 0; }
+  4%   { opacity: 1; }
+  18%  { opacity: 1; }
+  22%  { opacity: 0; }
+  100% { opacity: 0; }
+}
+
+/* Keeps the chalk headline and body legible over any photo, and blends the
+   slideshow into the ink background at the edges.
+
+   z-index 0, not 1: every layer of the hero paints in document order (slideshow,
+   this scrim, then the headline, the wave and the stats), so the scrim can never
+   end up over the words it is supposed to sit behind. */
+#hero-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    linear-gradient(100deg, rgb(42 20 16 / 0.92) 0%, rgb(42 20 16 / 0.78) 45%, rgb(42 20 16 / 0.55) 100%),
+    linear-gradient(to bottom, rgb(42 20 16 / 0.35) 0%, rgb(42 20 16 / 0) 45%, rgb(42 20 16 / 0.5) 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #hero-slideshow img {
+    animation: none;
+    opacity: 0;
+  }
+
+  #hero-slideshow img:first-child {
+    opacity: 1;
+  }
+}

@@ -77,6 +77,12 @@ pub struct PageFormValues {
     pub title: String,
     pub lede: String,
     pub status: String,
+    /// Which header menu the page sits in (see `site_admin::NAV_GROUPS`).
+    pub nav_group: String,
+    /// The words the menu shows; empty means "use the title".
+    pub nav_label: String,
+    /// Position inside the group, lowest first.
+    pub nav_sort: String,
     pub error: Option<String>,
 }
 
@@ -88,6 +94,9 @@ impl PageFormValues {
             title: String::new(),
             lede: String::new(),
             status: "published".into(),
+            nav_group: "none".into(),
+            nav_label: String::new(),
+            nav_sort: "0".into(),
             error: None,
         }
     }
@@ -98,6 +107,25 @@ impl PageFormValues {
             title: self.title.clone(),
             lede: self.lede.clone(),
             status: self.status.clone(),
+            nav_group: self.nav_group.clone(),
+            nav_label: self.nav_label.clone(),
+            nav_sort: site_admin::clean_nav_sort(&self.nav_sort),
+        }
+    }
+
+    /// Fold a stored row into the form, for both the edit screen and the re-read
+    /// after a failed save.
+    fn from_edit(row: site_admin::PageEdit) -> PageFormValues {
+        PageFormValues {
+            id: row.id,
+            path: row.path,
+            title: row.title,
+            lede: row.lede,
+            status: row.status,
+            nav_group: row.nav_group,
+            nav_label: row.nav_label,
+            nav_sort: row.nav_sort.to_string(),
+            error: None,
         }
     }
 }
@@ -108,6 +136,8 @@ pub struct FormPage {
     shell: Shell,
     form: PageFormValues,
     statuses: Vec<String>,
+    /// The choices of the "position" select.
+    nav_groups: Vec<NavGroupOpt>,
 }
 
 fn form_page(form: PageFormValues, shell: Shell) -> FormPage {
@@ -115,7 +145,26 @@ fn form_page(form: PageFormValues, shell: Shell) -> FormPage {
         shell,
         form,
         statuses: statuses(),
+        nav_groups: nav_groups(),
     }
+}
+
+/// One option of the "position" select on the page forms: the value stored in
+/// `pages.nav_group` and the words an admin reads for it.
+pub struct NavGroupOpt {
+    pub value: String,
+    pub label: &'static str,
+}
+
+/// The menu groups with the words an admin reads, ready for a select.
+fn nav_groups() -> Vec<NavGroupOpt> {
+    site_admin::NAV_GROUPS
+        .iter()
+        .map(|g| NavGroupOpt {
+            value: (*g).to_string(),
+            label: site_admin::nav_group_label(g),
+        })
+        .collect()
 }
 
 pub async fn new_form(
@@ -134,6 +183,8 @@ pub struct EditPage {
     form: PageFormValues,
     sections: Vec<SectionRow>,
     statuses: Vec<String>,
+    /// The choices of the "position" select.
+    nav_groups: Vec<NavGroupOpt>,
     /// What a newly added section starts from, so the add form does not open with
     /// blank choices when the admin expects the house style.
     defaults: DisplayOptions,
@@ -149,17 +200,11 @@ pub async fn edit_form(
         .await?
         .ok_or(AppError::NotFound)?;
     Ok(EditPage {
-        form: PageFormValues {
-            id: row.id,
-            path: row.path,
-            title: row.title,
-            lede: row.lede,
-            status: row.status,
-            error: None,
-        },
+        form: PageFormValues::from_edit(row),
         sections: site_admin::sections(&s.db, id).await?,
         defaults: layout::defaults(&s.db).await?,
         statuses: statuses(),
+        nav_groups: nav_groups(),
         shell: Shell::build(&user, &session).await?,
     })
 }
@@ -176,35 +221,26 @@ async fn edit_page(
         .await?
         .ok_or(AppError::NotFound)?;
     Ok(EditPage {
-        form: PageFormValues {
-            id: row.id,
-            path: row.path,
-            title: row.title,
-            lede: row.lede,
-            status: row.status,
-            error: None,
-        },
+        form: PageFormValues::from_edit(row),
         sections: site_admin::sections(&s.db, id).await?,
         defaults: layout::defaults(&s.db).await?,
         statuses: statuses(),
+        nav_groups: nav_groups(),
         shell: Shell::build(user, session).await?,
     })
 }
 
 /// The submitted page fields, with the path and title checked before any write.
-fn read_form(
-    path: &str,
-    title: &str,
-    lede: &str,
-    status: &str,
-    existing_id: i64,
-) -> PageFormValues {
+fn read_form(f: &PageFormSubmit, existing_id: i64) -> PageFormValues {
     let mut form = PageFormValues {
         id: existing_id,
-        path: path.trim().to_string(),
-        title: title.trim().to_string(),
-        lede: lede.trim().to_string(),
-        status: content_admin::clean_status(status).to_string(),
+        path: f.path.trim().to_string(),
+        title: f.title.trim().to_string(),
+        lede: f.lede.trim().to_string(),
+        status: content_admin::clean_status(&f.status).to_string(),
+        nav_group: site_admin::clean_nav_group(&f.nav_group),
+        nav_label: f.nav_label.trim().to_string(),
+        nav_sort: site_admin::clean_nav_sort(&f.nav_sort).to_string(),
         error: None,
     };
     if form.title.is_empty() {
@@ -225,7 +261,7 @@ pub async fn create(
 ) -> Result<Response, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
 
-    let values = read_form(&f.path, &f.title, &f.lede, &f.status, 0);
+    let values = read_form(&f, 0);
     if values.error.is_some() {
         return Ok(form_page(values, Shell::build(&user, &session).await?).into_response());
     }
@@ -253,6 +289,12 @@ pub struct PageFormSubmit {
     lede: String,
     #[serde(default)]
     status: String,
+    #[serde(default)]
+    nav_group: String,
+    #[serde(default)]
+    nav_label: String,
+    #[serde(default)]
+    nav_sort: String,
 }
 
 pub async fn update(
@@ -264,7 +306,7 @@ pub async fn update(
 ) -> Result<Response, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
 
-    let values = read_form(&f.path, &f.title, &f.lede, &f.status, id);
+    let values = read_form(&f, id);
     if values.error.is_some() {
         return Ok(edit_page(&s, &user, &session, id).await?.into_response());
     }
@@ -353,7 +395,17 @@ pub async fn add_section(
     }
 
     let opts = layout::from_form(&body);
-    site_admin::create_section(&s.db, id, heading, body.field("body"), &photo, &opts).await?;
+    site_admin::create_section(
+        &s.db,
+        id,
+        heading,
+        body.field("body"),
+        &photo,
+        body.field("photo_caption"),
+        body.flag("published"),
+        &opts,
+    )
+    .await?;
     users::audit(&s.db, Some(user.id), "page_section_added", "page", Some(id)).await?;
     flash(&session, "Section added.").await?;
     Ok(Redirect::to(&back_to(id)))
@@ -395,8 +447,17 @@ pub async fn update_section(
     }
 
     let opts = layout::from_form(&body);
-    site_admin::update_section(&s.db, section_id, heading, body.field("body"), &photo, &opts)
-        .await?;
+    site_admin::update_section(
+        &s.db,
+        section_id,
+        heading,
+        body.field("body"),
+        &photo,
+        body.field("photo_caption"),
+        body.flag("published"),
+        &opts,
+    )
+    .await?;
 
     // Only once the row points at the new photo is it safe to drop the old one.
     if photo != previous {

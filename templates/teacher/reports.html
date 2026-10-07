@@ -4,7 +4,7 @@
 <div class="space-y-8">
   <div>
     <h1 class="font-display text-3xl font-semibold md:text-4xl text-gray-900">Attendance reports</h1>
-    <p class="mt-2 max-w-2xl text-gray-600">Minimum {{ rules.min_percent }}% across the semester. E-grants students also need {{ rules.egrants_monthly_percent }}% in each month. Leave is counted as {% if rules.leave_counts %}present{% else %}not present{% endif %}.</p>
+    <p class="mt-2 max-w-2xl text-gray-600">Minimum {{ rules.min_percent }}% across the semester. Leave is counted as {% if rules.leave_counts %}present{% else %}not present{% endif %}.</p>
   </div>
 
   {% if courses.is_empty() %}
@@ -42,7 +42,6 @@
             <th scope="col" class="py-3 px-3">Absent</th>
             <th scope="col" class="py-3 px-3">Leave</th>
             <th scope="col" class="py-3 px-3">Attendance</th>
-            <th scope="col" class="py-3 px-3">E-grants, this month</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-100">
@@ -54,7 +53,6 @@
             <td class="py-3 px-3 text-gray-700">{{ l.absent }}</td>
             <td class="py-3 px-3 text-gray-700">{{ l.on_leave }}</td>
             <td class="py-3 px-3 text-gray-700 {% if l.low %}font-semibold text-rose-600{% endif %}">{{ l.percent_label }}{% if l.low %}<br><span class="text-xs">Below {{ rules.min_percent }}%</span>{% endif %}</td>
-            <td class="py-3 px-3 text-gray-700 {% if l.month_low %}font-semibold text-rose-600{% endif %}">{% if l.egrants %}{{ l.month_label }}{% if l.month_low %}<br><span class="text-xs">Below {{ rules.egrants_monthly_percent }}%</span>{% endif %}{% else %}<span class="text-gray-400">Not e-grants</span>{% endif %}</td>
           </tr>
           {% endfor %}
         </tbody>

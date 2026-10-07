@@ -239,12 +239,22 @@ pub async fn save_rank_holders_display(
     photo: &str,
     opts: &DisplayOptions,
 ) -> Res<bool> {
+    // This screen has no "online" or caption fields of its own — those live on
+    // the home page block form — so the row keeps what it already holds.
+    let (caption, published): (String, bool) =
+        sqlx::query_as("SELECT photo_caption, published FROM home_sections WHERE section_key = $1")
+            .bind(crate::layout::RANK_HOLDERS_KEY)
+            .fetch_optional(db)
+            .await?
+            .unwrap_or((String::new(), true));
     crate::services::site_admin::update_home_section(
         db,
         crate::layout::RANK_HOLDERS_KEY,
         heading,
         body,
         photo,
+        &caption,
+        published,
         opts,
     )
     .await

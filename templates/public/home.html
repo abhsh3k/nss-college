@@ -7,26 +7,39 @@
 
 {# ---------- Hero ---------- #}
 <section class="relative overflow-hidden bg-ink text-chalk">
+  {# The campus photos in static/img/carousel, crossfading behind the headline.
+     The animation lives in app.css (#hero-slideshow) so it needs no Tailwind
+     rebuild, and the scrim keeps the chalk text readable over any photo. #}
+  <div id="hero-slideshow" aria-hidden="true">
+    <img src="/static/img/carousel/slide-1.webp" alt="" style="--hero-i: 0">
+    <img src="/static/img/carousel/slide-2.webp" alt="" style="--hero-i: 1" loading="lazy">
+    <img src="/static/img/carousel/slide-3.webp" alt="" style="--hero-i: 2" loading="lazy">
+    <img src="/static/img/carousel/slide-4.webp" alt="" style="--hero-i: 3" loading="lazy">
+    <img src="/static/img/carousel/slide-5.webp" alt="" style="--hero-i: 4" loading="lazy">
+  </div>
+  <div id="hero-scrim" aria-hidden="true"></div>
   <div class="absolute right-8 top-10 hidden h-20 w-20 rounded-full bg-accent sm:block lg:right-32 lg:h-28 lg:w-28" aria-hidden="true"></div>
   <div class="relative mx-auto max-w-6xl px-4 pb-16 pt-16 md:pb-28 md:pt-24">
+    {% if copy.is_published("hero") %}
     <h1 class="max-w-3xl font-display text-4xl font-semibold leading-tight sm:text-5xl md:text-7xl md:leading-[1.05]">{{ copy.hero_heading }}</h1>
     <p class="mt-6 max-w-xl text-lg leading-relaxed text-chalk/85">{{ copy.hero_body }}</p>
     {% let block = "hero" %}
     {% let bopts = copy.opts(block) %}
     {% include "partials/home_block_photo.html" %}
+    {% endif %}
     <div class="mt-9 flex flex-wrap gap-3">
       <a href="/admissions" class="rounded bg-accent px-6 py-3 font-semibold text-ink hover:bg-chalk">{{ site.admissions_cta }}</a>
       <a href="/academics" class="rounded border border-chalk/50 px-6 py-3 font-semibold hover:bg-chalk hover:text-ink">{{ copy.programmes_heading }}</a>
     </div>
   </div>
-  <svg class="block h-28 w-full md:h-44" viewBox="0 0 1440 220" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+  <svg class="relative block h-28 w-full md:h-44" viewBox="0 0 1440 220" preserveAspectRatio="none" aria-hidden="true" focusable="false">
     <path fill="#D9531E" d="M0 120 L120 80 L240 110 L400 40 L560 100 L720 60 L900 120 L1080 50 L1240 100 L1440 70 L1440 220 L0 220 Z"/>
     <path fill="#FFFAF6" fill-opacity="0.12" d="M0 140 L1440 100 L1440 150 L0 170 Z"/>
     <path fill="#A3231C" d="M0 160 L160 120 L320 150 L520 90 L700 140 L900 100 L1100 150 L1300 110 L1440 140 L1440 220 L0 220 Z"/>
     <path fill="#5E1A14" d="M0 190 L200 165 L420 185 L640 150 L860 180 L1100 155 L1440 185 L1440 220 L0 220 Z"/>
   </svg>
   {% if !copy.stats.is_empty() %}
-  <div class="bg-deep">
+  <div class="relative bg-deep">
     <dl class="mx-auto grid max-w-6xl gap-6 px-4 pb-12 sm:grid-cols-3">
       {% for stat in copy.stats %}
       <div>
@@ -40,6 +53,7 @@
 </section>
 
 {# ---------- Notices + news ---------- #}
+{% if copy.is_published("latest") %}
 <section class="mx-auto max-w-6xl px-4 py-16 md:py-20" aria-labelledby="latest-heading">
   <h2 id="latest-heading" class="font-display text-3xl font-semibold md:text-4xl">{{ copy.latest_heading }}</h2>
   <div class="mt-10 grid gap-12 lg:grid-cols-12">
@@ -76,8 +90,10 @@
     </div>
   </div>
 </section>
+{% endif %}
 
 {# ---------- Programmes ---------- #}
+{% if copy.is_published("programmes") %}
 <section class="bg-mist" aria-labelledby="programmes-heading">
   <div class="mx-auto max-w-6xl px-4 py-16 md:py-20">
     <h2 id="programmes-heading" class="font-display text-3xl font-semibold md:text-4xl">{{ copy.programmes_heading }}</h2>
@@ -101,8 +117,10 @@
     {% endif %}
   </div>
 </section>
+{% endif %}
 
 {# ---------- Admissions ---------- #}
+{% if copy.is_published("admissions") %}
 <section class="bg-accent text-ink" aria-labelledby="admissions-heading">
   <div class="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-14 md:flex-row md:items-center md:justify-between">
     <div class="max-w-2xl">
@@ -115,9 +133,10 @@
     </div>
   </div>
 </section>
+{% endif %}
 
 {# ---------- Rank holders ---------- #}
-{% if !holders.is_empty() %}
+{% if !holders.is_empty() && copy.is_published("rank_holders") %}
 <section class="mx-auto max-w-6xl px-4 py-16 md:py-20" aria-labelledby="ranks-heading">
   <h2 id="ranks-heading" class="font-display text-3xl font-semibold md:text-4xl">{{ copy.rank_holders_heading }}</h2>
   {# The IT admin chooses cards or paragraphs, the column count, the alignment
@@ -129,7 +148,7 @@
 {% endif %}
 
 {# ---------- NCC and NSS ---------- #}
-{% if !units.is_empty() %}
+{% if !units.is_empty() && copy.is_published("units") %}
 <section class="bg-ink text-chalk" aria-labelledby="units-heading">
   <div class="mx-auto max-w-6xl px-4 py-16 md:py-20">
     <h2 id="units-heading" class="font-display text-3xl font-semibold md:text-4xl">{{ copy.units_heading }}</h2>
@@ -159,16 +178,21 @@
 <section class="mx-auto max-w-6xl px-4 py-16 md:py-20" aria-labelledby="history-heading">
   <div class="grid gap-14 lg:grid-cols-2">
     <div>
+      {% if copy.is_published("history") %}
       <h2 id="history-heading" class="font-display text-3xl font-semibold md:text-4xl">{{ copy.history_heading }}</h2>
       {% let block = "history" %}
       {% let bopts = copy.opts(block) %}
       {% include "partials/home_block_photo.html" %}
       {% include "partials/home_block_body.html" %}
+      {% endif %}
+      {% if copy.is_published("vision") %}
       <h3 class="mt-10 font-display text-2xl font-semibold">{{ copy.vision_heading }}</h3>
       {% let block = "vision" %}
       {% let bopts = copy.opts(block) %}
       {% include "partials/home_block_photo.html" %}
       {% include "partials/home_block_body.html" %}
+      {% endif %}
+      {% if copy.is_published("mission") %}
       <h3 class="mt-8 font-display text-2xl font-semibold">{{ copy.mission_heading }}</h3>
       {% let block = "mission" %}
       {% let bopts = copy.opts(block) %}
@@ -192,8 +216,9 @@
         {% endfor %}
       </ul>
       {% endif %}
+      {% endif %}
     </div>
-    {% if !milestones.is_empty() %}
+    {% if !milestones.is_empty() && copy.is_published("milestones") %}
     <div>
       <h3 class="font-display text-2xl font-semibold">{{ copy.milestones_heading }}</h3>
       <ol class="mt-6 border-l-2 border-brand">
@@ -211,7 +236,7 @@
 </section>
 
 {# ---------- Facilities ---------- #}
-{% if !facilities.is_empty() %}
+{% if !facilities.is_empty() && copy.is_published("facilities") %}
 <section class="bg-mist" aria-labelledby="facilities-heading">
   <div class="mx-auto max-w-6xl px-4 py-16 md:py-20">
     <h2 id="facilities-heading" class="font-display text-3xl font-semibold md:text-4xl">{{ copy.facilities_heading }}</h2>
@@ -231,6 +256,7 @@
 {% endif %}
 
 {# ---------- Contact ---------- #}
+{% if copy.is_published("contact") %}
 <section class="mx-auto max-w-6xl px-4 py-16 md:py-20" aria-labelledby="contact-heading">
   <div class="grid gap-10 lg:grid-cols-2">
     <div>
@@ -260,5 +286,6 @@
     {% endif %}
   </div>
 </section>
+{% endif %}
 
 {% endblock %}

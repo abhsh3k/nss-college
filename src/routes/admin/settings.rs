@@ -155,6 +155,8 @@ pub async fn save_home_section(
         body.field("heading"),
         body.field("body"),
         &photo,
+        body.field("photo_caption"),
+        body.flag("published"),
         &opts,
     )
     .await?;

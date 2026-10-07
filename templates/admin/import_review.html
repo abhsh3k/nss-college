@@ -45,7 +45,6 @@
           <th scope="col" class="py-2 pr-3 font-medium">Programme</th>
           <th scope="col" class="py-2 pr-3 font-medium">Sem</th>
           <th scope="col" class="py-2 pr-3 font-medium">Year</th>
-          <th scope="col" class="py-2 pr-3 font-medium">Egrants</th>
           <th scope="col" class="py-2 pr-3 font-medium">Notes</th>
         </tr>
       </thead>
@@ -62,7 +61,6 @@
           <td class="py-2 pr-3"><input type="hidden" name="programme_text" value="{{ r.programme_text }}">{{ r.programme_name() }}</td>
           <td class="py-2 pr-3"><input type="hidden" name="semester_text" value="{{ r.semester_text }}">{{ r.semester().unwrap_or(0) }}</td>
           <td class="py-2 pr-3"><input type="hidden" name="year_text" value="{{ r.year_text }}">{{ r.year().unwrap_or(0) }}</td>
-          <td class="py-2 pr-3">{% if r.egrants %}<input type="hidden" name="egrants" value="{{ r.id }}">Yes{% else %}No{% endif %}</td>
           <td class="py-2 pr-3 text-ink/80">Account created; the password is on the results screen.</td>
           {% else %}
           <td class="py-2 pr-2"><input type="checkbox" name="include" value="{{ r.id }}" {% if r.include %}checked{% endif %} aria-label="Create this student"></td>
@@ -79,7 +77,6 @@
           </td>
           <td class="py-2 pr-3"><input type="text" name="semester_text" value="{{ r.semester_text }}" placeholder="{{ batch.semester }}" aria-label="Semester for line {{ r.line_no }}" class="w-16 rounded border border-ink/40 bg-white px-2 py-1"></td>
           <td class="py-2 pr-3"><input type="text" name="year_text" value="{{ r.year_text }}" placeholder="{{ batch.batch_year }}" aria-label="Admission year for line {{ r.line_no }}" class="w-20 rounded border border-ink/40 bg-white px-2 py-1"></td>
-          <td class="py-2 pr-3"><input type="checkbox" name="egrants" value="{{ r.id }}" {% if r.egrants %}checked{% endif %} aria-label="Egrants for line {{ r.line_no }}"></td>
           <td class="py-2 pr-3 text-ink/80">
             {% if r.note != "" %}<p class="text-brand">{{ r.note }}</p>{% endif %}
             {% for problem in r.problems() %}<p class="text-brand">{{ problem }}</p>{% endfor %}

@@ -440,15 +440,12 @@ pub async fn timetable(
 pub struct ReportLine {
     pub name: String,
     pub admission_no: String,
-    pub egrants: bool,
     pub marked: i64,
     pub present: i64,
     pub absent: i64,
     pub on_leave: i64,
     pub percent_label: String,
     pub low: bool,
-    pub month_label: String,
-    pub month_low: bool,
 }
 
 #[derive(Deserialize)]
@@ -490,24 +487,15 @@ pub async fn reports(
                 .into_iter()
                 .map(|r| {
                     let pct = attendance::percent(r.present, r.on_leave, r.marked, rules.leave_counts);
-                    let month = attendance::percent(r.m_present, r.m_leave, r.m_marked, rules.leave_counts);
                     ReportLine {
                         name: r.name,
                         admission_no: r.admission_no,
-                        egrants: r.egrants,
                         marked: r.marked,
                         present: r.present,
                         absent: r.absent,
                         on_leave: r.on_leave,
                         percent_label: pct.map(|p| format!("{p:.1}%")).unwrap_or_else(|| "No data".into()),
                         low: pct.map(|p| p < rules.min_percent as f64).unwrap_or(false),
-                        month_label: if r.egrants {
-                            month.map(|p| format!("{p:.1}%")).unwrap_or_else(|| "No data".into())
-                        } else {
-                            String::new()
-                        },
-                        month_low: r.egrants
-                            && month.map(|p| p < rules.egrants_monthly_percent as f64).unwrap_or(false),
                     }
                 })
                 .collect();

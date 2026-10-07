@@ -2,13 +2,11 @@
   <div class="bg-ink text-sm text-chalk/80">
     <div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-1 px-4 py-2">
       <p class="hidden sm:block">{{ site.header_note }}</p>
+      {% if !site.utility_nav.is_empty() %}
       <ul class="flex flex-wrap gap-x-4">
-        <li><a class="hover:text-accent" href="/iqac">IQAC</a></li>
-        <li><a class="hover:text-accent" href="/placement">Placement</a></li>
-        <li><a class="hover:text-accent" href="/gallery">Gallery</a></li>
-        <li><a class="hover:text-accent" href="/rti">RTI</a></li>
-        <li><a class="hover:text-accent" href="/fees">Fees</a></li>
+        {% for item in site.utility_nav %}<li><a class="hover:text-accent" href="{{ item.href }}">{{ item.label }}</a></li>{% endfor %}
       </ul>
+      {% endif %}
       {% if !site.phone_tel.is_empty() %}<p><a class="hover:text-accent" href="tel:{{ site.phone_tel }}">{{ site.phone_display }}</a></p>{% endif %}
     </div>
   </div>
@@ -25,40 +23,33 @@
     <nav id="primary-nav" data-nav-drawer aria-label="Primary" class="hidden w-full md:block md:w-auto">
       <button type="button" class="nav-close hidden" aria-label="Close menu">Close menu</button>
       <ul class="mt-3 flex flex-col gap-1 md:mt-0 md:flex-row md:items-center md:gap-1">
+        {% if !site.about_nav.is_empty() %}
         <li class="group relative">
           <button type="button" data-nav-group aria-expanded="false" aria-controls="nav-sub-about" class="w-full rounded px-3 py-2 text-left font-medium hover:bg-mist md:w-auto">About</button>
           <ul id="nav-sub-about" class="hidden mb-2 ml-3 md:absolute md:left-0 md:top-full md:mb-0 md:ml-0 md:w-60 md:rounded md:border md:border-ink/10 md:bg-chalk md:py-2 md:shadow-lg md:group-hover:block md:group-focus-within:block">
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/about">Our management</a></li>
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/about/principal">Principal's desk</a></li>
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/about/organogram">Organogram</a></li>
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/about/council">College council</a></li>
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/about/staff">Teaching staff</a></li>
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/about/code-of-conduct">Code of conduct</a></li>
+            {% for item in site.about_nav %}<li><a class="block px-3 py-1.5 hover:bg-mist" href="{{ item.href }}">{{ item.label }}</a></li>{% endfor %}
           </ul>
         </li>
+        {% endif %}
+        {% if !site.academics_nav.is_empty() %}
         <li class="group relative">
           <button type="button" data-nav-group aria-expanded="false" aria-controls="nav-sub-academics" class="w-full rounded px-3 py-2 text-left font-medium hover:bg-mist md:w-auto">Academics</button>
           <ul id="nav-sub-academics" class="hidden mb-2 ml-3 md:absolute md:left-0 md:top-full md:mb-0 md:ml-0 md:w-60 md:rounded md:border md:border-ink/10 md:bg-chalk md:py-2 md:shadow-lg md:group-hover:block md:group-focus-within:block">
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/academics">All programmes</a></li>
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/academics/syllabus">Syllabus</a></li>
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/academics/examinations">College examinations</a></li>
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/academics/rank-holders">University rank holders</a></li>
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/departments">Departments</a></li>
+            {% for item in site.academics_nav %}<li><a class="block px-3 py-1.5 hover:bg-mist" href="{{ item.href }}">{{ item.label }}</a></li>{% endfor %}
           </ul>
         </li>
+        {% endif %}
+        {% if !site.student_life_nav.is_empty() %}
         <li class="group relative">
           <button type="button" data-nav-group aria-expanded="false" aria-controls="nav-sub-student-life" class="w-full rounded px-3 py-2 text-left font-medium hover:bg-mist md:w-auto">Student life</button>
           <ul id="nav-sub-student-life" class="hidden mb-2 ml-3 md:absolute md:left-0 md:top-full md:mb-0 md:ml-0 md:w-60 md:rounded md:border md:border-ink/10 md:bg-chalk md:py-2 md:shadow-lg md:group-hover:block md:group-focus-within:block">
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/student-life/union">College union</a></li>
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/student-life/clubs">Clubs and cells</a></li>
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/student-life/nss">NSS</a></li>
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/student-life/ncc">NCC</a></li>
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/student-life/scholarships">Scholarships</a></li>
-            <li><a class="block px-3 py-1.5 hover:bg-mist" href="/student-life/anti-ragging">Anti-ragging cell</a></li>
+            {% for item in site.student_life_nav %}<li><a class="block px-3 py-1.5 hover:bg-mist" href="{{ item.href }}">{{ item.label }}</a></li>{% endfor %}
           </ul>
         </li>
-        <li><a class="block rounded px-3 py-2 font-medium hover:bg-mist" href="/alumni">Alumni</a></li>
-        <li><a class="block rounded px-3 py-2 font-medium hover:bg-mist" href="/news">News</a></li>
+        {% endif %}
+        {% for item in site.top_nav %}
+        <li><a class="block rounded px-3 py-2 font-medium hover:bg-mist" href="{{ item.href }}">{{ item.label }}</a></li>
+        {% endfor %}
         <li><a class="block rounded px-3 py-2 font-medium hover:bg-mist" href="/contact">Contact</a></li>
         <li class="mt-2 md:ml-2 md:mt-0" hx-get="/fragments/account-link" hx-swap="outerHTML" hx-trigger="load">
           <a href="/login" class="inline-block rounded bg-ink px-4 py-2 font-semibold text-chalk hover:bg-brand">Log in</a>

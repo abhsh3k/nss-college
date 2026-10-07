@@ -45,9 +45,9 @@
     <input id="list" name="list" type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls,.ods" required aria-describedby="list-help" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
     <div id="list-help" class="mt-2 text-sm text-ink/80">
       <p>CSV, or Excel saved as .xlsx or .xls. Up to 8&nbsp;MB and 500 students at a time. The first line is the header; the first sheet of a workbook is read.</p>
-      <p class="mt-2">Required columns: <code>admission_no</code> and <code>name</code>. Optional: <code>email</code>, <code>phone</code>, <code>egrants</code>, <code>programme</code>, <code>semester</code>, <code>batch_year</code>. Column names are matched loosely, so <code>Admission No.</code> works too.</p>
+      <p class="mt-2">Required columns: <code>admission_no</code> and <code>name</code>. Optional: <code>email</code>, <code>phone</code>, <code>programme</code>, <code>semester</code>, <code>batch_year</code>. Column names are matched loosely, so <code>Admission No.</code> works too.</p>
       <p class="mt-2">Leave <code>programme</code>, <code>semester</code> and <code>batch_year</code> out of the file to put the whole list in the class chosen above. Any row that does carry them is placed in its own class instead, so one file can mix years and programmes.</p>
-      <pre class="mt-2 overflow-x-auto rounded bg-mist p-3">admission_no,name,email,phone,egrants
+      <pre class="mt-2 overflow-x-auto rounded bg-mist p-3">admission_no,name,email,phone
 2501,Asha K,,9876500000,no
 2502,Rahul M,rahul@example.com,,yes</pre>
     </div>

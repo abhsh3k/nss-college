@@ -26,4 +26,7 @@
               {% if bopts.shape_is_rounded() %}rounded-2xl{% endif %}
               {% if bopts.shape_is_square() %}rounded-none{% endif %}">
 </p>
+{% if copy.caption(block) != "" %}
+<p class="mt-2 text-sm {% if block == "hero" || block == "units" %}text-chalk/70{% else %}text-ink/70{% endif %}{% if bopts.text_is_centre() %} text-center{% endif %}{% if bopts.text_is_right() %} text-right{% endif %}">{{ copy.caption(block) }}</p>
+{% endif %}
 {% endif %}

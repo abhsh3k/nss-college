@@ -17,7 +17,6 @@ pub struct HubStudent {
     pub programme_id: i64,
     pub programme: String,
     pub semester: i32,
-    pub egrants: bool,
 }
 
 pub async fn student_profile(db: &PgPool, user_id: i64) -> Res<Option<HubStudent>> {
@@ -27,8 +26,7 @@ pub async fn student_profile(db: &PgPool, user_id: i64) -> Res<Option<HubStudent
                   COALESCE(st.prn, '') AS prn,
                   st.programme_id,
                   p.name AS programme,
-                  st.semester,
-                  st.egrants
+                  st.semester
            FROM students st
            JOIN programmes p ON p.id = st.programme_id
            WHERE st.user_id = $1 AND st.is_active"#,
@@ -137,32 +135,6 @@ pub async fn course_attendance(db: &PgPool, student_id: i64) -> Res<Vec<CourseAt
     )
     .bind(student_id)
     .fetch_all(db)
-    .await
-}
-
-/// Current-month totals across every enrolled course; used for the e-grants check.
-#[derive(Debug, FromRow)]
-pub struct MonthlyAttendance {
-    pub marked: i64,
-    pub attended: i64,
-    pub month_label: String,
-}
-
-pub async fn monthly_attendance(db: &PgPool, student_id: i64) -> Res<MonthlyAttendance> {
-    sqlx::query_as::<_, MonthlyAttendance>(
-        r#"SELECT COUNT(s.id) AS marked,
-                  COUNT(ar.id) FILTER (WHERE ar.status IN ('present', 'leave')) AS attended,
-                  to_char(date_trunc('month', CURRENT_DATE), 'FMMonth YYYY') AS month_label
-           FROM enrollments e
-           JOIN attendance_sessions s ON s.course_id = e.course_id
-              AND s.on_date >= date_trunc('month', CURRENT_DATE)
-              AND s.on_date <  date_trunc('month', CURRENT_DATE) + interval '1 month'
-           LEFT JOIN attendance_records ar ON ar.session_id = s.id
-                                          AND ar.student_id = e.student_id
-           WHERE e.student_id = $1 AND e.status = 'active'"#,
-    )
-    .bind(student_id)
-    .fetch_one(db)
     .await
 }
 

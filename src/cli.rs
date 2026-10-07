@@ -328,7 +328,6 @@ pub async fn seed_demo_users(db: &PgPool) -> Result<Vec<String>, String> {
                         batch_year: 2024,
                         semester: 3,
                         phone: "",
-                        egrants: n % 2 == 0,
                     },
                     &hash,
                 )

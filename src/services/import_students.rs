@@ -26,7 +26,6 @@ pub struct ParsedRow {
     pub name: String,
     pub email: String,
     pub phone: String,
-    pub egrants: bool,
     /// Free text, matched against programmes at review time.
     pub programme: String,
     pub semester: String,
@@ -174,7 +173,6 @@ const ADMISSION: &[&str] = &[
 const NAME: &[&str] = &["name", "student_name", "full_name", "fullname", "student"];
 const EMAIL: &[&str] = &["email", "email_address", "emailaddress", "e_mail", "mail"];
 const PHONE: &[&str] = &["phone", "phone_no", "phoneno", "mobile", "mobile_no", "contact"];
-const EGRANTS: &[&str] = &["egrants", "egrant", "is_egrant", "egrant_status"];
 const PROGRAMME: &[&str] = &[
     "programme",
     "program",
@@ -210,10 +208,9 @@ fn rows_from(table: &[Vec<String>]) -> Result<Parsed, String> {
     let Some(c_name) = column(&headers, NAME) else {
         return Err("The first line must have a column called name.".into());
     };
-    let (c_email, c_phone, c_egrants) = (
+    let (c_email, c_phone) = (
         column(&headers, EMAIL),
         column(&headers, PHONE),
-        column(&headers, EGRANTS),
     );
     let (c_programme, c_semester, c_year) = (
         column(&headers, PROGRAMME),
@@ -231,10 +228,6 @@ fn rows_from(table: &[Vec<String>]) -> Result<Parsed, String> {
             name: cell_text_at(raw, Some(c_name)),
             email: cell_text_at(raw, c_email),
             phone: cell_text_at(raw, c_phone),
-            egrants: matches!(
-                cell_text_at(raw, c_egrants).to_lowercase().as_str(),
-                "yes" | "y" | "true" | "1"
-            ),
             programme: cell_text_at(raw, c_programme),
             semester: cell_text_at(raw, c_semester),
             year: cell_text_at(raw, c_year),
@@ -316,9 +309,9 @@ pub async fn stage(
     for (i, row) in rows.iter().enumerate() {
         sqlx::query(
             r#"INSERT INTO import_rows
-                 (batch_id, line_no, admission_no, name, email, phone, egrants,
+                 (batch_id, line_no, admission_no, name, email, phone,
                   programme_text, semester_text, year_text, note)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#,
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"#,
         )
         .bind(batch_id)
         .bind(i as i32 + 2)
@@ -326,7 +319,6 @@ pub async fn stage(
         .bind(&row.name)
         .bind(&row.email)
         .bind(&row.phone)
-        .bind(row.egrants)
         .bind(&row.programme)
         .bind(&row.semester)
         .bind(&row.year)
@@ -365,7 +357,6 @@ pub struct StagedRow {
     pub name: String,
     pub email: String,
     pub phone: String,
-    pub egrants: bool,
     pub programme_text: String,
     pub semester_text: String,
     pub year_text: String,
@@ -388,7 +379,7 @@ pub async fn programme_names(db: &PgPool) -> Res<Vec<String>> {
         .await
 }
 
-const ROWS_SQL: &str = r#"SELECT r.id, r.line_no, r.admission_no, r.name, r.email, r.phone, r.egrants,
+const ROWS_SQL: &str = r#"SELECT r.id, r.line_no, r.admission_no, r.name, r.email, r.phone,
           r.programme_text, r.semester_text, r.year_text, r.include, r.status, r.note,
           b.programme_id AS batch_programme_id, p.name AS batch_programme_name,
           b.semester AS batch_semester, b.batch_year AS batch_year,
@@ -492,7 +483,6 @@ pub struct RowEdit {
     pub name: String,
     pub email: String,
     pub phone: String,
-    pub egrants: bool,
     pub programme_text: String,
     pub semester_text: String,
     pub year_text: String,
@@ -504,8 +494,8 @@ pub async fn save_rows(db: &PgPool, batch_id: i64, edits: &[RowEdit]) -> Res<()>
     for e in edits {
         sqlx::query(
             r#"UPDATE import_rows
-               SET admission_no = $3, name = $4, email = $5, phone = $6, egrants = $7,
-                   programme_text = $8, semester_text = $9, year_text = $10, include = $11
+               SET admission_no = $3, name = $4, email = $5, phone = $6,
+                   programme_text = $7, semester_text = $8, year_text = $9, include = $10
                WHERE id = $1 AND batch_id = $2"#,
         )
         .bind(e.id)
@@ -514,7 +504,6 @@ pub async fn save_rows(db: &PgPool, batch_id: i64, edits: &[RowEdit]) -> Res<()>
         .bind(e.name.trim())
         .bind(e.email.trim())
         .bind(e.phone.trim())
-        .bind(e.egrants)
         .bind(e.programme_text.trim())
         .bind(e.semester_text.trim())
         .bind(e.year_text.trim())
@@ -653,17 +642,15 @@ mod tests {
 
     #[test]
     fn reads_a_csv_list() {
-        let csv = "admission_no,name,email,phone,egrants\n\
-                   2501,Asha K,,9876500000,no\n\
-                   2502,Rahul M,rahul@example.com,,yes\n";
+        let csv = "admission_no,name,email,phone\n\
+                   2501,Asha K,,9876500000\n\
+                   2502,Rahul M,rahul@example.com,\n";
         let parsed = parse(csv.as_bytes(), "list.csv").unwrap();
         assert_eq!(parsed.dropped, 0);
         assert_eq!(parsed.rows.len(), 2);
         assert_eq!(parsed.rows[0].admission_no, "2501");
         assert_eq!(parsed.rows[0].name, "Asha K");
         assert_eq!(parsed.rows[0].phone, "9876500000");
-        assert!(!parsed.rows[0].egrants);
-        assert!(parsed.rows[1].egrants);
         assert!(parsed.rows.iter().all(|r| r.error.is_empty()));
     }
 

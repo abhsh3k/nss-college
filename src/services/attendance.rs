@@ -12,7 +12,6 @@ const TODAY: &str = "(now() AT TIME ZONE 'Asia/Kolkata')::date";
 #[derive(Debug, Clone)]
 pub struct Rules {
     pub min_percent: i32,
-    pub egrants_monthly_percent: i32,
     pub edit_window_days: i32,
     pub leave_counts: bool,
 }
@@ -26,7 +25,6 @@ pub async fn rules(db: &PgPool) -> Res<Rules> {
     let num = |k: &str, default: i32| get(k).and_then(|v| v.parse().ok()).unwrap_or(default);
     Ok(Rules {
         min_percent: num("attendance_min_percent", 75),
-        egrants_monthly_percent: num("attendance_egrants_monthly_min_percent", 75),
         edit_window_days: num("attendance_edit_window_days", 5),
         leave_counts: get("attendance_leave_counts_as_present").map(|v| v == "true").unwrap_or(false),
     })
@@ -409,26 +407,19 @@ pub async fn teacher_courses(db: &PgPool, faculty_id: i64) -> Res<Vec<TeacherCou
 pub struct ReportRaw {
     pub name: String,
     pub admission_no: String,
-    pub egrants: bool,
     pub marked: i64,
     pub present: i64,
     pub absent: i64,
     pub on_leave: i64,
-    pub m_marked: i64,
-    pub m_present: i64,
-    pub m_leave: i64,
 }
 
 pub async fn course_report(db: &PgPool, course_id: i64) -> Res<Vec<ReportRaw>> {
     sqlx::query_as::<_, ReportRaw>(&format!(
-        r#"SELECT st.name, st.admission_no, st.egrants,
+        r#"SELECT st.name, st.admission_no,
                   count(r.id) AS marked,
                   count(r.id) FILTER (WHERE r.status = 'present') AS present,
                   count(r.id) FILTER (WHERE r.status = 'absent') AS absent,
-                  count(r.id) FILTER (WHERE r.status = 'leave') AS on_leave,
-                  count(r.id) FILTER (WHERE s.on_date >= date_trunc('month', {TODAY})::date) AS m_marked,
-                  count(r.id) FILTER (WHERE r.status = 'present' AND s.on_date >= date_trunc('month', {TODAY})::date) AS m_present,
-                  count(r.id) FILTER (WHERE r.status = 'leave' AND s.on_date >= date_trunc('month', {TODAY})::date) AS m_leave
+                  count(r.id) FILTER (WHERE r.status = 'leave') AS on_leave
            FROM enrollments e
            JOIN students st ON st.id = e.student_id AND st.is_active
            LEFT JOIN attendance_sessions s ON s.course_id = e.course_id

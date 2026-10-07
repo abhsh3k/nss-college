@@ -25,6 +25,9 @@
               {% if s.opts.shape_is_circle() %}rounded-full{% endif %}
               {% if s.opts.shape_is_rounded() %}rounded-2xl{% endif %}
               {% if s.opts.shape_is_square() %}rounded-none{% endif %}">
+  {% if s.caption != "" %}
+  <p class="mt-2 mb-4 text-sm text-ink/70">{{ s.caption }}</p>
+  {% endif %}
   {% endif %}
   <h2 class="font-display text-2xl font-semibold">{{ s.heading }}</h2>
   {% for para in s.paragraphs() %}
@@ -49,6 +52,9 @@
                 {% if s.opts.shape_is_rounded() %}rounded-2xl{% endif %}
                 {% if s.opts.shape_is_square() %}rounded-none{% endif %}">
   </p>
+  {% if s.caption != "" %}
+  <p class="mt-2 text-sm text-ink/70{% if s.opts.text_is_centre() %} text-center{% endif %}{% if s.opts.text_is_right() %} text-right{% endif %}">{{ s.caption }}</p>
+  {% endif %}
   {% endif %}
 
   <div class="mt-6 grid gap-6

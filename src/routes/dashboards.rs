@@ -157,15 +157,6 @@ pub struct HubProfile {
     pub prn: Option<String>,
 }
 
-/// The e-grants warning card (only rendered when below the threshold).
-pub struct EgrantsAlert {
-    pub month_label: String,
-    pub percent_label: String,
-    pub attended: i64,
-    pub marked: i64,
-    pub threshold: i32,
-}
-
 /// One class in today's timeline.
 pub struct HubPeriod {
     pub code: String,
@@ -213,7 +204,7 @@ pub struct HubCourse {
 }
 
 /// The student overview: profile, the exam banner while a timetable is
-/// pushed, the e-grants alert, today's classes, attendance and notices.
+/// pushed, today's classes, attendance and notices.
 /// Timetable, results and the exam timetable have their own pages.
 #[derive(Template)]
 #[template(path = "dashboard/student.html")]
@@ -222,7 +213,6 @@ pub struct StudentTemplate {
     today_str: String,
     feed: Vec<Notice>,
     profile: Option<HubProfile>,
-    alert: Option<EgrantsAlert>,
     /// Open only while an exam timetable has been pushed to this student.
     exam_notice: Option<ExamNotice>,
     min_percent: i32,
@@ -280,7 +270,6 @@ pub async fn student(
             today_str,
             feed,
             profile: None,
-            alert: None,
             exam_notice: None,
             min_percent: 75,
             today_periods: Vec::new(),
@@ -342,31 +331,6 @@ pub async fn student(
         })
         .collect();
 
-    // E-grants students get a warning card when this month's attendance dips
-    // below the configured threshold.
-    let alert = if p.egrants {
-        let threshold = hub::setting(&s.db, "attendance_egrants_monthly_min_percent", 75).await?;
-        let m = hub::monthly_attendance(&s.db, p.id).await?;
-        let percent = if m.marked > 0 {
-            100.0 * m.attended as f64 / m.marked as f64
-        } else {
-            100.0
-        };
-        if m.marked > 0 && percent < threshold as f64 {
-            Some(EgrantsAlert {
-                month_label: m.month_label,
-                percent_label: format!("{percent:.0}%"),
-                attended: m.attended,
-                marked: m.marked,
-                threshold,
-            })
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
     // Results moved to their own page (/hub/results) with a semester picker.
 
     Ok(StudentTemplate {
@@ -379,7 +343,6 @@ pub async fn student(
             admission_no: p.admission_no,
             prn: if p.prn.is_empty() { None } else { Some(p.prn) },
         }),
-        alert,
         exam_notice,
         min_percent,
         today_periods,

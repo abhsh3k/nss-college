@@ -37,24 +37,6 @@
   </section>
   {% endif %}
 
-  <!-- E-grants attendance warning: high priority, only when below the threshold -->
-  {% if let Some(a) = alert %}
-  <section id="attendance" class="scroll-mt-4 rounded-xl border-2 border-rose-300 bg-rose-50 p-6 shadow-sm" role="alert">
-    <div class="flex items-start gap-4">
-      <span class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-rose-600 text-lg font-bold text-white">!</span>
-      <div>
-        <h2 class="text-lg font-bold text-rose-900">Attendance below the e-grants requirement</h2>
-        <p class="mt-1 text-sm leading-relaxed text-rose-800">
-          Your attendance for <strong>{{ a.month_label }}</strong> is <strong>{{ a.percent_label }}</strong>
-          ({{ a.attended }} of {{ a.marked }} marked sessions), below the required {{ a.threshold }}%.
-          Your scholarship or e-grants status may be at risk if it stays below this level.
-        </p>
-        <p class="mt-2 text-sm font-semibold text-rose-900">Make sure you attend the rest of your classes this month to bring the percentage back up.</p>
-      </div>
-    </div>
-  </section>
-  {% endif %}
-
   {% if profile.is_some() %}
   <!-- Today's timeline (full week lives on its own page) -->
   <section id="today" class="scroll-mt-4 bg-white rounded-xl border border-gray-200 shadow-sm p-6">

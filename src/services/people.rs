@@ -51,7 +51,6 @@ pub struct PersonDetail {
     pub batch_year: i32,
     pub semester: i32,
     pub phone: String,
-    pub egrants: bool,
     pub department_id: i64,
     pub designation: String,
     pub qualification: String,
@@ -68,7 +67,6 @@ pub async fn detail(db: &PgPool, user_id: i64) -> Res<Option<PersonDetail>> {
                   COALESCE(s.batch_year, 0) AS batch_year,
                   COALESCE(s.semester, 1) AS semester,
                   COALESCE(s.phone, '') AS phone,
-                  COALESCE(s.egrants, false) AS egrants,
                   COALESCE(f.department_id, 0) AS department_id,
                   COALESCE(f.designation, '') AS designation,
                   COALESCE(f.qualification, '') AS qualification,
@@ -92,7 +90,6 @@ pub struct NewStudent<'a> {
     pub batch_year: i32,
     pub semester: i32,
     pub phone: &'a str,
-    pub egrants: bool,
 }
 
 const ENROLL_SEMESTER_SQL: &str = r#"INSERT INTO enrollments (student_id, course_id, semester)
@@ -117,8 +114,8 @@ pub async fn create_student(db: &PgPool, s: &NewStudent<'_>, password_hash: &str
     .fetch_one(&mut *tx)
     .await?;
     let student_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO students (user_id, admission_no, name, programme_id, batch_year, semester, phone, egrants)
-           VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8) RETURNING id"#,
+        r#"INSERT INTO students (user_id, admission_no, name, programme_id, batch_year, semester, phone)
+           VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, '')) RETURNING id"#,
     )
     .bind(user_id)
     .bind(s.admission_no)
@@ -127,7 +124,6 @@ pub async fn create_student(db: &PgPool, s: &NewStudent<'_>, password_hash: &str
     .bind(s.batch_year)
     .bind(s.semester)
     .bind(s.phone)
-    .bind(s.egrants)
     .fetch_one(&mut *tx)
     .await?;
     sqlx::query(ENROLL_SEMESTER_SQL)
@@ -205,7 +201,7 @@ pub async fn update(db: &PgPool, d: &PersonDetail) -> Res<()> {
         let student_id: Option<i64> = sqlx::query_scalar(
             r#"UPDATE students
                SET name = $2, programme_id = $3, batch_year = $4, semester = $5,
-                   phone = NULLIF($6, ''), egrants = $7, prn = NULLIF($8, '')
+                   phone = NULLIF($6, ''), prn = NULLIF($7, '')
                WHERE user_id = $1 RETURNING id"#,
         )
         .bind(d.id)
@@ -214,7 +210,6 @@ pub async fn update(db: &PgPool, d: &PersonDetail) -> Res<()> {
         .bind(d.batch_year)
         .bind(d.semester)
         .bind(&d.phone)
-        .bind(d.egrants)
         .bind(&d.prn)
         .fetch_optional(&mut *tx)
         .await?;

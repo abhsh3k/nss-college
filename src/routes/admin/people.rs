@@ -75,7 +75,6 @@ pub struct PersonForm {
     programme_id: String,
     batch_year: String,
     semester: String,
-    egrants: Option<String>,
     department_id: String,
     designation: String,
     qualification: String,
@@ -109,7 +108,6 @@ impl PersonForm {
             programme_id: d.programme_id.to_string(),
             batch_year: if d.batch_year > 0 { d.batch_year.to_string() } else { String::new() },
             semester: d.semester.to_string(),
-            egrants: d.egrants.then(|| "on".to_string()),
             department_id: d.department_id.to_string(),
             designation: d.designation.clone(),
             qualification: d.qualification.clone(),
@@ -208,7 +206,6 @@ struct Checked {
     programme_id: i64,
     batch_year: i32,
     semester: i32,
-    egrants: bool,
     department_id: i64,
     designation: String,
     qualification: String,
@@ -263,7 +260,6 @@ fn check(f: &PersonForm) -> Result<Checked, String> {
         programme_id,
         batch_year,
         semester,
-        egrants: f.egrants.is_some(),
         department_id: parse_i64(&f.department_id).unwrap_or(0),
         designation: f.designation.trim().to_string(),
         qualification: f.qualification.trim().to_string(),
@@ -349,7 +345,6 @@ pub async fn create(
                     batch_year: c.batch_year,
                     semester: c.semester,
                     phone: &c.phone,
-                    egrants: c.egrants,
                 },
                 &hash,
             )
@@ -446,7 +441,6 @@ pub async fn update(
         batch_year: c.batch_year,
         semester: c.semester,
         phone: c.phone,
-        egrants: c.egrants,
         department_id: c.department_id,
         designation: c.designation,
         qualification: c.qualification,
@@ -764,8 +758,6 @@ pub struct ReviewForm {
     #[serde(default)]
     include: Vec<String>,
     #[serde(default)]
-    egrants: Vec<String>,
-    #[serde(default)]
     remove: Vec<String>,
 }
 
@@ -853,7 +845,6 @@ fn collect_edits(form: &uploads::ParsedForm) -> Option<Vec<RowEdit>> {
         ids.iter().map(|id| ticked.iter().any(|v| *v == id)).collect()
     };
     let include = ticked("include");
-    let egrants = ticked("egrants");
 
     (0..ids.len())
         .map(|i| {
@@ -868,7 +859,6 @@ fn collect_edits(form: &uploads::ParsedForm) -> Option<Vec<RowEdit>> {
                 semester_text: columns[5][i].clone(),
                 year_text: columns[6][i].clone(),
                 include: include[i],
-                egrants: egrants[i],
             })
         })
         .collect()
@@ -954,7 +944,6 @@ async fn commit(
                 batch_year: row.year().unwrap_or_default(),
                 semester: row.semester().unwrap_or_default(),
                 phone: row.phone.trim(),
-                egrants: row.egrants,
             },
             &hash,
         )
