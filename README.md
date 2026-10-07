@@ -203,3 +203,38 @@ Pre-existing bugs, present before this branch (flagged during the same review):
   bound but unused (the password is read from `args.get(3)`); `prompt_new_password(...).unwrap()` panics
   instead of returning the error.
 - No study-materials UI either (`study_materials` table exists since 0002).
+
+## Changes queued for later (student dashboard rework)
+
+Written down so they can be picked up in a later pass.
+
+Attendance
+- The third attendance option is now called **Special** in the marking UI
+  (teacher sheet, HTMX badge, radio forms) and is drawn in yellow/amber;
+  it replaces the old "Leave" wording. Saved summaries also say "special".
+- The stored status value in the database is still `leave` (`attendance.status`
+  CHECK), and the admin report tables/columns still say "Leave". Renaming the
+  stored value needs a migration plus query changes — do it later, or leave the
+  internal name as an implementation detail.
+
+Still to build (from the dashboard rework request)
+- Teaching staff page (`/about/staff`): cards generated from existing faculty
+  data, grouped by department, HOD listed first, with the rank-holders style
+  options.
+- Non-teaching staff page: manual data with an admin edit UI and staff profile
+  photo upload; also add the profile-photo capability for students at the
+  model/service level only (no student UI yet).
+- CSV student upload: header `admissionno,prn,email,phone` — uploaded rows are
+  sent as a verification request to the student's HOD (or an approved approver)
+  who reviews and confirms before the accounts are created.
+- Review the e-grants removal leftovers: the `egrants`/`import_rows.egrants`
+  columns remain in the database (unused) and could be dropped in a cleanup
+  migration.
+
+Already done in this pass
+- Home page hero: crossfading slideshow of `static/img/carousel` photos
+  (WebP slides generated as `slide-1..5.webp`), fixed stacking order.
+- Pages admin: site menu is database-driven (nav group/label/order per page),
+  sections and home blocks have an "Online" toggle and a photo caption,
+  public pages send `Cache-Control: no-cache`.
+- E-grants removed from the UI and attendance checking.

@@ -30,7 +30,7 @@
         <span class="flex gap-5">
           <label class="flex items-center gap-2 text-gray-700"><input type="radio" class="h-5 w-5" name="status_{{ st.student_id }}" value="present" {% if st.status == "present" %}checked{% endif %}> Present</label>
           <label class="flex items-center gap-2 text-gray-700"><input type="radio" class="h-5 w-5" name="status_{{ st.student_id }}" value="absent" {% if st.status == "absent" %}checked{% endif %}> Absent</label>
-          <label class="flex items-center gap-2 text-gray-700"><input type="radio" class="h-5 w-5" name="status_{{ st.student_id }}" value="leave" {% if st.status == "leave" %}checked{% endif %}> Leave</label>
+          <label class="flex items-center gap-2 font-semibold text-amber-600"><input type="radio" class="h-5 w-5" name="status_{{ st.student_id }}" value="leave" {% if st.status == "leave" %}checked{% endif %}> Special</label>
         </span>
       </fieldset>
     </li>
