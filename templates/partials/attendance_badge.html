@@ -17,7 +17,7 @@
           hx-post="/dashboard/teacher/session/{{ session_id }}/toggle" 
           hx-vals='{"student_id": {{ student_id }}, "status": "leave", "csrf_token": "{{ csrf_token }}"}' 
           hx-target="#status-badge-{{ student_id }}" 
-          class="px-3 py-1.5 text-xs font-semibold rounded-r-lg transition-colors {% if status == "leave" %}bg-amber-500 text-white border-amber-500{% else %}bg-white text-gray-700 hover:bg-gray-100{% endif %}">
+          class="px-3 py-1.5 text-xs font-semibold rounded-r-lg transition-colors {% if status == "leave" %}bg-amber-500 text-white border-amber-500{% else %}bg-amber-50 text-amber-700 hover:bg-amber-100{% endif %}">
     Special
   </button>
 </div>
