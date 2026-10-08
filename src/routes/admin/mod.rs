@@ -39,7 +39,8 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/people/:id/active", post(people::set_active))
         // End-of-term promotion: one student, or a whole programme's semester.
         .route("/admin/people/:id/promote", post(people::promote_one))
-        .route("/admin/people/promote", post(people::promote_cohort));
+        .route("/admin/people/promote", post(people::promote_cohort))
+        .route("/admin/people/delete", post(people::bulk_delete));
 
     // The import takes a whole class list, so it needs the same body limit as
     // the publishing forms.
@@ -116,7 +117,8 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/exams/:id/delete", post(exams::delete))
         .route("/admin/exams/push", post(exams::push))
         .route("/admin/exams/unpush", post(exams::unpush))
-        .route("/admin/exams/results", post(exams::push_results));
+        .route("/admin/exams/results", post(exams::push_results))
+        .route("/admin/exams/results/csv", post(exams::push_results_csv));
 
     // Notices, news and events take multipart bodies, so they need a body limit
     // well above axum's 2 MB default.

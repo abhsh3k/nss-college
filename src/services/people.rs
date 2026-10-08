@@ -321,3 +321,36 @@ pub async fn set_active(db: &PgPool, user_id: i64, active: bool) -> Res<()> {
     tx.commit().await?;
     Ok(())
 }
+
+/// Deletes the accounts with the given ids, returning how many went.
+///
+/// The admin's own id is never touched, and an id that no longer exists simply
+/// does not count.
+///
+/// `students.user_id` and `faculty.user_id` are ON DELETE SET NULL, so a plain
+/// DELETE on users would leave the person's profile row behind as an orphan,
+/// still holding the admission number, the PRN and every result. The profile
+/// rows go first instead; everything under a student (marks, attendance,
+/// enrollments, exam selections) cascades from `students`, and the only other
+/// references to users are audit/import rows that null themselves out.
+pub async fn delete_users(db: &PgPool, ids: &[i64], exclude_self: i64) -> Res<u64> {
+    let ids: Vec<i64> = ids.iter().copied().filter(|&id| id != exclude_self).collect();
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let mut tx = db.begin().await?;
+    sqlx::query("DELETE FROM students WHERE user_id = ANY($1)")
+        .bind(&ids)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM faculty WHERE user_id = ANY($1)")
+        .bind(&ids)
+        .execute(&mut *tx)
+        .await?;
+    let deleted = sqlx::query("DELETE FROM users WHERE id = ANY($1)")
+        .bind(&ids)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(deleted.rows_affected())
+}

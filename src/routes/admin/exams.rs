@@ -10,7 +10,7 @@
 
 use askama::Template;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, State, Multipart},
     response::Redirect,
     Form,
 };
@@ -426,6 +426,109 @@ pub async fn push_results(
         programme_id,
         semester,
         f.rows,
+        kind.as_str().to_string(),
+        problems,
+        notice,
+    )
+    .await
+}
+
+/// CSV file upload variant of push_results. Accepts a CSV file with columns:
+/// `key,course,assessment,obtained,max` (university) or
+/// `key,course,exam_name,obtained,max` (internal).
+pub async fn push_results_csv(
+    State(s): State<AppState>,
+    session: Session,
+    manager: Manager,
+    multipart: Multipart,
+) -> Result<ExamsTemplate, AppError> {
+    let form = crate::uploads::read(multipart).await?;
+    csrf::verify(&session, form.field("csrf_token")).await?;
+    let semester = parse_i32(form.field("semester")).filter(|v| (1..=12).contains(v)).unwrap_or(1);
+    let kind = PushKind::parse(form.field("kind"));
+    let programme_id = selected_programme(&s, manager.department(), Some(form.field("programme"))).await?;
+    let department = manager.department();
+
+    let file = form.file("csv_file").ok_or(AppError::BadRequest(
+        "Choose a CSV file to upload.".into()
+    ))?;
+
+    // Limit CSV file size to 5 MB
+    if file.bytes.len() > 5 * 1024 * 1024 {
+        return render(
+            &s, &session, &manager, programme_id, semester,
+            String::new(), kind.as_str().to_string(),
+            vec![PushProblem {
+                line: 0,
+                text: file.filename.clone(),
+                problem: "CSV file is larger than 5 MB.".into(),
+            }],
+            Some("CSV file is too large (max 5 MB).".into()),
+        ).await;
+    }
+
+    let parsed = match exams::parse_csv(&file.bytes, kind) {
+        Ok(rows) => rows,
+        Err(msg) => {
+            return render(
+                &s, &session, &manager, programme_id, semester,
+                String::new(), kind.as_str().to_string(),
+                vec![PushProblem {
+                    line: 0,
+                    text: file.filename.clone(),
+                    problem: msg.clone(),
+                }],
+                Some(msg),
+            ).await;
+        }
+    };
+
+    let (good, more) = exams::validate_push(&s.db, department, kind, &parsed).await?;
+    let mut problems = more;
+
+    // Check for duplicate keys in the CSV
+    let mut seen = std::collections::HashSet::new();
+    for row in &parsed {
+        if !seen.insert(row.key.clone()) {
+            problems.push(PushProblem {
+                line: 0,
+                text: row.key.clone(),
+                problem: format!("Duplicate key in CSV: {}", row.key),
+            });
+        }
+    }
+
+    let filed = if good.is_empty() {
+        None
+    } else {
+        let n = exams::push_marks(&s.db, kind, semester, &good).await?;
+        users::audit(
+            &s.db,
+            Some(manager.user.id),
+            "exam_results_pushed",
+            "student",
+            None,
+        )
+        .await?;
+        Some(n)
+    };
+
+    let notice = match filed {
+        Some(n) if problems.is_empty() => Some(format!(
+            "Filed {n} {} result row(s) from CSV under semester {semester}.",
+            kind.as_str()
+        )),
+        Some(n) => Some(format!("Filed {n} row(s) from CSV; the rest need fixing (see below).")),
+        None => Some("No valid rows found in the CSV file.".into()),
+    };
+
+    render(
+        &s,
+        &session,
+        &manager,
+        programme_id,
+        semester,
+        String::new(),
         kind.as_str().to_string(),
         problems,
         notice,

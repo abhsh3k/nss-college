@@ -559,6 +559,43 @@ fn split_fields(line: &str) -> Vec<String> {
     out
 }
 
+/// Parse a CSV byte slice into result rows. The CSV must have columns:
+/// `key,course,assessment,obtained,max` (university) or
+/// `key,course,exam_name,obtained,max` (internal).
+/// The first row may be a header row (which is skipped).
+pub fn parse_csv(bytes: &[u8], kind: PushKind) -> Result<Vec<PushRow>, String> {
+    let text = String::from_utf8(bytes.to_vec())
+        .map_err(|e| format!("CSV file is not valid UTF-8: {e}"))?;
+    let mut rows = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields = split_fields(line);
+        // Skip header rows like "prn,course,marks" or "key,course,obtained,max"
+        if i == 0 && is_header_row(&fields) {
+            continue;
+        }
+        let built = if fields.len() < 2 {
+            Err(format!(
+                "Line {i}: expected at least 2 fields (key, course, ...), got {}",
+                fields.len()
+            ))
+        } else {
+            match kind {
+                PushKind::University => university_row(&fields),
+                PushKind::Internal => internal_row(&fields),
+            }
+        };
+        match built {
+            Ok(row) => rows.push(row),
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(rows)
+}
+
 fn ratio(part: &str) -> Option<(f64, f64)> {
     let (a, b) = part.split_once('/')?;
     let obtained = a.trim().parse::<f64>().ok()?;
@@ -982,5 +1019,42 @@ mod tests {
         assert_eq!(assessment_label("exam", "internal", ""), "Internal exam");
         assert_eq!(assessment_label("internal", "coursework", ""), "Internal");
         assert_eq!(assessment_label("assignment", "coursework", ""), "Assignment");
+    }
+
+    #[test]
+    fn csv_parsing_university() {
+        let csv = b"prn,course,assessment,obtained,max\n2025BCA0001,BCA101,exam,42,50\n2025BCA0002,BCA101,assignment,18,25";
+        let rows = parse_csv(csv, PushKind::University).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].key, "2025BCA0001");
+        assert_eq!(rows[0].course, "BCA101");
+        assert_eq!((rows[0].obtained, rows[0].max), (42.0, 50.0));
+        assert_eq!(rows[1].key, "2025BCA0002");
+        assert_eq!(rows[1].assessment, "assignment");
+    }
+
+    #[test]
+    fn csv_parsing_internal() {
+        let csv = b"admission_no,course,exam_name,obtained,max\n2501,BCA101,Internal 1,42,50\n2502,BCA101,Internal 2,38,50";
+        let rows = parse_csv(csv, PushKind::Internal).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].key, "2501");
+        assert_eq!(rows[0].exam_name, "Internal 1");
+        assert_eq!((rows[0].obtained, rows[0].max), (42.0, 50.0));
+    }
+
+    #[test]
+    fn csv_header_is_skipped() {
+        let csv = b"prn,course,marks\n2025BCA0001,BCA101,42/50";
+        let rows = parse_csv(csv, PushKind::University).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key, "2025BCA0001");
+    }
+
+    #[test]
+    fn csv_invalid_utf8_is_rejected() {
+        let csv = vec![0xFF, 0xFE, 0xFD];
+        let result = parse_csv(&csv, PushKind::University);
+        assert!(result.is_err());
     }
 }

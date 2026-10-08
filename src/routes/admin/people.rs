@@ -1231,3 +1231,40 @@ pub struct FinishForm {
     csrf_token: String,
     batch: i64,
 }
+
+// ---------- Bulk delete ----------
+
+/// The ticked rows arrive as repeated `ids` fields, and serde_urlencoded hands
+/// a struct field one value as a string rather than a list, so no typed body
+/// can carry them (a `Vec` field fails outright and an untagged enum never
+/// matches a string). The pairs are read the way the attendance and department
+/// sheets read theirs: `Form<Vec<(String, String)>>`.
+pub async fn bulk_delete(
+    State(s): State<AppState>,
+    session: Session,
+    AdminOnly(user): AdminOnly,
+    Form(fields): Form<Vec<(String, String)>>,
+) -> Result<Redirect, AppError> {
+    let token = fields
+        .iter()
+        .find(|(k, _)| k == "csrf_token")
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
+    csrf::verify(&session, token).await?;
+
+    let ids: Vec<i64> = fields
+        .iter()
+        .filter(|(k, _)| k == "ids")
+        .filter_map(|(_, v)| v.trim().parse::<i64>().ok())
+        .collect();
+    if ids.is_empty() {
+        shell::flash(&session, "No one selected.").await?;
+        return Ok(Redirect::to("/admin/people"));
+    }
+    let deleted = people::delete_users(&s.db, &ids, user.id).await?;
+    if deleted > 0 {
+        users::audit(&s.db, Some(user.id), "users_deleted", "user", None).await?;
+    }
+    shell::flash(&session, format!("Deleted {deleted} account(s).")).await?;
+    Ok(Redirect::to("/admin/people"))
+}

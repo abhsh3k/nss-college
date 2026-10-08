@@ -153,7 +153,7 @@
   <p class="mt-2 max-w-3xl text-sm text-ink/70">
     One row per result, filed under <strong>Semester {{ sel_semester }}</strong> — the semester picked above, which is the one the result reads back under even after the student is promoted.
   </p>
-  <form method="post" action="/admin/exams/results" class="mt-4">
+  <form method="post" action="/admin/exams/results" enctype="multipart/form-data" class="mt-4">
     <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
     <input type="hidden" name="programme" value="{{ sel_programme }}">
     <input type="hidden" name="semester" value="{{ sel_semester }}">
@@ -181,8 +181,17 @@
 2025BCA0001 BCA101 42 50          → same, marks apart
 2025BCA0001 BCA101 internal 18 25  → coursework row (internal, assignment, practical, exam, external)</pre>
   {% endif %}
-    <label for="rows" class="block font-semibold">Result rows</label>
-    <textarea id="rows" name="rows" rows="8" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2 font-mono text-sm" placeholder="Paste rows here…">{{ results_rows }}</textarea>
+    <div class="mt-4 flex flex-wrap gap-6">
+      <div class="flex-1">
+        <label class="block font-semibold">Paste rows</label>
+        <textarea id="rows" name="rows" rows="8" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2 font-mono text-sm" placeholder="Paste rows here…">{{ results_rows }}</textarea>
+      </div>
+      <div class="w-72">
+        <label class="block font-semibold">Or upload CSV</label>
+        <p class="mt-1 text-xs text-ink/60">CSV with columns: key, course, assessment, obtained, max</p>
+        <input type="file" name="csv_file" accept=".csv" class="mt-2 block w-full text-sm text-ink/70 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-brand file:text-chalk hover:file:bg-ink">
+      </div>
+    </div>
     <div class="mt-3 flex items-center gap-4">
       <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Push results</button>
       <span class="text-sm text-ink/60">Rows publish immediately to each student's Results page, under Semester {{ sel_semester }}.</span>

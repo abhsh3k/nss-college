@@ -8,6 +8,7 @@
     <a href="/admin/people/new?kind=teacher" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Add teacher</a>
     <a href="/admin/people/new?kind=staff" class="rounded border border-ink px-4 py-2 font-semibold hover:bg-ink hover:text-chalk">Add office staff</a>
     <a href="/admin/people/import" class="rounded border border-ink px-4 py-2 font-semibold hover:bg-ink hover:text-chalk">Import students</a>
+    <button type="button" onclick="toggleSelectAll()" class="rounded border border-ink px-4 py-2 font-semibold hover:bg-ink hover:text-chalk">Select all</button>
   </div>
 </div>
 
@@ -49,10 +50,13 @@
   <p class="basis-full text-sm text-ink/70">Moves every active student of that programme up one semester. Their results stay filed under the semester they were earned in, so their Results page keeps every past semester.</p>
 </form>
 
-<div class="mt-6 overflow-x-auto">
+<form method="post" action="/admin/people/delete" class="mt-6 overflow-x-auto" onsubmit="return confirm('Delete the selected accounts? This cannot be undone.')">
+  <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+  <div class="overflow-x-auto">
   <table class="w-full min-w-[40rem] text-left">
     <thead>
       <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+        <th scope="col" class="py-2 pr-4 font-medium"><input type="checkbox" id="select-all" onchange="toggleSelectAll()" class="rounded border-ink/40 bg-white"></th>
         <th scope="col" class="py-2 pr-4 font-medium">Name</th>
         <th scope="col" class="py-2 pr-4 font-medium">Sign-in</th>
         <th scope="col" class="py-2 pr-4 font-medium">Role</th>
@@ -63,6 +67,7 @@
     <tbody>
       {% for p in people %}
       <tr class="border-b border-ink/10 align-top">
+        <td class="py-3 pr-4"><input type="checkbox" name="ids" value="{{ p.id }}" class="rounded border-ink/40 bg-white person-checkbox"></td>
         <td class="py-3 pr-4 font-medium">{{ p.full_name }}{% if !p.is_active %} <span class="ml-1 rounded bg-brand px-1.5 py-0.5 text-xs text-chalk">Inactive</span>{% endif %}</td>
         <td class="py-3 pr-4 text-sm">{% if p.admission_no != "" %}{{ p.admission_no }}{% else %}{{ p.email }}{% endif %}</td>
         <td class="py-3 pr-4 text-sm">{% if p.role == "faculty" %}Teacher{% else if p.role == "student" %}Student{% else if p.role == "staff" %}Office staff{% else if p.role == "admin" %}IT admin{% else %}{{ p.role }}{% endif %}</td>
@@ -75,5 +80,17 @@
   {% if people.is_empty() %}
   <p class="py-8 text-ink/70">No one matches. Add a student or teacher with the buttons above.</p>
   {% endif %}
-</div>
+  </div>
+  <div class="mt-4">
+    <button type="submit" class="rounded bg-rose-600 px-4 py-2 font-semibold text-white hover:bg-rose-700">Delete selected</button>
+  </div>
+</form>
+
+<script>
+function toggleSelectAll() {
+  const selectAll = document.getElementById('select-all');
+  const checkboxes = document.querySelectorAll('.person-checkbox');
+  checkboxes.forEach(cb => cb.checked = selectAll.checked);
+}
+</script>
 {% endblock %}
