@@ -19,13 +19,13 @@ pub async fn health() -> &'static str {
 }
 
 /// A `pages` row used purely as the title and lede for a list page.
-struct PageCopy {
-    title: String,
-    lede: String,
+pub struct PageCopy {
+    pub title: String,
+    pub lede: String,
 }
 
 /// Fall back to the path segment, so a missing row still renders a sensible page.
-async fn page_copy(
+pub async fn page_copy(
     db: &sqlx::PgPool,
     path: &str,
     fallback: &str,

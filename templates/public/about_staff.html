@@ -1,0 +1,108 @@
+{% extends "layouts/base.html" %}
+{% block title %}{{ title }} | {{ site.name }}{% endblock %}
+{% block description %}{{ lede }}{% endblock %}
+{% block content %}
+{% include "partials/page_header.html" %}
+
+<section class="mx-auto px-4 py-14 md:py-16 {% if display.is_cards() %}max-w-6xl{% else %}max-w-3xl{% endif %}">
+{% if groups.is_empty() %}
+<p class="text-lg text-ink/80">No teaching staff have been published yet.</p>
+{% else %}
+{% if display.is_paragraphs() %}
+<div class="mt-10 space-y-8">
+{% for group in groups %}
+<div class="border-t border-ink/10 pt-8">
+<p class="mb-5 text-sm font-medium text-accent">{{ group.name }}</p>
+{% for card in group.cards %}
+<div class="flex gap-5
+    {% if display.photo_is_centre() %}flex-col items-center text-center{% endif %}
+    {% if display.photo_is_right() %}flex-row-reverse items-start text-right{% endif %}
+    {% if display.photo_is_left() %}flex-row items-start{% endif %}">
+{% if let Some(photo) = card.photo %}
+<img src="{{ photo }}" alt="{{ card.name }}" loading="lazy" width="{{ display.photo_px() }}" height="{{ display.photo_px() }}"
+     class="shrink-0 bg-mist object-cover
+            {% if display.size_is_small() %}h-16 w-16{% endif %}
+            {% if display.size_is_large() %}h-40 w-40{% endif %}
+            {% if display.size_is_medium() %}h-24 w-24{% endif %}
+            {% if display.shape_is_circle() %}rounded-full{% endif %}
+            {% if display.shape_is_rounded() %}rounded-2xl{% endif %}
+            {% if display.shape_is_square() %}rounded-none{% endif %}">
+{% else %}
+<span aria-hidden="true" class="flex shrink-0 items-center justify-center bg-brand font-display text-chalk
+            {% if display.size_is_small() %}h-16 w-16 text-lg{% endif %}
+            {% if display.size_is_large() %}h-40 w-40 text-4xl{% endif %}
+            {% if display.size_is_medium() %}h-24 w-24 text-2xl{% endif %}
+            {% if display.shape_is_circle() %}rounded-full{% endif %}
+            {% if display.shape_is_rounded() %}rounded-2xl{% endif %}
+            {% if display.shape_is_square() %}rounded-none{% endif %}">{{ card.initials.as_deref().unwrap_or("") }}</span>
+{% endif %}
+<div class="{% if display.text_is_centre() %}text-center{% endif %}{% if display.text_is_right() %}text-right{% endif %}">
+{% if card.is_hod %}
+<p class="mb-2 text-sm font-semibold text-brand">Head of Department</p>
+{% endif %}
+<p class="font-display text-3xl font-semibold">{{ card.name }}</p>
+<p class="mt-1 font-medium">{{ card.designation }}</p>
+<p class="text-sm text-ink/70">{{ card.qualification }}</p>
+{% if !card.biography.is_empty() %}
+<p class="mt-4 leading-relaxed text-ink/80">{{ card.biography }}</p>
+{% endif %}
+{% if let Some(email) = card.email %}
+<a href="mailto:{{ email }}" class="mt-4 inline-block rounded bg-brand/15 px-3 py-1 text-sm font-medium text-accent hover:bg-brand/25">{{ email }}</a>
+{% endif %}
+</div>
+{% endfor %}
+</div>
+{% endfor %}
+</div>
+{% else %}
+<ul class="mt-10 grid gap-8
+    {% if display.columns == 1 %}md:grid-cols-1{% endif %}
+    {% if display.columns == 2 %}md:grid-cols-2{% endif %}
+    {% if display.columns == 3 %}md:grid-cols-2 lg:grid-cols-3{% endif %}
+    {% if display.columns == 4 %}md:grid-cols-2 lg:grid-cols-4{% endif %}">
+{% for group in groups %}
+<li class="rounded border border-ink/15 bg-white/60 p-6{% if display.text_is_centre() %} text-center{% endif %}{% if display.text_is_right() %} text-right{% endif %}">
+<p class="mb-4 text-sm font-medium text-accent">{{ group.name }}</p>
+{% for card in group.cards %}
+{% if card.is_hod %}
+<p class="mb-2 text-sm font-semibold text-brand">Head of Department</p>
+{% endif %}
+{% if let Some(photo) = card.photo %}
+<img src="{{ photo }}" alt="{{ card.name }}" loading="lazy" width="{{ display.photo_px() }}" height="{{ display.photo_px() }}"
+     class="mb-4 bg-mist object-cover
+            {% if display.size_is_small() %}h-16 w-16{% endif %}
+            {% if display.size_is_large() %}h-40 w-40{% endif %}
+            {% if display.size_is_medium() %}h-24 w-24{% endif %}
+            {% if display.shape_is_circle() %}rounded-full{% endif %}
+            {% if display.shape_is_rounded() %}rounded-2xl{% endif %}
+            {% if display.shape_is_square() %}rounded-none{% endif %}
+            {% if display.photo_is_centre() %}mx-auto{% endif %}
+            {% if display.photo_is_right() %}ml-auto{% endif %}">
+{% else %}
+<span aria-hidden="true" class="mb-4 flex items-center justify-center bg-brand font-display text-chalk
+            {% if display.size_is_small() %}h-16 w-16 text-lg{% endif %}
+            {% if display.size_is_large() %}h-40 w-40 text-4xl{% endif %}
+            {% if display.size_is_medium() %}h-24 w-24 text-2xl{% endif %}
+            {% if display.shape_is_circle() %}rounded-full{% endif %}
+            {% if display.shape_is_rounded() %}rounded-2xl{% endif %}
+            {% if display.shape_is_square() %}rounded-none{% endif %}
+            {% if display.photo_is_centre() %}mx-auto{% endif %}
+            {% if display.photo_is_right() %}ml-auto{% endif %}">{{ card.initials.as_deref().unwrap_or("") }}</span>
+{% endif %}
+<p class="font-display text-3xl font-semibold">{{ card.name }}</p>
+<p class="mt-1 font-medium">{{ card.designation }}</p>
+<p class="text-sm text-ink/70">{{ card.qualification }}</p>
+{% if !card.biography.is_empty() %}
+<p class="mt-4 leading-relaxed text-ink/80">{{ card.biography }}</p>
+{% endif %}
+{% if let Some(email) = card.email %}
+<a href="mailto:{{ email }}" class="mt-4 inline-block rounded bg-brand/15 px-3 py-1 text-sm font-medium text-accent hover:bg-brand/25">{{ email }}</a>
+{% endif %}
+{% endfor %}
+</li>
+{% endfor %}
+</ul>
+{% endif %}
+{% endif %}
+</section>
+{% endblock %}

@@ -46,6 +46,12 @@ pub fn internal<E: std::fmt::Display>(e: E) -> AppError {
     AppError::Internal(e.to_string())
 }
 
+impl From<askama::Error> for AppError {
+    fn from(_: askama::Error) -> Self {
+        AppError::Internal("failed to render a template".into())
+    }
+}
+
 impl From<sqlx::Error> for AppError {
     fn from(e: sqlx::Error) -> Self {
         match e {

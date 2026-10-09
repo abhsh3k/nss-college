@@ -12,3 +12,4 @@ pub mod rank_holders;
 pub mod reports;
 pub mod site_admin;
 pub mod users;
+pub mod faculty;

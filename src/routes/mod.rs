@@ -1,4 +1,5 @@
 mod admin;
+mod about;
 mod auth;
 mod dashboards;
 mod htmx;
@@ -65,6 +66,7 @@ pub fn router() -> Router<AppState> {
         .route("/news/:id", get(public::news_item))
         .route("/notices", get(public::notices))
         .route("/contact", get(public::contact))
+        .route("/about/staff", get(about::page))
         .route("/fragments/notices", get(htmx::notices))
         .route("/fragments/account-link", get(htmx::account_link))
         .route("/robots.txt", get(seo::robots))
