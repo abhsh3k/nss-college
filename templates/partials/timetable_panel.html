@@ -1,6 +1,10 @@
 <section id="timetable-panel" aria-labelledby="tt-heading">
   <h2 id="tt-heading" class="font-display text-2xl font-semibold">{{ panel.programme_name }}, semester {{ panel.semester }}</h2>
 
+  {% if panel.has_offering_periods %}
+  <p class="mt-2 max-w-3xl text-sm text-ink/70">Rows marked <span class="rounded bg-deep/10 px-1.5 py-0.5 text-xs font-medium text-deep">offering</span> belong to a course offering that targets this class. They are shown so you can plan around them — add or remove them from the offering picker on this page.</p>
+  {% endif %}
+
   {% if let Some(msg) = panel.notice %}
   <p role="status" class="mt-4 max-w-3xl border-l-4 border-accent bg-mist px-4 py-3 font-medium">{{ msg }}</p>
   {% endif %}
@@ -65,16 +69,20 @@
           {% for s in d.slots %}
           <tr class="border-b border-ink/10">
             <td class="py-2 pr-4 font-medium">{{ s.start_at }}–{{ s.end_at }}</td>
-            <td class="py-2 pr-4">{{ s.code }} {{ s.course }}</td>
+            <td class="py-2 pr-4">{{ s.code }} {{ s.course }}{% if s.is_offering %} <span class="rounded bg-deep/10 px-1.5 py-0.5 text-xs font-medium text-deep">offering</span>{% endif %}</td>
             <td class="py-2 pr-4 text-sm">{% if s.teacher != "" %}{{ s.teacher }}{% else %}<span class="text-brand">No teacher</span>{% endif %}</td>
             <td class="py-2 pr-4 text-sm">{{ s.room }}</td>
             <td class="py-2 text-right">
+              {% if s.is_offering %}
+              <span class="text-sm text-ink/60">Offering period<span class="sr-only"> of {{ s.course }} at {{ s.start_at }}; manage it from the offering picker</span></span>
+              {% else %}
               <form hx-post="/admin/timetable/slots/{{ s.id }}/delete" hx-target="#timetable-panel" hx-swap="outerHTML" hx-confirm="Remove this period?">
                 <input type="hidden" name="csrf_token" value="{{ panel.csrf_token }}">
                 <input type="hidden" name="programme_id" value="{{ panel.programme_id }}">
                 <input type="hidden" name="semester" value="{{ panel.semester }}">
                 <button type="submit" class="text-sm font-semibold text-brand underline underline-offset-4 hover:text-ink">Remove<span class="sr-only"> {{ s.start_at }} {{ s.course }}</span></button>
               </form>
+              {% endif %}
             </td>
           </tr>
           {% endfor %}

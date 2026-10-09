@@ -315,8 +315,19 @@ pub struct SlotRow {
     pub course: String,
     pub teacher: String,
     pub room: String,
+    /// True when the period belongs to a course offering rather than the
+    /// programme itself. The programme grid shows those read-only so a clash
+    /// is visible before it is attempted.
+    pub is_offering: bool,
 }
 
+/// The programme's own periods plus the periods of every course offering that
+/// targets it in the same semester.
+///
+/// The two halves match `clashes()` exactly: whatever is shown here is what
+/// the clash check will reject a booking against, so the grid is a true view
+/// of the class's time. Offering rows keep `programme_id` NULL, so they need
+/// their own targeting clause rather than a plain `programme_id = $1`.
 pub async fn slots(db: &PgPool, programme_id: i64, semester: i32) -> Res<Vec<SlotRow>> {
     sqlx::query_as::<_, SlotRow>(
         r#"SELECT t.id, t.weekday,
@@ -324,11 +335,16 @@ pub async fn slots(db: &PgPool, programme_id: i64, semester: i32) -> Res<Vec<Slo
                   to_char(t.end_time, 'HH24:MI') AS end_at,
                   c.code, c.title AS course,
                   COALESCE(f.name, '') AS teacher,
-                  COALESCE(t.room, '') AS room
+                  COALESCE(t.room, '') AS room,
+                  (t.course_offering_id IS NOT NULL) AS is_offering
            FROM timetable_entries t
            JOIN courses c ON c.id = t.course_id
            LEFT JOIN faculty f ON f.id = t.faculty_id
-           WHERE t.programme_id = $1 AND t.semester = $2
+           WHERE (t.programme_id = $1 AND t.semester = $2)
+              OR (t.course_offering_id IS NOT NULL AND t.semester = $2
+                  AND EXISTS (SELECT 1 FROM course_offering_targets tg
+                               WHERE tg.offering_id = t.course_offering_id
+                                 AND tg.programme_id = $1))
            ORDER BY t.weekday, t.start_time"#,
     )
     .bind(programme_id)
@@ -454,7 +470,8 @@ pub async fn offering_slots(db: &PgPool, offering_id: i64) -> Res<Vec<SlotRow>> 
                   to_char(t.end_time, 'HH24:MI') AS end_at,
                   c.code, c.title AS course,
                   COALESCE(f.name, '') AS teacher,
-                  COALESCE(t.room, '') AS room
+                  COALESCE(t.room, '') AS room,
+                  true AS is_offering
            FROM timetable_entries t
            JOIN courses c ON c.id = t.course_id
            LEFT JOIN faculty f ON f.id = t.faculty_id

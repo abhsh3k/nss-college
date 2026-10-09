@@ -43,6 +43,9 @@ pub struct Panel {
     pub days: Vec<Day>,
     pub courses: Vec<CourseRow>,
     pub teachers: Vec<TeacherOption>,
+    /// Whether any row in `days` is a course-offering period, so the grid can
+    /// explain why those rows have no Remove button.
+    pub has_offering_periods: bool,
     pub notice: Option<String>,
     pub error: Option<String>,
 }
@@ -57,6 +60,7 @@ impl Panel {
             days: Vec::new(),
             courses: Vec::new(),
             teachers: Vec::new(),
+            has_offering_periods: false,
             notice: None,
             error: None,
         }
@@ -92,6 +96,7 @@ async fn build_panel(
         .into_iter()
         .filter(|c| c.semester == semester)
         .collect();
+    let has_offering_periods = days.iter().any(|d| d.slots.iter().any(|s| s.is_offering));
     Ok(Panel {
         csrf_token,
         programme_id,
@@ -100,6 +105,7 @@ async fn build_panel(
         days,
         courses,
         teachers: academics::teacher_options(&s.db).await?,
+        has_offering_periods,
         notice,
         error,
     })

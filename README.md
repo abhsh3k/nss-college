@@ -190,9 +190,9 @@ but these gaps remain:
    rules, and the offering page's "add period" clash-checks too), but two *different* offerings that target
    the same programme can still be scheduled on top of one another — "same class" covers programme periods
    and the offering's own periods only.
-5. **Programme timetable grid** (`academics::slots`) still filters `programme_id`, so offering periods are
-   not in the grid rows; they now have their own panel on the same `/admin/timetable` page (offering picker),
-   and are also visible on the offering page, `/hub` and teacher pages.
+5. **Programme timetable grid**: offering periods that target the programme now appear in the grid
+   rows, marked read-only (added and removed from the offering panel on the same `/admin/timetable`
+   page, offering picker), and are also visible on the offering page, `/hub` and teacher pages.
 6. **Attendance reports disagree under a programme filter**: `by_session` filters `c.programme_id` while
    `totals`/`by_student` filter `st.programme_id` — the session table can be empty while the totals are not.
    The course-filter dropdown (`course_options`) also hides catalogue courses when a programme is selected.
