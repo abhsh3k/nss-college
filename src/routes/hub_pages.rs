@@ -8,6 +8,7 @@ use askama::Template;
 use axum::extract::{Query, State};
 use serde::Deserialize;
 use sqlx::types::time::OffsetDateTime;
+use crate::services::attendance;
 use tower_sessions::Session;
 
 use super::dashboards::{period_detail, HubCell, HubDay, HubPeriod, HubRow};
@@ -34,14 +35,15 @@ pub struct TimetableTemplate {
     rows: Vec<HubRow>,
 }
 
-fn now_parts() -> (String, String, i16) {
+async fn now_parts(db: &sqlx::PgPool) -> Result<(String, String, i16), AppError> {
+    let today_str = attendance::today(db).await?;
     let now = OffsetDateTime::now_utc();
-    let today = now.date();
-    (
-        today.to_string(),
-        format!("{:02}:{:02}", now.hour(), now.minute()),
-        today.weekday().number_from_monday() as i16,
-    )
+    let now_hm = format!("{:02}:{:02}", now.hour(), now.minute());
+    let weekday_today: i16 = sqlx::query_scalar("SELECT EXTRACT(ISODOW FROM (now() AT TIME ZONE 'Asia/Kolkata'))::int")
+        .fetch_one(db)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    Ok((today_str, now_hm, weekday_today))
 }
 
 pub async fn timetable(
@@ -50,7 +52,7 @@ pub async fn timetable(
     StudentOnly(user): StudentOnly,
 ) -> Result<TimetableTemplate, AppError> {
     let shell = Shell::build(&user, &session).await?;
-    let (today_str, now_hm, weekday_today) = now_parts();
+    let (today_str, now_hm, weekday_today) = now_parts(&s.db).await?;
 
     let Some(p) = hub::student_profile(&s.db, user.id).await? else {
         return Ok(TimetableTemplate {

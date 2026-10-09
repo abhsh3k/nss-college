@@ -420,6 +420,8 @@ pub async fn upload_path_for_event(db: &PgPool, id: i64) -> Res<Option<String>> 
 }
 
 /// Drop the uploads row and the file itself for a path we stored earlier.
+/// Errors are logged rather than returned, because callers use this during
+/// deletes/updates where a cleanup failure should not roll back the main action.
 pub async fn discard_upload(db: &PgPool, upload_dir: &str, path: &str) {
     if path.is_empty() {
         return;
@@ -429,38 +431,23 @@ pub async fn discard_upload(db: &PgPool, upload_dir: &str, path: &str) {
         Some(r) if !r.contains("..") => r,
         _ => return,
     };
-    if let Ok(deleted) = sqlx::query("DELETE FROM uploads WHERE path = $1 RETURNING id")
+    match sqlx::query("DELETE FROM uploads WHERE path = $1 RETURNING id")
         .bind(path)
         .fetch_optional(db)
         .await
     {
-        if deleted.is_some() {
+        Ok(Some(_)) => {
             let full = std::path::Path::new(upload_dir).join(relative);
             if let Err(e) = std::fs::remove_file(full) {
                 tracing::warn!(error = %e, path = %relative, "could not delete the uploaded file");
             }
         }
+        Ok(None) => {
+            tracing::warn!(path = %relative, "upload row not found for discard");
+        }
+        Err(e) => {
+            tracing::warn!(error = ?e, path = %relative, "could not delete the upload row");
+        }
     }
 }
 
-/// How many published items of each kind exist, for the admin overview.
-#[derive(Debug, FromRow)]
-pub struct ContentCounts {
-    pub notices: i64,
-    pub news: i64,
-    pub events: i64,
-    pub drafts: i64,
-}
-
-pub async fn counts(db: &PgPool) -> Res<ContentCounts> {
-    sqlx::query_as::<_, ContentCounts>(
-        r#"SELECT (SELECT count(*) FROM notices WHERE status = 'published') AS notices,
-                  (SELECT count(*) FROM news    WHERE status = 'published') AS news,
-                  (SELECT count(*) FROM events  WHERE status = 'published') AS events,
-                  (SELECT (SELECT count(*) FROM notices WHERE status = 'draft')
-                         + (SELECT count(*) FROM news    WHERE status = 'draft')
-                         + (SELECT count(*) FROM events  WHERE status = 'draft')) AS drafts"#,
-    )
-    .fetch_one(db)
-    .await
-}

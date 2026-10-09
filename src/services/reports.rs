@@ -35,6 +35,7 @@ pub struct StudentSummary {
 /// One taught session across the selected period.
 #[derive(Debug, FromRow)]
 pub struct SessionSummary {
+    #[allow(dead_code)]
     pub on_date: String,
     pub date_label: String,
     pub course_code: String,
@@ -243,36 +244,7 @@ pub fn students_csv(rows: &[StudentRow]) -> csv::Result<Vec<u8>> {
         .map_err(|e| csv::Error::from(e.into_error()))
 }
 
-/// The per-session report as CSV.
-pub fn sessions_csv(rows: &[SessionSummary]) -> csv::Result<Vec<u8>> {
-    let mut w = csv::Writer::from_writer(Vec::new());
-    w.write_record([
-        "Date",
-        "Course code",
-        "Course",
-        "Teacher",
-        "Time",
-        "Students marked",
-        "Present",
-        "Absent",
-        "Leave",
-    ])?;
-    for r in rows {
-        w.write_record([
-            r.date_label.as_str(),
-            r.course_code.as_str(),
-            r.course_title.as_str(),
-            r.teacher.as_str(),
-            r.time_label.as_str(),
-            &r.marked.to_string(),
-            &r.present.to_string(),
-            &r.absent.to_string(),
-            &r.leave.to_string(),
-        ])?;
-    }
-    w.into_inner()
-        .map_err(|e| csv::Error::from(e.into_error()))
-}
+
 
 // ---------- Filter option lists ----------
 

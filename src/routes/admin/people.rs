@@ -836,36 +836,7 @@ async fn review_page(
     })
 }
 
-/// One row of the editable table, carried across by repeated form fields.
-#[derive(Deserialize)]
-pub struct ReviewForm {
-    csrf_token: String,
-    batch_id: i64,
-    intent: String,
-    #[serde(default)]
-    row_id: Vec<String>,
-    #[serde(default)]
-    admission_no: Vec<String>,
-    #[serde(default)]
-    prn: Vec<String>,
-    #[serde(default)]
-    name: Vec<String>,
-    #[serde(default)]
-    email: Vec<String>,
-    #[serde(default)]
-    phone: Vec<String>,
-    #[serde(default)]
-    programme_text: Vec<String>,
-    #[serde(default)]
-    semester_text: Vec<String>,
-    #[serde(default)]
-    year_text: Vec<String>,
-    /// Checkbox values are the ids of the ticked rows.
-    #[serde(default)]
-    include: Vec<String>,
-    #[serde(default)]
-    remove: Vec<String>,
-}
+
 
 /// One editable column of the review table, as it arrives from the form.
 const EDIT_COLUMNS: [&str; 8] = [
@@ -1167,7 +1138,7 @@ async fn unique_email(db: &PgPool, base: &str) -> Result<Option<String>, AppErro
 
 pub async fn import_credentials_csv(
     State(s): State<AppState>,
-    _user: AdminOnly,
+    user: AdminOnly,
     Query(q): Query<ReviewQuery>,
 ) -> Result<Response, AppError> {
     let Some(batch) = review_batch(&s, q.batch).await? else {

@@ -1305,9 +1305,12 @@ pub async fn finalize_cohort_specialization(
 /// Cohort decisions this HOD can see (their programme's cohorts, or the admin).
 #[derive(Debug, FromRow)]
 pub struct CohortDecision {
+    #[allow(dead_code)]
     pub id: i64,
     pub cohort_label: String,
+    #[allow(dead_code)]
     pub programme: String,
+    #[allow(dead_code)]
     pub batch_year: i32,
     pub choice_group: String,
     pub code: String,
