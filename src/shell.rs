@@ -44,6 +44,7 @@ fn nav_for(user: &AuthUser) -> Vec<NavItem> {
             item("Timetable", "/admin/timetable", false),
             item("Substitutions", "/admin/substitutions", false),
             item("Exam timetable", "/admin/exams", false),
+            item("Marks entry", "/admin/marks", false),
             item("Departments", "/admin/departments", false),
             item("Attendance reports", "/admin/attendance", false),
             item("Notices", "/admin/notices", false),
@@ -78,6 +79,7 @@ fn nav_for(user: &AuthUser) -> Vec<NavItem> {
                 items.push(item("Timetable", "/admin/timetable", false));
                 items.push(item("Substitutions", "/admin/substitutions", false));
                 items.push(item("Exam timetable", "/admin/exams", false));
+                items.push(item("Marks entry", "/admin/marks", false));
                 items.push(item("Students", "/admin/departments", false));
                 items.push(item("Department attendance", "/admin/departments/attendance", false));
             }

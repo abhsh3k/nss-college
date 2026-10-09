@@ -7,6 +7,7 @@ mod departments;
 mod documents;
 mod exams;
 mod events;
+mod marks;
 mod news;
 mod notices;
 mod pages;
@@ -111,14 +112,19 @@ pub fn routes() -> Router<AppState> {
         // Attendance reporting
         .route("/admin/attendance", get(attendance::report))
         .route("/admin/attendance.csv", get(attendance::csv))
-        // Exam timetable and semester results, pushed to students by PRN
+        // Exam timetable (results are filed from Marks entry)
         .route("/admin/exams", get(exams::page))
         .route("/admin/exams/add", post(exams::add))
         .route("/admin/exams/:id/delete", post(exams::delete))
         .route("/admin/exams/push", post(exams::push))
         .route("/admin/exams/unpush", post(exams::unpush))
         .route("/admin/exams/results", post(exams::push_results))
-        .route("/admin/exams/results/csv", post(exams::push_results_csv));
+        .route("/admin/exams/results/csv", post(exams::push_results_csv))
+        // Marks entry grid and the management of filed results.
+        .route("/admin/marks", get(marks::page))
+        .route("/admin/marks/save", post(marks::save))
+        .route("/admin/marks/:id/toggle", post(marks::toggle))
+        .route("/admin/marks/:id/delete", post(marks::delete));
 
     // Notices, news and events take multipart bodies, so they need a body limit
     // well above axum's 2 MB default.
@@ -201,12 +207,19 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/rank-holders/:id/move", post(rank_holders::reorder))
         .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
 
+    // The marks CSV import uploads a file, so it needs the same body limit as
+    // the other multipart forms.
+    let marks_import = Router::new()
+        .route("/admin/marks/import", post(marks::import_csv))
+        .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
+
     Router::new()
         .merge(people)
         .merge(imports)
         .merge(academics_and_timetable)
         .merge(course_offerings)
         .merge(work_queue)
+        .merge(marks_import)
         .merge(publishing)
         .merge(documents)
         .merge(rank_holders)

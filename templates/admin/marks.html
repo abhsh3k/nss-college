@@ -1,0 +1,221 @@
+{% extends "layouts/app.html" %}
+{% block title %}Marks entry{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Marks entry</h1>
+<p class="mt-3 max-w-2xl text-ink/80">Pick a course, type a mark per student and save — or upload a CSV of results: rows reach each student's Results page immediately under <strong>Semester {{ sel.semester }}</strong>, and every filed row can be unpublished or deleted in the list at the bottom.</p>
+
+<form method="get" action="/admin/marks" class="mt-6 flex flex-wrap items-end gap-4">
+  <div>
+    <label for="programme" class="block text-sm font-semibold">Programme</label>
+    <select id="programme" name="programme" required class="mt-1 rounded border border-ink/40 bg-white px-3 py-2 text-sm">
+      <option value="0">Choose a programme</option>
+      {% for p in programmes %}
+      <option value="{{ p.id }}" {% if p.id == sel.programme %}selected{% endif %}>{{ p.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="semester" class="block text-sm font-semibold">Semester</label>
+    <select id="semester" name="semester" class="mt-1 rounded border border-ink/40 bg-white px-3 py-2 text-sm">
+      {% for (n, is_sel) in semester_opts %}<option value="{{ n }}" {% if is_sel %}selected{% endif %}>{{ n }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="course" class="block text-sm font-semibold">Course</label>
+    <select id="course" name="course" class="mt-1 rounded border border-ink/40 bg-white px-3 py-2 text-sm">
+      <option value="0">Choose a course</option>
+      {% for c in courses %}
+      <option value="{{ c.id }}" {% if c.id == sel.course %}selected{% endif %}>{{ c.code }} — {{ c.title }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="kind" class="block text-sm font-semibold">Sheet</label>
+    <select id="kind" name="kind" class="mt-1 rounded border border-ink/40 bg-white px-3 py-2 text-sm">
+      <option value="coursework" {% if sel.kind == "coursework" %}selected{% endif %}>Coursework</option>
+      <option value="internal" {% if sel.kind == "internal" %}selected{% endif %}>Internal exam</option>
+      <option value="university" {% if sel.kind == "university" %}selected{% endif %}>University exam</option>
+    </select>
+  </div>
+  {% if sel.kind == "coursework" %}
+  <div>
+    <label for="assessment" class="block text-sm font-semibold">Assessment</label>
+    <select id="assessment" name="assessment" class="mt-1 rounded border border-ink/40 bg-white px-3 py-2 text-sm">
+      <option value="internal" {% if sel.assessment == "internal" %}selected{% endif %}>Internal</option>
+      <option value="assignment" {% if sel.assessment == "assignment" %}selected{% endif %}>Assignment</option>
+      <option value="practical" {% if sel.assessment == "practical" %}selected{% endif %}>Practical</option>
+      <option value="external" {% if sel.assessment == "external" %}selected{% endif %}>External</option>
+    </select>
+  </div>
+  {% endif %}
+  {% if sel.kind == "internal" %}
+  <div>
+    <label for="exam_name" class="block text-sm font-semibold">Exam name</label>
+    <input id="exam_name" name="exam_name" type="text" maxlength="120" placeholder="e.g. Internal 1" value="{{ sel.exam_name }}" class="mt-1 rounded border border-ink/40 bg-white px-3 py-2 text-sm">
+  </div>
+  {% endif %}
+  <div>
+    <label for="max" class="block text-sm font-semibold">Max marks</label>
+    <input id="max" name="max" type="number" min="0.01" step="0.01" value="{{ sel.max }}" placeholder="100" class="mt-1 w-24 rounded border border-ink/40 bg-white px-3 py-2 text-sm">
+  </div>
+  <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Open</button>
+</form>
+
+{% if sel.programme == 0 %}
+<p class="mt-8 max-w-2xl rounded border border-ink/15 bg-mist p-4 text-sm text-ink/70">Choose a programme to open a marks sheet.</p>
+{% else %}
+
+{% if let Some(m) = notice %}
+<p class="mt-6 rounded border border-emerald-300 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">{{ m }}</p>
+{% endif %}
+
+{% if !problems.is_empty() %}
+<ul class="mt-4 space-y-1 rounded border border-rose-300 bg-rose-50 p-4 text-sm text-rose-800">
+  {% for p in problems %}<li>{{ p }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+<!-- The grid -->
+<section class="mt-8 max-w-5xl border border-ink/15 bg-mist p-5" aria-labelledby="entry-grid">
+  <h2 id="entry-grid" class="font-display text-2xl font-semibold">
+    {% if sel.kind == "internal" %}Internal exam{% if !sel.exam_name.is_empty() %} — {{ sel.exam_name }}{% endif %}{% else if sel.kind == "university" %}University exam{% else %}Coursework — {{ sel.assessment }}{% endif %}
+    · {{ sel.max_or_default() }} marks
+  </h2>
+  <p class="mt-2 max-w-3xl text-sm text-ink/70">A number files that student's mark; an empty box leaves whatever is already filed alone. Rows publish to the student's Results page straight away.</p>
+
+  {% if courses.is_empty() %}
+  <p class="mt-4 text-ink/70">No courses to examine yet — add the semester's courses first.</p>
+  {% else if rows.is_empty() %}
+  <p class="mt-4 text-ink/70">No students on this sheet yet.</p>
+  {% else %}
+  <form method="post" action="/admin/marks/save" class="mt-4">
+    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+    <input type="hidden" name="programme" value="{{ sel.programme }}">
+    <input type="hidden" name="semester" value="{{ sel.semester }}">
+    <input type="hidden" name="course" value="{{ sel.course }}">
+    <input type="hidden" name="kind" value="{{ sel.kind }}">
+    <input type="hidden" name="assessment" value="{{ sel.assessment }}">
+    <input type="hidden" name="exam_name" value="{{ sel.exam_name }}">
+    <input type="hidden" name="max" value="{{ sel.max }}">
+    <div class="overflow-x-auto">
+      <table class="w-full min-w-[46rem] text-left">
+        <thead>
+          <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+            <th scope="col" class="py-2 pr-4 font-medium">Student</th>
+            <th scope="col" class="py-2 pr-4 font-medium">Admission no.</th>
+            <th scope="col" class="py-2 pr-4 font-medium">PRN</th>
+            <th scope="col" class="py-2 pr-4 font-medium">Enrolled</th>
+            <th scope="col" class="py-2 pr-4 font-medium">Filed</th>
+            <th scope="col" class="py-2 font-medium">Mark <span class="text-ink/50">/ {{ sel.max_or_default() }}</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr class="border-b border-ink/10">
+            <td class="py-2 pr-4 text-sm font-medium">{{ r.name }}</td>
+            <td class="py-2 pr-4 text-sm font-mono">{{ r.admission_no }}</td>
+            <td class="py-2 pr-4 text-sm font-mono">{{ r.prn }}</td>
+            <td class="py-2 pr-4 text-sm">{% if r.enrolled %}<span class="text-emerald-700">Yes</span>{% else %}<span class="text-ink/50">No</span>{% endif %}</td>
+            <td class="py-2 pr-4 text-sm">{% if r.status == "Published" %}<span class="text-emerald-700">Published</span>{% else if r.status == "Draft" %}<span class="text-amber-700">Draft</span>{% else %}<span class="text-ink/50">—</span>{% endif %}</td>
+            <td class="py-2">
+              <input type="number" name="mark_{{ r.student_id }}" value="{{ r.value }}" min="0" max="{{ sel.max_or_default() }}" step="0.01"
+                     inputmode="decimal"
+                     class="w-28 rounded border border-ink/40 bg-white px-3 py-1 text-sm text-right"
+                     aria-label="Mark for {{ r.name }}">
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="mt-4 flex items-center gap-4">
+      <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Save marks</button>
+      <span class="text-sm text-ink/60">Filed under Semester {{ sel.semester }}.</span>
+    </div>
+  </form>
+  {% endif %}
+</section>
+
+<!-- Whole batches at once: one CSV row per result -->
+<section class="mt-8 max-w-5xl border border-ink/15 bg-mist p-5" aria-labelledby="import-csv">
+  <h2 id="import-csv" class="font-display text-2xl font-semibold">Import marks from a CSV file</h2>
+  <p class="mt-2 max-w-3xl text-sm text-ink/70">
+    One row per result, keyed by <strong>{% if sel.kind == "university" %}PRN{% else %}admission number{% endif %}</strong>
+    and filed under <strong>Semester {{ sel.semester }}</strong> as
+    {% if sel.kind == "university" %}the university exam{% else if sel.kind == "internal" %}the internal exam{% if !sel.exam_name.is_empty() %} — {{ sel.exam_name }}{% endif %}{% else %}{{ sel.assessment }} coursework{% endif %}.
+    Only this semester's courses are accepted, and every row carries its own max marks.
+  </p>
+  <pre class="mt-3 overflow-x-auto rounded border border-ink/15 bg-white p-3 font-mono text-xs text-ink/80">{% if sel.kind == "university" %}prn,course_code,marks_obtained,maxmarks
+2025BCA0001,BCA101,42,50{% else %}admission_no,course_code,marks_obtained,maxmarks
+2501,BCA101,42,50{% endif %}</pre>
+  <form method="post" action="/admin/marks/import" enctype="multipart/form-data" class="mt-4 flex flex-wrap items-end gap-4">
+    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+    <input type="hidden" name="programme" value="{{ sel.programme }}">
+    <input type="hidden" name="semester" value="{{ sel.semester }}">
+    <input type="hidden" name="kind" value="{{ sel.kind }}">
+    <input type="hidden" name="assessment" value="{{ sel.assessment }}">
+    <input type="hidden" name="exam_name" value="{{ sel.exam_name }}">
+    <div class="min-w-72 flex-1">
+      <label for="csv_file" class="block text-sm font-semibold">CSV file</label>
+      <input id="csv_file" name="csv_file" type="file" accept=".csv,text/csv" required
+             class="mt-2 block w-full text-sm text-ink/70 file:mr-4 file:rounded file:border-0 file:bg-brand file:px-4 file:py-2 file:text-sm file:font-semibold file:text-chalk hover:file:bg-ink">
+    </div>
+    <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Import CSV</button>
+  </form>
+</section>
+
+<!-- Everything already filed for this semester -->
+<section class="mt-10 max-w-6xl" aria-labelledby="filed-results">
+  <h2 id="filed-results" class="font-display text-2xl font-semibold">Filed results — Semester {{ sel.semester }}</h2>
+  <p class="mt-2 max-w-3xl text-sm text-ink/70">Every mark filed for this programme under the semester picked above, whichever way it got in. Unpublish hides a row from students without deleting it.</p>
+
+  {% if filed.is_empty() %}
+  <p class="mt-4 text-ink/70">Nothing filed under this semester yet.</p>
+  {% else %}
+  <div class="mt-4 overflow-x-auto">
+    <table class="w-full min-w-[56rem] text-left">
+      <thead>
+        <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+          <th scope="col" class="py-2 pr-4 font-medium">Student</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Course</th>
+          <th scope="col" class="py-2 pr-4 font-medium">What</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Score</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Status</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Saved</th>
+          <th scope="col" class="py-2 font-medium"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in filed %}
+        <tr class="border-b border-ink/10">
+          <td class="py-2 pr-4 text-sm font-medium">{{ f.student_name }} <span class="font-mono text-ink/60">{{ f.admission_no }}</span></td>
+          <td class="py-2 pr-4 text-sm"><span class="font-mono font-medium">{{ f.course_code }}</span> <span class="text-ink/70">{{ f.course_title }}</span></td>
+          <td class="py-2 pr-4 text-sm">{{ f.kind_label }}</td>
+          <td class="py-2 pr-4 text-sm font-mono">{{ f.obtained_label }} / {{ f.max_label }}</td>
+          <td class="py-2 pr-4 text-sm font-semibold">{% if f.published %}<span class="text-emerald-700">Published</span>{% else %}<span class="text-amber-700">Draft</span>{% endif %}</td>
+          <td class="py-2 pr-4 text-sm text-ink/70">{{ f.updated_label }}</td>
+          <td class="py-2 text-right whitespace-nowrap">
+            <form method="post" action="/admin/marks/{{ f.id }}/toggle" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+              <input type="hidden" name="back" value="{{ sel.back_url() }}">
+              <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">{% if f.published %}Unpublish{% else %}Publish{% endif %}<span class="sr-only"> {{ f.course_code }} for {{ f.student_name }}</span></button>
+            </form>
+            <form method="post" action="/admin/marks/{{ f.id }}/delete" class="inline ml-4">
+              <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+              <input type="hidden" name="back" value="{{ sel.back_url() }}">
+              <button type="submit" class="font-semibold text-rose-700 underline underline-offset-4 hover:text-ink">Delete<span class="sr-only"> {{ f.course_code }} for {{ f.student_name }}</span></button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if filed_more %}
+  <p class="mt-3 text-sm text-ink/60">Showing the first 500 rows; narrow the semester to see the rest.</p>
+  {% endif %}
+  {% endif %}
+</section>
+
+{% endif %}
+{% endblock %}

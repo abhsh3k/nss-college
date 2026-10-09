@@ -6,6 +6,7 @@ pub mod courses;
 pub mod exams;
 pub mod hub;
 pub mod import_students;
+pub mod marks;
 pub mod people;
 pub mod rank_holders;
 pub mod reports;

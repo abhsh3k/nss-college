@@ -66,6 +66,33 @@ pub async fn course_options(db: &PgPool, programme_id: i64) -> Res<Vec<ExamCours
     .await?)
 }
 
+/// Course options for one semester of a programme: its own courses taught in
+/// that semester, plus the catalogue courses offered to it that semester — a
+/// catalogue course carries no `semester` of its own, so its offering decides
+/// which semester it belongs to.
+pub async fn course_options_for_semester(
+    db: &PgPool,
+    programme_id: i64,
+    semester: i32,
+) -> Res<Vec<ExamCourseOption>> {
+    Ok(sqlx::query_as::<_, ExamCourseOption>(
+        r#"SELECT id, code, title FROM courses
+           WHERE COALESCE(is_active, true)
+             AND ( (programme_id = $1 AND semester = $2)
+                OR (programme_id IS NULL
+                    AND EXISTS (SELECT 1 FROM course_offerings o
+                                  JOIN course_offering_targets t ON t.offering_id = o.id
+                                 WHERE o.course_id = courses.id
+                                   AND o.semester = $2
+                                   AND t.programme_id = $1)) )
+           ORDER BY code"#,
+    )
+    .bind(programme_id)
+    .bind(semester)
+    .fetch_all(db)
+    .await?)
+}
+
 pub async fn exams_for(db: &PgPool, programme_id: i64, semester: i32) -> Res<Vec<ExamEntry>> {
     Ok(sqlx::query_as::<_, ExamEntry>(
         r#"SELECT e.id, c.code, c.title, e.name,
@@ -282,7 +309,7 @@ pub struct ResultCourse {
 /// How a mark line reads on the student's Results page: the exam kind wins
 /// over the raw assessment, because the same `exam` assessment covers both the
 /// university's semester result and a college internal exam.
-fn assessment_label(assessment: &str, exam_kind: &str, exam_name: &str) -> String {
+pub fn assessment_label(assessment: &str, exam_kind: &str, exam_name: &str) -> String {
     let base = match exam_kind {
         "university" => "University exam".to_string(),
         "internal" if exam_name.is_empty() => "Internal exam".to_string(),
@@ -520,6 +547,10 @@ pub struct PushRow {
     pub exam_name: String,
     pub obtained: f64,
     pub max: f64,
+    /// The line this row came from in the paste box or the file, 1-based, so a
+    /// problem can point at it even when blank, comment or header lines were
+    /// skipped along the way. 0 for a row built rather than parsed.
+    pub line: usize,
 }
 
 #[derive(Debug)]
@@ -579,13 +610,14 @@ pub fn parse_csv(bytes: &[u8], kind: PushKind) -> Result<Vec<PushRow>, String> {
         }
         let built = if fields.len() < 2 {
             Err(format!(
-                "Line {i}: expected at least 2 fields (key, course, ...), got {}",
+                "Line {}: expected at least 2 fields (key, course, ...), got {}",
+                i + 1,
                 fields.len()
             ))
         } else {
             match kind {
-                PushKind::University => university_row(&fields),
-                PushKind::Internal => internal_row(&fields),
+                PushKind::University => university_row(&fields, i + 1),
+                PushKind::Internal => internal_row(&fields, i + 1),
             }
         };
         match built {
@@ -619,7 +651,7 @@ fn is_header_row(fields: &[String]) -> bool {
 }
 
 /// A university semester-exam row, or the reason the line is unusable.
-fn university_row(fields: &[String]) -> Result<PushRow, String> {
+fn university_row(fields: &[String], line: usize) -> Result<PushRow, String> {
     let row = |assessment: String, obtained: f64, max: f64| PushRow {
         key: fields[0].clone(),
         course: fields[1].clone(),
@@ -627,6 +659,7 @@ fn university_row(fields: &[String]) -> Result<PushRow, String> {
         exam_name: String::new(),
         obtained,
         max,
+        line,
     };
     match fields.len() {
         3 => ratio(&fields[2])
@@ -654,7 +687,7 @@ fn university_row(fields: &[String]) -> Result<PushRow, String> {
 }
 
 /// A college internal-exam row: `admission_no course exam_name obtained/max`.
-fn internal_row(fields: &[String]) -> Result<PushRow, String> {
+fn internal_row(fields: &[String], line: usize) -> Result<PushRow, String> {
     let default_name = PushKind::Internal.default_exam_name();
     // Empty or whitespace-only names fall back to the generic one, so two
     // unnamed pushes still agree instead of piling up as separate exams.
@@ -671,6 +704,7 @@ fn internal_row(fields: &[String]) -> Result<PushRow, String> {
             exam_name,
             obtained,
             max,
+            line,
         }
     };
     match fields.len() {
@@ -724,8 +758,8 @@ pub fn parse_push(text: &str, kind: PushKind) -> (Vec<PushRow>, Vec<PushProblem>
             ))
         } else {
             match kind {
-                PushKind::University => university_row(&fields),
-                PushKind::Internal => internal_row(&fields),
+                PushKind::University => university_row(&fields, line_no),
+                PushKind::Internal => internal_row(&fields, line_no),
             }
         };
         match built {
@@ -763,7 +797,8 @@ pub async fn validate_push(
     let mut good = Vec::new();
     let mut problems = Vec::new();
     for (i, row) in rows.iter().enumerate() {
-        let line = i + 1;
+        // Where the row came from, so a problem names the line the head wrote.
+        let line = if row.line > 0 { row.line } else { i + 1 };
         let fail = |problems: &mut Vec<PushProblem>, text: String, problem: String| {
             problems.push(PushProblem { line, text, problem })
         };
@@ -866,16 +901,71 @@ pub async fn validate_push(
     Ok((good, problems))
 }
 
-/// File the validated rows: published immediately, upserted per
-/// (student, course, assessment, kind, exam name) so re-pushing corrects a
-/// result without disturbing the other kind. `semester` is the semester the
-/// results are filed under — the one picked on the page — which is what lets
-/// a result pushed after promotion still read back under the semester it was
-/// earned in.
-///
-/// An internal row attaches to the college's published exam for that course
-/// and semester when one exists, so the date shows beside the score; a
-/// university row carries no college exam date.
+/// One validated row, filed under the semester picked on the page and
+/// upserted per (student, course, assessment, exam_kind, exam_name) so
+/// re-filing corrects a result without disturbing the other kinds. An internal
+/// exam attaches to the college's published exam for that course and semester
+/// when one exists, so the date shows beside the score; every other kind
+/// carries no college exam date.
+#[allow(clippy::too_many_arguments)]
+async fn file_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    semester: i32,
+    c: &Candidate,
+    assessment: &str,
+    exam_kind: &str,
+    exam_name: &str,
+    obtained: f64,
+    max: f64,
+) -> Res<()> {
+    let exam_id: Option<i64> = if exam_kind == "internal" {
+        sqlx::query_scalar(
+            r#"SELECT id FROM exams
+               WHERE course_id = $1 AND programme_id = $2 AND semester = $3
+                 AND status = 'published'
+               ORDER BY exam_date LIMIT 1"#,
+        )
+        .bind(c.course_id)
+        .bind(c.programme_id)
+        .bind(semester)
+        .fetch_optional(&mut **tx)
+        .await?
+    } else {
+        None
+    };
+    sqlx::query(
+        r#"INSERT INTO marks (student_id, course_id, exam_id, assessment,
+                              marks_obtained, max_marks, published,
+                              exam_kind, exam_name, semester)
+           VALUES ($1, $2, $3, $4, $5, $6, true, $7, $8, $9)
+           ON CONFLICT (student_id, course_id, assessment, exam_kind, exam_name)
+           DO UPDATE SET marks_obtained = EXCLUDED.marks_obtained,
+                         max_marks      = EXCLUDED.max_marks,
+                         exam_id        = COALESCE(EXCLUDED.exam_id, marks.exam_id),
+                         published      = true,
+                         semester       = EXCLUDED.semester,
+                         updated_at     = now()"#,
+    )
+    .bind(c.student_id)
+    .bind(c.course_id)
+    .bind(exam_id)
+    .bind(assessment)
+    .bind(obtained)
+    .bind(max)
+    .bind(exam_kind)
+    .bind(exam_name)
+    .bind(semester)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// File the validated rows, published immediately. `semester` is the semester
+/// the results are filed under — the one picked on the page — which is what
+/// lets a result pushed after promotion still read back under the semester it
+/// was earned in. What a row *is* comes from the row itself: the semester exam
+/// for a `exam` assessment on a university push, coursework alongside it, and
+/// the named internal exam otherwise.
 pub async fn push_marks(
     db: &PgPool,
     kind: PushKind,
@@ -885,52 +975,53 @@ pub async fn push_marks(
     let mut tx = db.begin().await?;
     let mut filed = 0u64;
     for (row, c) in rows {
-        let exam_id: Option<i64> = if kind == PushKind::Internal {
-            sqlx::query_scalar(
-                r#"SELECT id FROM exams
-                   WHERE course_id = $1 AND programme_id = $2 AND semester = $3
-                     AND status = 'published'
-                   ORDER BY exam_date LIMIT 1"#,
-            )
-            .bind(c.course_id)
-            .bind(c.programme_id)
-            .bind(semester)
-            .fetch_optional(&mut *tx)
-            .await?
-        } else {
-            None
-        };
-        // A university push files the semester exam under its own kind; any
-        // coursework row it carries along stays coursework.
         let exam_kind = match kind {
             PushKind::Internal => "internal",
             PushKind::University if row.assessment == "exam" => "university",
             PushKind::University => "coursework",
         };
         let exam_name = if exam_kind == "internal" { row.exam_name.as_str() } else { "" };
-        sqlx::query(
-            r#"INSERT INTO marks (student_id, course_id, exam_id, assessment,
-                                  marks_obtained, max_marks, published,
-                                  exam_kind, exam_name, semester)
-               VALUES ($1, $2, $3, $4, $5, $6, true, $7, $8, $9)
-               ON CONFLICT (student_id, course_id, assessment, exam_kind, exam_name)
-               DO UPDATE SET marks_obtained = EXCLUDED.marks_obtained,
-                             max_marks      = EXCLUDED.max_marks,
-                             exam_id        = COALESCE(EXCLUDED.exam_id, marks.exam_id),
-                             published      = true,
-                             semester       = EXCLUDED.semester,
-                             updated_at     = now()"#,
+        file_row(
+            &mut tx,
+            semester,
+            c,
+            &row.assessment,
+            exam_kind,
+            exam_name,
+            row.obtained,
+            row.max,
         )
-        .bind(c.student_id)
-        .bind(c.course_id)
-        .bind(exam_id)
-        .bind(&row.assessment)
-        .bind(row.obtained)
-        .bind(row.max)
-        .bind(exam_kind)
-        .bind(exam_name)
-        .bind(semester)
-        .execute(&mut *tx)
+        .await?;
+        filed += 1;
+    }
+    tx.commit().await?;
+    Ok(filed)
+}
+
+/// File the validated rows under an explicit assessment key — the marks-entry
+/// CSV import, where the sheet the head has open decides what every row is
+/// (its assessment, exam kind and exam name), whatever the file carries.
+pub async fn push_marks_as(
+    db: &PgPool,
+    semester: i32,
+    assessment: &str,
+    exam_kind: &str,
+    exam_name: &str,
+    rows: &[(PushRow, Candidate)],
+) -> Res<u64> {
+    let mut tx = db.begin().await?;
+    let mut filed = 0u64;
+    for (row, c) in rows {
+        file_row(
+            &mut tx,
+            semester,
+            c,
+            assessment,
+            exam_kind,
+            exam_name,
+            row.obtained,
+            row.max,
+        )
         .await?;
         filed += 1;
     }

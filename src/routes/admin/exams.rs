@@ -90,11 +90,6 @@ pub struct ExamsTemplate {
     courses: Vec<ExamCourseOption>,
     entries: Vec<ExamEntry>,
     group: ExamGroup,
-    results_rows: String,
-    /// Which push box is selected: university (PRN) or internal (admission no).
-    results_kind: String,
-    problems: Vec<PushProblem>,
-    notice: Option<String>,
 }
 
 async fn render(
@@ -103,10 +98,6 @@ async fn render(
     manager: &Manager,
     programme_id: i64,
     semester: i32,
-    results_rows: String,
-    results_kind: String,
-    problems: Vec<PushProblem>,
-    notice: Option<String>,
 ) -> Result<ExamsTemplate, AppError> {
     let shell = Shell::build(&manager.user, session).await?;
     let programmes = academics::programme_options_for(&s.db, manager.department()).await?;
@@ -124,10 +115,6 @@ async fn render(
             pushed_label: None,
             last_date_label: None,
         },
-        results_rows,
-        results_kind,
-        problems,
-        notice,
     };
     if programme_id > 0 {
         page.courses = exams::course_options(&s.db, programme_id).await?;
@@ -164,18 +151,7 @@ pub async fn page(
         .and_then(parse_i32)
         .filter(|v| (1..=12).contains(v))
         .unwrap_or(1);
-    render(
-        &s,
-        &session,
-        &manager,
-        programme_id,
-        semester,
-        String::new(),
-        PushKind::University.as_str().to_string(),
-        Vec::new(),
-        None,
-    )
-    .await
+    render(&s, &session, &manager, programme_id, semester).await
 }
 
 /// A plain `YYYY-MM-DD` calendar date (validated without pulling in a date
@@ -366,18 +342,19 @@ pub async fn unpush(
 }
 
 /// The results paste box — university rows keyed by PRN, internal rows keyed
-/// by admission number. Renders in place with per-line problems so nothing
-/// the head typed is lost.
+/// by admission number. The box itself now lives in Marks entry, so this
+/// handler answers through the page's flash line: file the rows, say what
+/// happened, and go back to the timetable.
 pub async fn push_results(
     State(s): State<AppState>,
     session: Session,
     manager: Manager,
     Form(f): Form<ResultsForm>,
-) -> Result<ExamsTemplate, AppError> {
+) -> Result<Redirect, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
     let semester = parse_i32(&f.semester).filter(|v| (1..=12).contains(v)).unwrap_or(1);
     let kind = PushKind::parse(&f.kind);
-    // Stay on the timetable that was open, so the outcome renders in place.
+    // Back to the timetable that was open.
     let programme_id = selected_programme(&s, manager.department(), Some(f.programme.as_str())).await?;
     // A head's rows only ever land on their own department's programmes;
     // validate_push checks each student's programme against `department`.
@@ -411,26 +388,10 @@ pub async fn push_results(
         Some(n)
     };
 
-    let notice = match filed {
-        Some(n) if problems.is_empty() => Some(format!(
-            "Filed {n} {} result row(s) under semester {semester}.",
-            kind.as_str()
-        )),
-        Some(n) => Some(format!("Filed {n} row(s); the rest need fixing (see below).")),
-        None => None,
-    };
-    render(
-        &s,
-        &session,
-        &manager,
-        programme_id,
-        semester,
-        f.rows,
-        kind.as_str().to_string(),
-        problems,
-        notice,
-    )
-    .await
+    flash_push(&session, filed, &problems, kind, semester).await?;
+    Ok(Redirect::to(&format!(
+        "/admin/exams?programme={programme_id}&semester={semester}"
+    )))
 }
 
 /// CSV file upload variant of push_results. Accepts a CSV file with columns:
@@ -441,7 +402,7 @@ pub async fn push_results_csv(
     session: Session,
     manager: Manager,
     multipart: Multipart,
-) -> Result<ExamsTemplate, AppError> {
+) -> Result<Redirect, AppError> {
     let form = crate::uploads::read(multipart).await?;
     csrf::verify(&session, form.field("csrf_token")).await?;
     let semester = parse_i32(form.field("semester")).filter(|v| (1..=12).contains(v)).unwrap_or(1);
@@ -453,33 +414,22 @@ pub async fn push_results_csv(
         "Choose a CSV file to upload.".into()
     ))?;
 
+    let back = format!(
+        "/admin/exams?programme={programme_id}&semester={semester}"
+    );
+
     // Limit CSV file size to 5 MB
     if file.bytes.len() > 5 * 1024 * 1024 {
-        return render(
-            &s, &session, &manager, programme_id, semester,
-            String::new(), kind.as_str().to_string(),
-            vec![PushProblem {
-                line: 0,
-                text: file.filename.clone(),
-                problem: "CSV file is larger than 5 MB.".into(),
-            }],
-            Some("CSV file is too large (max 5 MB).".into()),
-        ).await;
+        shell::flash(&session, "That CSV file is larger than 5 MB — split it into smaller batches.")
+            .await?;
+        return Ok(Redirect::to(&back));
     }
 
     let parsed = match exams::parse_csv(&file.bytes, kind) {
         Ok(rows) => rows,
         Err(msg) => {
-            return render(
-                &s, &session, &manager, programme_id, semester,
-                String::new(), kind.as_str().to_string(),
-                vec![PushProblem {
-                    line: 0,
-                    text: file.filename.clone(),
-                    problem: msg.clone(),
-                }],
-                Some(msg),
-            ).await;
+            shell::flash(&session, msg).await?;
+            return Ok(Redirect::to(&back));
         }
     };
 
@@ -513,25 +463,51 @@ pub async fn push_results_csv(
         Some(n)
     };
 
-    let notice = match filed {
-        Some(n) if problems.is_empty() => Some(format!(
-            "Filed {n} {} result row(s) from CSV under semester {semester}.",
-            kind.as_str()
-        )),
-        Some(n) => Some(format!("Filed {n} row(s) from CSV; the rest need fixing (see below).")),
-        None => Some("No valid rows found in the CSV file.".into()),
-    };
+    flash_push(&session, filed, &problems, kind, semester).await?;
+    Ok(Redirect::to(&back))
+}
 
-    render(
-        &s,
-        &session,
-        &manager,
-        programme_id,
-        semester,
-        String::new(),
-        kind.as_str().to_string(),
-        problems,
-        notice,
-    )
-    .await
+/// What a push says back now that its box is off the page: how many rows were
+/// filed, then the first few lines that could not be, in one flash line.
+async fn flash_push(
+    session: &Session,
+    filed: Option<u64>,
+    problems: &[PushProblem],
+    kind: PushKind,
+    semester: i32,
+) -> Result<(), AppError> {
+    let mut msg = match filed {
+        Some(n) if problems.is_empty() => {
+            format!("Filed {n} {} result row(s) under semester {semester}.", kind.as_str())
+        }
+        Some(n) => format!(
+            "Filed {n} row(s) under semester {semester}; {} line(s) need fixing:",
+            problems.len()
+        ),
+        None if problems.is_empty() => {
+            shell::flash(session, "No result rows in that one — nothing was filed.").await?;
+            return Ok(());
+        }
+        None => format!("No rows filed; {} line(s) need fixing:", problems.len()),
+    };
+    for p in problems.iter().take(3) {
+        msg.push(' ');
+        msg.push_str(&problem_line(p));
+    }
+    if problems.len() > 3 {
+        msg.push_str(&format!(" (and {} more)", problems.len() - 3));
+    }
+    shell::flash(session, msg).await
+}
+
+/// One problem as it reads in a flash line: `Line 3: 2501 BCA101 42/50 — …`,
+/// or just the message when there is no line to point at.
+fn problem_line(p: &PushProblem) -> String {
+    if p.text.is_empty() {
+        p.problem.clone()
+    } else if p.line > 0 {
+        format!("Line {}: {} — {}", p.line, p.text, p.problem)
+    } else {
+        format!("{} — {}", p.text, p.problem)
+    }
 }
