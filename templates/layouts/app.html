@@ -29,7 +29,13 @@
         <button type="button" class="nav-close hidden" aria-label="Close menu">Close menu</button>
         <nav aria-label="Dashboard" hx-boost="true" hx-target="#app-main" hx-select="#app-main" hx-swap="outerHTML" hx-push-url="true">
           <ul class="space-y-1">
-            {% for item in shell.nav %}
+            {% for nav_group in shell.nav %}
+            {% if let Some(nav_title) = nav_group.title %}
+            <li class="border-t border-chalk/15 pt-3">
+              <p class="px-3 text-xs font-semibold uppercase tracking-wide text-chalk/50">{{ nav_title }}</p>
+            </li>
+            {% endif %}
+            {% for item in nav_group.items %}
             <li>
               {% if item.soon %}
               <span class="flex items-center justify-between rounded px-3 py-2 text-chalk/50" aria-disabled="true">{{ item.label }} <span class="rounded bg-chalk/10 px-1.5 py-0.5 text-xs">Soon</span></span>
@@ -37,6 +43,7 @@
               <a data-nav href="{{ item.href }}" class="block rounded px-3 py-2 font-medium hover:bg-chalk/10 aria-[current=page]:bg-accent aria-[current=page]:text-ink">{{ item.label }}</a>
               {% endif %}
             </li>
+            {% endfor %}
             {% endfor %}
           </ul>
         </nav>

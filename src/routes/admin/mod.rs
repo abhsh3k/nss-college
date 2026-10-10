@@ -7,6 +7,7 @@ mod departments;
 mod documents;
 mod exams;
 mod events;
+mod manage;
 mod marks;
 mod news;
 mod notices;
@@ -78,6 +79,11 @@ pub fn routes() -> Router<AppState> {
     // The HOD landing page: every queue above in one list, with links back to
     // the pages that already handle each kind of decision.
     let work_queue = Router::new().route("/admin/work-queue", get(work_queue::page));
+
+    // The management-area index a dashboard card opens. It only lists pages
+    // that already exist behind their own guards, so it is `Ready` + a
+    // catalogue lookup — nothing is granted here.
+    let areas = Router::new().route("/admin/manage/:key", get(manage::page));
 
     let academics_and_timetable = Router::new()
         // Programmes and courses
@@ -219,6 +225,7 @@ pub fn routes() -> Router<AppState> {
         .merge(academics_and_timetable)
         .merge(course_offerings)
         .merge(work_queue)
+        .merge(areas)
         .merge(marks_import)
         .merge(publishing)
         .merge(documents)

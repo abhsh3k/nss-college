@@ -23,21 +23,21 @@
     <dd class="font-display text-4xl font-semibold">{{ counts.news }}</dd>
   </div>
 </dl>
-<p class="mt-10 max-w-2xl text-lg leading-relaxed">Publish notices, news and events, and pull attendance reports for any period. Documents and pages are still being built; they stay greyed out in the menu until ready.</p>
+{% endif %}
 
-<div class="mt-8 flex flex-wrap gap-3">
-  <a href="/admin/notices" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Notices</a>
-  <a href="/admin/news" class="rounded border border-ink/40 px-4 py-2 font-semibold hover:bg-mist">News</a>
-  <a href="/admin/events" class="rounded border border-ink/40 px-4 py-2 font-semibold hover:bg-mist">Events</a>
-  {% if is_admin %}<a href="/admin/attendance" class="rounded border border-ink/40 px-4 py-2 font-semibold hover:bg-mist">Attendance reports</a>{% endif %}
-</div>
-{% else %}
-<p class="mt-10 max-w-2xl text-lg leading-relaxed">You publish notices, news and events from here. Open a section from the menu, or start below.</p>
+<section class="mt-12" aria-labelledby="areas-heading">
+  <h2 id="areas-heading" class="font-display text-2xl font-semibold md:text-3xl">Management areas</h2>
+  <p class="mt-2 max-w-2xl text-ink/80">This page is an overview. Pick the area you want to work in; each one opens a page listing what you can do there.</p>
 
-<div class="mt-8 flex flex-wrap gap-3">
-  <a href="/admin/notices" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Notices</a>
-  <a href="/admin/news" class="rounded border border-ink/40 px-4 py-2 font-semibold hover:bg-mist">News</a>
-  <a href="/admin/events" class="rounded border border-ink/40 px-4 py-2 font-semibold hover:bg-mist">Events</a>
-</div>
+  <div class="mt-6">
+    {% include "partials/area_cards.html" %}
+  </div>
+</section>
+
+{% if is_admin %}
+<nav class="mt-10 flex flex-wrap gap-x-6 gap-y-2 border-t border-ink/15 pt-6 text-sm" aria-label="Quick links">
+  <a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/work-queue">Work queue</a>
+  <span class="text-ink/70">Approvals, change requests, cohort decisions and unscheduled offerings, in one list.</span>
+</nav>
 {% endif %}
 {% endblock %}

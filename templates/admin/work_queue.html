@@ -16,6 +16,15 @@
 <p class="mt-8 max-w-2xl border-l-4 border-accent bg-mist px-4 py-3 font-medium">Nothing is waiting. Every approval, change request and cohort decision is settled and every published offering has its periods.</p>
 {% endif %}
 
+{# ---------- The management areas, kept out of the way of the queue ---------- #}
+<section class="mt-12" aria-labelledby="areas-heading">
+  <h2 id="areas-heading" class="font-display text-2xl font-semibold md:text-3xl">{{ areas_title }}</h2>
+  <p class="mt-2 max-w-2xl text-ink/80">The queue above is what is waiting on you. These are the areas you manage; each one opens a page listing what you can do there.</p>
+  <div class="mt-5">
+    {% include "partials/area_cards.html" %}
+  </div>
+</section>
+
 {# ---------- Pending external approvals ---------- #}
 <section class="mt-10" aria-labelledby="queue-approvals">
   <div class="flex flex-wrap items-baseline justify-between gap-2">

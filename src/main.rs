@@ -6,6 +6,7 @@ mod layout;
 mod models;
 mod routes;
 mod seo;
+mod sections;
 mod site;
 mod services;
 mod shell;

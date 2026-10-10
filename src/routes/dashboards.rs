@@ -9,6 +9,7 @@ use crate::{
     auth::{OfficeOrAdmin, Role, StudentOnly, TeacherOnly},
     error::AppError,
     models::Notice,
+    sections::{self, Area},
     services::{
         exams::{self, ExamNotice},
         hub,
@@ -24,6 +25,9 @@ pub struct AdminTemplate {
     shell: Shell,
     is_admin: bool,
     counts: Counts,
+    /// The management-area cards. Office staff only ever see the content area,
+    /// because that is all they are guarded for.
+    areas: &'static [Area],
 }
 
 pub async fn admin(
@@ -35,7 +39,28 @@ pub async fn admin(
         shell: Shell::build(&user, &session).await?,
         is_admin: user.role == Role::Admin,
         counts: users::overview_counts(&s.db).await?,
+        areas: if user.role == Role::Admin {
+            sections::ADMIN
+        } else {
+            sections::STAFF
+        },
     })
+}
+
+/// Renders the admin overview with a hand-built sidebar, so a test can read
+/// the HTML the layout actually produces.
+#[cfg(test)]
+pub(crate) fn tests_render_shell(nav: Vec<crate::shell::NavGroup>) -> String {
+    let mut shell = crate::sections::test_shell("IT administrator");
+    shell.nav = nav;
+    AdminTemplate {
+        shell,
+        is_admin: true,
+        counts: Counts { students: 0, teachers: 0, programmes: 0, news: 0 },
+        areas: sections::ADMIN,
+    }
+    .render()
+    .expect("the overview renders")
 }
 
 pub struct TeacherClassItem {
@@ -349,4 +374,77 @@ pub async fn student(
         courses,
         total_credits,
     })
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn overview(is_admin: bool, areas: &'static [crate::sections::Area]) -> String {
+        AdminTemplate {
+            shell: crate::sections::test_shell(if is_admin { "IT administrator" } else { "Office staff" }),
+            is_admin,
+            counts: Counts { students: 3, teachers: 4, programmes: 5, news: 6 },
+            areas,
+        }
+        .render()
+        .expect("the overview renders")
+    }
+
+    #[test]
+    fn the_admin_overview_is_a_grid_of_management_areas() {
+        let html = overview(true, crate::sections::ADMIN);
+        assert!(html.contains("Management areas"));
+        for a in crate::sections::ADMIN {
+            assert!(html.contains(&format!("/admin/manage/{}", a.key)), "no card for {}", a.key);
+            let title = a.title.replace('&', "&amp;");
+            assert!(html.contains(&title), "no title for {}", a.key);
+        }
+    }
+
+    #[test]
+    fn office_staff_only_see_the_content_area() {
+        let html = overview(false, crate::sections::STAFF);
+        assert!(html.contains("/admin/manage/website"));
+        assert!(!html.contains("/admin/manage/users"));
+        assert!(!html.contains("/admin/manage/academic"));
+    }
+}
+
+#[cfg(test)]
+mod sidebar_tests {
+    use crate::auth::{AuthUser, Role};
+    use crate::shell::test_nav_for;
+
+    fn admin() -> AuthUser {
+        AuthUser {
+            id: 1,
+            full_name: "Test Admin".into(),
+            role: Role::Admin,
+            must_change_password: false,
+            is_hod: false,
+            can_manage: false,
+        }
+    }
+
+    /// The grouped sidebar actually renders: one heading per group, and every
+    /// link still reachable from the rail.
+    #[test]
+    fn the_sidebar_renders_the_group_headings_and_the_links() {
+        let html = super::tests_render_shell(test_nav_for(&admin()));
+        for heading in [
+            "User &amp; accounts",
+            "Academic management",
+            "Course operations",
+            "Timetable &amp; scheduling",
+            "Attendance",
+            "Examinations &amp; results",
+            "Website &amp; content",
+            "Settings",
+        ] {
+            assert!(html.contains(heading), "the sidebar is missing the {heading} group");
+        }
+        for href in ["/admin/people", "/admin/marks", "/admin/rank-holders", "/admin/work-queue"] {
+            assert!(html.contains(&format!("href=\"{href}\"")), "the sidebar lost {href}");
+        }
+    }
 }
