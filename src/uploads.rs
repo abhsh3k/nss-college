@@ -222,7 +222,7 @@ pub async fn save(
     })?;
 
     let web_path = format!("/uploads/{folder}/{name}");
-    sqlx::query(
+    if let Err(error) = sqlx::query(
         r#"INSERT INTO uploads (path, original_name, mime_type, size_bytes, uploaded_by)
            VALUES ($1, $2, $3, $4, $5)"#,
     )
@@ -233,7 +233,10 @@ pub async fn save(
     .bind(uploaded_by)
     .execute(db)
     .await
-    .map_err(internal)?;
+    {
+        let _ = std::fs::remove_file(dir.join(&name));
+        return Err(internal(error));
+    }
 
     Ok(web_path)
 }

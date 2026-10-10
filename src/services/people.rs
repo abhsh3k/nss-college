@@ -308,7 +308,7 @@ pub async fn update(db: &PgPool, d: &PersonDetail) -> Res<()> {
 
 pub async fn set_active(db: &PgPool, user_id: i64, active: bool) -> Res<()> {
     let mut tx = db.begin().await?;
-    sqlx::query("UPDATE users SET is_active = $2 WHERE id = $1")
+    sqlx::query("UPDATE users SET is_active = $2, session_version = session_version + 1 WHERE id = $1")
         .bind(user_id)
         .bind(active)
         .execute(&mut *tx)
@@ -318,8 +318,55 @@ pub async fn set_active(db: &PgPool, user_id: i64, active: bool) -> Res<()> {
         .bind(active)
         .execute(&mut *tx)
         .await?;
+    if active {
+        sqlx::query("UPDATE faculty SET status = 'published' WHERE user_id = $1 AND status = 'archived'")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
     Ok(())
+}
+
+/// Preserve academic identity and history when access is withdrawn. Account
+/// deletion is intentionally not used for ordinary administration.
+pub async fn archive_user(db: &PgPool, user_id: i64) -> Res<()> {
+    let mut tx = db.begin().await?;
+    sqlx::query("UPDATE users SET is_active = false, session_version = session_version + 1 WHERE id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE students SET is_active = false WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE faculty SET status = 'archived' WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await
+}
+
+pub async fn archive_users(db: &PgPool, ids: &[i64], exclude_self: i64) -> Res<u64> {
+    let ids: Vec<i64> = ids.iter().copied().filter(|&id| id != exclude_self).collect();
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let mut tx = db.begin().await?;
+    let users = sqlx::query("UPDATE users SET is_active = false, session_version = session_version + 1 WHERE id = ANY($1)")
+        .bind(&ids)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE students SET is_active = false WHERE user_id = ANY($1)")
+        .bind(&ids)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE faculty SET status = 'archived' WHERE user_id = ANY($1)")
+        .bind(&ids)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(users.rows_affected())
 }
 
 /// Deletes the accounts with the given ids, returning how many went.

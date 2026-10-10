@@ -211,6 +211,13 @@ pub async fn add(
     if course_id == 0 || name.is_empty() {
         return flash("Pick a course and give the exam a name.".into()).await;
     }
+    if !exams::course_options_for_semester(&s.db, programme_id, semester)
+        .await?
+        .iter()
+        .any(|course| course.id == course_id)
+    {
+        return flash("That course is not applicable to this programme and semester.".into()).await;
+    }
     if !valid_date(f.exam_date.trim()) {
         return flash("Choose a valid exam date.".into()).await;
     }

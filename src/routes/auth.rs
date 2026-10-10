@@ -8,7 +8,7 @@ use serde::Deserialize;
 use tower_sessions::Session;
 
 use crate::{
-    auth::{csrf, password, safe_next, AuthUser, SESSION_USER},
+    auth::{csrf, password, safe_next_for_role, AuthUser, SESSION_USER, SESSION_VERSION},
     error::{internal, AppError},
     services::users,
     shell::Shell,
@@ -113,13 +113,15 @@ pub async fn login_submit(
     tracing::info!(user_id = row.id, "signed in");
 
     let user = users::find_active(&s.db, row.id).await?.ok_or(AppError::Forbidden)?;
+    session.insert(SESSION_VERSION, user.session_version).await.map_err(internal)?;
     let home = crate::auth::Role::parse(&user.role)
         .map(|r| r.home())
         .unwrap_or("/");
     let target = if user.must_change_password {
         "/account/password"
     } else {
-        safe_next(&next).unwrap_or(home)
+        safe_next_for_role(&next, crate::auth::Role::parse(&user.role).unwrap_or(crate::auth::Role::Alumni))
+            .unwrap_or(home)
     };
     Ok(Redirect::to(target).into_response())
 }

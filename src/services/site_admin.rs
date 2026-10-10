@@ -436,6 +436,7 @@ pub async fn create_section(
 
 pub async fn update_section(
     db: &PgPool,
+    page_id: i64,
     id: i64,
     heading: &str,
     body: &str,
@@ -447,13 +448,14 @@ pub async fn update_section(
     let (layout, columns, image_align, text_align, photo_shape, photo_size) = opts.to_row();
     sqlx::query(
         r#"UPDATE page_sections
-           SET heading = $2, body = $3, photo_path = NULLIF($4, ''),
-               photo_caption = $5, published = $6,
-               layout = $7, grid_columns = $8, image_align = $9,
-               text_align = $10, photo_shape = $11, photo_size = $12
-           WHERE id = $1"#,
+           SET heading = $3, body = $4, photo_path = NULLIF($5, ''),
+               photo_caption = $6, published = $7,
+               layout = $8, grid_columns = $9, image_align = $10,
+               text_align = $11, photo_shape = $12, photo_size = $13
+           WHERE id = $1 AND page_id = $2"#,
     )
     .bind(id)
+    .bind(page_id)
     .bind(heading)
     .bind(body)
     .bind(photo)
@@ -470,19 +472,21 @@ pub async fn update_section(
     Ok(())
 }
 
-pub async fn delete_section(db: &PgPool, id: i64) -> Res<()> {
-    sqlx::query("DELETE FROM page_sections WHERE id = $1")
+pub async fn delete_section(db: &PgPool, page_id: i64, id: i64) -> Res<()> {
+    sqlx::query("DELETE FROM page_sections WHERE id = $1 AND page_id = $2")
         .bind(id)
+        .bind(page_id)
         .execute(db)
         .await?;
     Ok(())
 }
 
 /// Swap a section with its neighbour so the order can be fixed without numbers.
-pub async fn move_section(db: &PgPool, id: i64, up: bool) -> Res<()> {
+pub async fn move_section(db: &PgPool, page_id: i64, id: i64, up: bool) -> Res<()> {
     let current: Option<(i64, i32)> =
-        sqlx::query_as("SELECT page_id, sort_order FROM page_sections WHERE id = $1")
+        sqlx::query_as("SELECT page_id, sort_order FROM page_sections WHERE id = $1 AND page_id = $2")
             .bind(id)
+            .bind(page_id)
             .fetch_optional(db)
             .await?;
     let Some((page_id, order)) = current else {

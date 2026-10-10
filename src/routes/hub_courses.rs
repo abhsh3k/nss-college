@@ -13,7 +13,7 @@ use tower_sessions::Session;
 use crate::{
     auth::{csrf, StudentOnly},
     error::AppError,
-    services::{courses, hub},
+    services::{courses, hub, users},
     shell::{self, Shell},
     state::AppState,
 };
@@ -157,7 +157,10 @@ pub async fn select(
         return Err(AppError::NotFound);
     };
     match courses::select_course(&s.db, p.id, f.offering_id).await {
-        Ok(()) => shell::flash(&session, "Course added to your selection sheet.").await?,
+        Ok(()) => {
+            users::audit(&s.db, Some(user.id), "student_course_selected", "course_offering", Some(f.offering_id)).await?;
+            shell::flash(&session, "Course added to your selection sheet.").await?
+        }
         Err(AppError::Forbidden) => {
             shell::flash(&session, "That course is not open to you right now.").await?
         }
@@ -178,6 +181,7 @@ pub async fn withdraw(
         return Err(AppError::NotFound);
     };
     courses::withdraw_selection(&s.db, p.id, f.offering_id).await?;
+    users::audit(&s.db, Some(user.id), "student_course_withdrawn", "course_offering", Some(f.offering_id)).await?;
     shell::flash(&session, "Removed from your selection sheet.").await?;
     Ok(Redirect::to("/hub/courses"))
 }
@@ -222,6 +226,9 @@ pub async fn confirm(
             }
             tracing::warn!(student = p.id, offering = offering_id, error = ?e, "confirm failed");
         }
+    }
+    if problems == 0 {
+        users::audit(&s.db, Some(user.id), "student_course_selection_confirmed", "student", Some(p.id)).await?;
     }
     let hint = reason.map(|r| format!(" {r}")).unwrap_or_default();
     shell::flash(
@@ -281,7 +288,10 @@ pub async fn request_change(
     )
     .await
     {
-        Ok(()) => shell::flash(&session, "Change request sent to your HOD.").await?,
+        Ok(()) => {
+            users::audit(&s.db, Some(user.id), "student_course_change_requested", "course_offering", Some(f.offering_id)).await?;
+            shell::flash(&session, "Change request sent to your HOD.").await?
+        }
         Err(AppError::BadRequest(m)) => shell::flash(&session, m).await?,
         Err(AppError::Forbidden) => {
             shell::flash(&session, "That change is not possible right now.").await?

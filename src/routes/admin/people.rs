@@ -540,7 +540,11 @@ pub async fn set_active(
         return Ok(Redirect::to("/admin/people"));
     }
     let active = f.active == "1";
-    people::set_active(&s.db, id, active).await?;
+    if active {
+        people::set_active(&s.db, id, true).await?;
+    } else {
+        people::archive_user(&s.db, id).await?;
+    }
     users::audit(
         &s.db,
         Some(user.id),
@@ -1039,7 +1043,7 @@ async fn commit(
             continue;
         };
 
-        let temp = password::temp_password();
+        let temp = password::temporary();
         let hash = password::hash_blocking(temp.clone()).await?;
         let outcome = people::create_student(
             &s.db,
@@ -1232,10 +1236,10 @@ pub async fn bulk_delete(
         shell::flash(&session, "No one selected.").await?;
         return Ok(Redirect::to("/admin/people"));
     }
-    let deleted = people::delete_users(&s.db, &ids, user.id).await?;
-    if deleted > 0 {
-        users::audit(&s.db, Some(user.id), "users_deleted", "user", None).await?;
+    let archived = people::archive_users(&s.db, &ids, user.id).await?;
+    if archived > 0 {
+        users::audit(&s.db, Some(user.id), "users_archived", "user", None).await?;
     }
-    shell::flash(&session, format!("Deleted {deleted} account(s).")).await?;
+    shell::flash(&session, format!("Archived {archived} account(s); academic history was preserved.")).await?;
     Ok(Redirect::to("/admin/people"))
 }

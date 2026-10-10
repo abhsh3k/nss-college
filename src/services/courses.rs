@@ -764,8 +764,9 @@ async fn offering_for_confirm(
                   (SELECT count(*) FROM enrollments e
                     JOIN students est ON est.id = e.student_id AND est.is_active
                    WHERE e.offering_id = o.id AND e.status = 'active')
-             FROM course_offerings o
-            WHERE o.id = $1 AND o.status = 'published'"#,
+              FROM course_offerings o
+             WHERE o.id = $1 AND o.status = 'published'
+             FOR UPDATE"#,
     )
     .bind(offering_id)
     .fetch_optional(&mut **tx)

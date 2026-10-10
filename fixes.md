@@ -3,7 +3,13 @@
 Date: 2026-10-10  
 Scope: repository at `c982ec1`, the current `src/`, templates, migrations, setup files, and `redesign.md`.
 
-This document records the concrete fixes required by the redesign brief after inspecting the implementation. It is an implementation specification, not a claim that the fixes have already been applied.
+This document records the concrete fixes required by the redesign brief after inspecting the implementation, followed by the verification limitations for the implementation pass.
+
+## Implementation pass status
+
+Implemented in the current working tree: separate public/loopback management routers and configuration, loopback bind validation, protected upload delivery, manager `NULL`-department denial, HTMX attendance ownership/roster checks and read-only sheet loading, college-local time helpers, report/timetable/teacher-scope fixes, offering clash expansion, non-destructive account archival, transactional upload cleanup, page-section parent scoping, CMS publish restrictions, additive authorization/result-workflow migrations, student-action audit entries, and focused attendance unit tests.
+
+Not fully implemented yet: the complete appointment/permission cutover, result preview UI/commit handlers, full course-version migration, rate limiting/session revocation, backup automation, and the complete integration/end-to-end suite. These remain listed below with their required implementation details.
 
 ## 1. Executive summary
 

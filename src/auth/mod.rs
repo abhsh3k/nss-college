@@ -11,6 +11,7 @@ use tower_sessions::Session;
 use crate::{error::{internal, AppError}, services::users, state::AppState};
 
 pub const SESSION_USER: &str = "user_id";
+pub const SESSION_VERSION: &str = "session_version";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
@@ -112,17 +113,26 @@ impl FromRequestParts<AppState> for AuthUser {
         };
 
         match users::find_active(&state.db, user_id).await {
-            Ok(Some(row)) => match Role::parse(&row.role) {
-                Some(role) => Ok(AuthUser {
-                    id: row.id,
-                    full_name: row.full_name,
-                    role,
-                    must_change_password: row.must_change_password,
-                    is_hod: row.is_hod,
-                    can_manage: row.can_manage,
-                }),
-                None => Err(AppError::Forbidden.into_response()),
-            },
+            Ok(Some(row)) => {
+                if let Some(version) = session.get::<i64>(SESSION_VERSION).await
+                    .map_err(|e| internal(e).into_response())?
+                    && version != row.session_version
+                {
+                    let _ = session.flush().await;
+                    return Err(to_login(parts));
+                }
+                match Role::parse(&row.role) {
+                    Some(role) => Ok(AuthUser {
+                        id: row.id,
+                        full_name: row.full_name,
+                        role,
+                        must_change_password: row.must_change_password,
+                        is_hod: row.is_hod,
+                        can_manage: row.can_manage,
+                    }),
+                    None => Err(AppError::Forbidden.into_response()),
+                }
+            }
             Ok(None) => {
                 // Account removed or deactivated while signed in.
                 let _ = session.flush().await;
@@ -269,9 +279,16 @@ impl FromRequestParts<AppState> for Manager {
             return Err(AppError::Forbidden.into_response());
         };
 
+        // A department-scoped appointment without a department is invalid. It
+        // must deny access rather than being interpreted as a global scope by
+        // helpers that use Option<i64> for the department filter.
+        let Some(department_id) = p.department_id else {
+            return Err(AppError::Forbidden.into_response());
+        };
+
         Ok(Manager {
             user,
-            scope: Scope::Department(p.department_id),
+            scope: Scope::Department(Some(department_id)),
         })
     }
 }
@@ -282,5 +299,29 @@ pub fn safe_next(next: &str) -> Option<&str> {
         Some(next)
     } else {
         None
+    }
+}
+
+pub fn safe_next_for_role(next: &str, role: Role) -> Option<&str> {
+    let next = safe_next(next)?;
+    let allowed = match role {
+        Role::Admin | Role::Staff => next.starts_with("/admin") || next.starts_with("/account/"),
+        Role::Faculty => next.starts_with("/teacher") || next.starts_with("/admin/") || next.starts_with("/account/"),
+        Role::Student => next.starts_with("/hub") || next.starts_with("/account/"),
+        Role::Alumni => next == "/" || next.starts_with("/account/"),
+    };
+    allowed.then_some(next)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn post_login_redirect_is_limited_to_the_role_workspace() {
+        assert_eq!(safe_next_for_role("/hub/results", Role::Student), Some("/hub/results"));
+        assert_eq!(safe_next_for_role("/admin", Role::Student), None);
+        assert_eq!(safe_next_for_role("/admin/people", Role::Admin), Some("/admin/people"));
+        assert_eq!(safe_next_for_role("//evil.example", Role::Admin), None);
     }
 }

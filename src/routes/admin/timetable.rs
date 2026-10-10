@@ -69,6 +69,7 @@ impl Panel {
 
 async fn build_panel(
     s: &AppState,
+    department: Option<i64>,
     csrf_token: String,
     programme_id: i64,
     semester: i32,
@@ -104,7 +105,7 @@ async fn build_panel(
         programme_name: programme.name,
         days,
         courses,
-        teachers: academics::teacher_options(&s.db).await?,
+        teachers: academics::teacher_options_for(&s.db, department).await?,
         has_offering_periods,
         notice,
         error,
@@ -256,7 +257,7 @@ pub async fn page(
         // One panel at a time: an offering's periods are not a programme's.
         Panel::empty()
     } else if sel_programme > 0 {
-        build_panel(&s, shell.csrf_token.clone(), sel_programme, sel_semester, None, None).await?
+        build_panel(&s, department, shell.csrf_token.clone(), sel_programme, sel_semester, None, None).await?
     } else {
         Panel::empty()
     };
@@ -309,7 +310,7 @@ pub async fn add_slot(
     let semester = parse_i32(&f.semester).filter(|v| (1..=8).contains(v)).ok_or(AppError::NotFound)?;
     let token = f.csrf_token.clone();
 
-    let fail = |msg: &str| build_panel(&s, token.clone(), programme_id, semester, None, Some(msg.to_string()));
+    let fail = |msg: &str| build_panel(&s, manager.department(), token.clone(), programme_id, semester, None, Some(msg.to_string()));
 
     let weekday = parse_i32(&f.weekday).filter(|d| (1..=6).contains(d)).map(|d| d as i16);
     let start_at = normalise_time(&f.start_at);
@@ -330,6 +331,19 @@ pub async fn add_slot(
         Some(id) => id,
         None => academics::course_teacher(&s.db, course_id).await?,
     };
+    if faculty_id <= 0
+        || !academics::may_manage_teacher(&s.db, faculty_id, manager.department()).await?
+        || !sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM faculty WHERE id = $1 AND status = 'published')",
+        )
+        .bind(faculty_id)
+        .fetch_one(&s.db)
+        .await?
+    {
+        return Ok(PanelTemplate {
+            panel: fail("Choose an active teacher in the permitted department.").await?,
+        });
+    }
 
     let slot = NewSlot {
         programme_id,
@@ -366,7 +380,7 @@ pub async fn add_slot(
     users::audit(&s.db, Some(manager.user.id), "timetable_slot_added", "timetable_entry", Some(id)).await?;
     let notice = format!("Added {start_at}–{end_at}.");
     Ok(PanelTemplate {
-        panel: build_panel(&s, token, programme_id, semester, Some(notice), None).await?,
+        panel: build_panel(&s, manager.department(), token, programme_id, semester, Some(notice), None).await?,
     })
 }
 
@@ -404,12 +418,13 @@ pub async fn delete_slot(
         Ok(()) => {
             users::audit(&s.db, Some(manager.user.id), "timetable_slot_removed", "timetable_entry", Some(id)).await?;
             Ok(PanelTemplate {
-                panel: build_panel(&s, f.csrf_token, programme_id, semester, Some("Period removed.".into()), None).await?,
+                panel: build_panel(&s, manager.department(), f.csrf_token, programme_id, semester, Some("Period removed.".into()), None).await?,
             })
         }
         Err(e) if crate::error::is_foreign_key_violation(&e) => Ok(PanelTemplate {
             panel: build_panel(
                 &s,
+                manager.department(),
                 f.csrf_token,
                 programme_id,
                 semester,
@@ -478,6 +493,19 @@ pub async fn add_offering_slot(
         Some(id) => id,
         None => academics::course_teacher(&s.db, o.course_id).await?,
     };
+    if faculty_id <= 0
+        || !academics::may_manage_teacher(&s.db, faculty_id, manager.department()).await?
+        || !sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM faculty WHERE id = $1 AND status = 'published')",
+        )
+        .bind(faculty_id)
+        .fetch_one(&s.db)
+        .await?
+    {
+        return Ok(OfferingPanelTemplate {
+            offering_panel: fail("Choose an active teacher in the permitted department.").await?,
+        });
+    }
 
     let slot = NewOfferingSlot {
         offering_id,

@@ -933,6 +933,24 @@ async fn file_row(
     } else {
         None
     };
+    let state: Option<String> = sqlx::query_scalar(
+        r#"SELECT workflow_state FROM marks
+            WHERE student_id = $1 AND course_id = $2 AND assessment = $3
+              AND exam_kind = $4 AND exam_name = $5
+            FOR UPDATE"#,
+    )
+    .bind(c.student_id)
+    .bind(c.course_id)
+    .bind(assessment)
+    .bind(exam_kind)
+    .bind(exam_name)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if matches!(state.as_deref(), Some("finalized" | "superseded")) {
+        return Err(sqlx::Error::Protocol(
+            "finalized marks require the correction workflow".into(),
+        ));
+    }
     sqlx::query(
         r#"INSERT INTO marks (student_id, course_id, exam_id, assessment,
                               marks_obtained, max_marks, published,

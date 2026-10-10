@@ -110,9 +110,9 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/departments", get(departments::page))
         .route("/admin/departments/:id", post(departments::place))
         .route("/admin/departments/attendance", get(departments::attendance_page))
-        .route("/admin/departments/attendance/:entry_id", get(departments::mark_form))
+        .route("/admin/departments/attendance/:entry_id/:date", get(departments::mark_form))
         .route(
-            "/admin/departments/attendance/:entry_id/save",
+            "/admin/departments/attendance/:entry_id/:date/save",
             post(departments::mark_save),
         )
         // Attendance reporting

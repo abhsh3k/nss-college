@@ -63,19 +63,22 @@ pub async fn run(args: &[String], db: &PgPool) -> bool {
 }
 
 async fn create_user(args: &[String], db: &PgPool) -> Result<(), String> {
-    let [role_arg, email, full_name, maybe_pw] = args
-    else {
+    if !(3..=4).contains(&args.len()) {
         return Err("usage: cargo run -- create-user <admin|staff|faculty|student> <email> \"<Full name>\"".into());
-    };
+    }
+    let role_arg = &args[0];
+    let email = &args[1];
+    let full_name = &args[2];
+    let maybe_pw = args.get(3).map(String::as_str);
     let role = Role::parse(role_arg).ok_or("role must be admin, staff, faculty, student or alumni")?;
     if !email.contains('@') {
         return Err("email must contain @ (students without email can use admission-number@college.local)".into());
     }
 
-    let pw: String = args
-        .get(3)
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| prompt_new_password("Password", password::MIN_LENGTH).unwrap());
+    let pw: String = match maybe_pw {
+        Some(value) if !value.trim().is_empty() => value.trim().to_string(),
+        _ => prompt_new_password("Password", password::MIN_LENGTH)?,
+    };
 
     let hash = password::hash_blocking(pw).await.map_err(|_| "could not hash password".to_string())?;
     // Everyone except the first administrator must replace the password they were given.
@@ -86,7 +89,7 @@ async fn create_user(args: &[String], db: &PgPool) -> Result<(), String> {
             Some("23505") => "an account with that email already exists".to_string(),
             _ => e.to_string(),
         })?;
-    let _ = users::audit(db, None, "user_created_cli", "user", Some(id)).await;        let _ = users::audit(db, None, "user_created_cli", "user", Some(id)).await; // defensive re-audit
+    let _ = users::audit(db, None, "user_created_cli", "user", Some(id)).await;
 
         println!("Created {} account for {} (id {id}).", role.label(), email.trim());
         Ok(())

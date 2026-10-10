@@ -1,11 +1,14 @@
 use askama::Template;
 use axum::{
     extract::{Path, State},
-    http::Uri,
+    body::Body,
+    http::{header, Uri},
     response::{IntoResponse, Response},
 };
+use std::path::Path as FsPath;
 
 use crate::{
+    auth::{AuthUser, Role},
     error::AppError,
     layout::{self, DisplayOptions},
     models::{Department, Facility, HomeCopy, Milestone, NewsItem, Notice, PageSection, Programme, RankHolder, SiteInfo, Unit},
@@ -16,6 +19,75 @@ use crate::{
 
 pub async fn health() -> &'static str {
     "ok"
+}
+
+/// Serve only files that are currently visible to the requesting audience.
+/// The raw upload directory is intentionally not mounted with ServeDir: a
+/// guessed path must not reveal a draft or archived CMS asset.
+pub async fn upload(
+    State(s): State<AppState>,
+    user: Option<AuthUser>,
+    Path(path): Path<String>,
+) -> Result<Response, AppError> {
+    if path.is_empty() || path.split('/').any(|part| part.is_empty() || part == "." || part == "..") {
+        return Err(AppError::NotFound);
+    }
+    let web_path = format!("/uploads/{path}");
+    let is_student = user.as_ref().is_some_and(|u| u.role == Role::Student);
+    let is_faculty = user.as_ref().is_some_and(|u| u.role == Role::Faculty);
+
+    let mime: Option<String> = sqlx::query_scalar(
+        r#"SELECT u.mime_type
+             FROM uploads u
+            WHERE u.path = $1
+              AND (
+                    EXISTS (SELECT 1 FROM documents d
+                             WHERE d.file_path = u.path
+                               AND d.status = 'published'
+                               AND d.published_at <= now())
+                 OR EXISTS (SELECT 1 FROM notices n
+                             WHERE n.attachment_path = u.path
+                               AND n.status = 'published'
+                               AND n.published_at <= now()
+                               AND (n.audience = 'public'
+                                    OR ($2 AND n.audience = 'students')
+                                    OR ($3 AND n.audience = 'faculty')))
+                 OR EXISTS (SELECT 1 FROM news n
+                             WHERE n.image_path = u.path
+                               AND n.status = 'published'
+                               AND n.published_at <= now())
+                 OR EXISTS (SELECT 1 FROM events e
+                             WHERE e.image_path = u.path
+                               AND e.status = 'published'
+                               AND e.audience = 'public')
+                 OR EXISTS (SELECT 1 FROM rank_holders r
+                             WHERE r.photo_path = u.path AND r.status = 'published')
+                 OR EXISTS (SELECT 1 FROM faculty f
+                             WHERE f.photo_path = u.path AND f.status = 'published')
+                 OR EXISTS (SELECT 1 FROM home_sections h
+                             WHERE h.photo_path = u.path AND h.published)
+                 OR EXISTS (SELECT 1 FROM page_sections ps
+                             JOIN pages p ON p.id = ps.page_id
+                            WHERE ps.photo_path = u.path
+                              AND ps.published AND p.status = 'published')
+              )"#,
+    )
+    .bind(&web_path)
+    .bind(is_student)
+    .bind(is_faculty)
+    .fetch_optional(&s.db)
+    .await?;
+    let Some(mime) = mime else {
+        return Err(AppError::NotFound);
+    };
+
+    let disk_path = FsPath::new(&s.upload_dir).join(&path);
+    let bytes = tokio::fs::read(disk_path).await.map_err(|_| AppError::NotFound)?;
+    Response::builder()
+        .header(header::CONTENT_TYPE, mime)
+        .header(header::CACHE_CONTROL, "public, max-age=300")
+        .body(Body::from(bytes))
+        .map_err(|e| AppError::Internal(format!("could not build upload response: {e}")))
 }
 
 /// A `pages` row used purely as the title and lede for a list page.

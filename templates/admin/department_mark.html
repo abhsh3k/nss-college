@@ -11,7 +11,7 @@
   Attendance can be changed for {{ window_days }} day(s) back. Saving is recorded against your account.
 </p>
 
-<form method="post" action="/admin/departments/attendance/{{ period.entry_id }}/save?date={{ period.on_date }}" class="mt-8">
+<form method="post" action="/admin/departments/attendance/{{ period.entry_id }}/{{ period.on_date }}/save" class="mt-8">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <table class="w-full min-w-[32rem] text-left">
     <thead>

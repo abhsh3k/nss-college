@@ -10,7 +10,7 @@ use tower_sessions::Session;
 
 use super::{statuses, TokenForm};
 use crate::{
-    auth::{csrf, AuthUser, OfficeOrAdmin},
+    auth::{csrf, AdminOnly, AuthUser, OfficeOrAdmin},
     error::AppError,
     services::{
         content_admin::{self, NewsInput, NewsRow},
@@ -43,7 +43,7 @@ pub struct IndexPage {
 pub async fn index(
     State(s): State<AppState>,
     session: Session,
-    OfficeOrAdmin(user): OfficeOrAdmin,
+    AdminOnly(user): AdminOnly,
     Query(q): Query<ListQuery>,
 ) -> Result<IndexPage, AppError> {
     let filter = match q.status.as_deref() {
@@ -110,7 +110,7 @@ fn form_page(form: NewsFormValues, shell: Shell) -> FormPage {
 pub async fn new_form(
     State(_s): State<AppState>,
     session: Session,
-    OfficeOrAdmin(user): OfficeOrAdmin,
+    AdminOnly(user): AdminOnly,
 ) -> Result<FormPage, AppError> {
     Ok(form_page(NewsFormValues::blank(), Shell::build(&user, &session).await?))
 }
@@ -268,7 +268,7 @@ pub async fn update(
 pub async fn set_status(
     State(s): State<AppState>,
     session: Session,
-    OfficeOrAdmin(user): OfficeOrAdmin,
+    AdminOnly(user): AdminOnly,
     Path(id): Path<i64>,
     Form(f): Form<TokenForm>,
 ) -> Result<Redirect, AppError> {
@@ -308,7 +308,7 @@ pub async fn set_status(
 pub async fn destroy(
     State(s): State<AppState>,
     session: Session,
-    OfficeOrAdmin(user): OfficeOrAdmin,
+    AdminOnly(user): AdminOnly,
     Path(id): Path<i64>,
     Form(f): Form<TokenForm>,
 ) -> Result<Redirect, AppError> {

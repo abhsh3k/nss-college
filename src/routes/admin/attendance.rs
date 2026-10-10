@@ -32,16 +32,6 @@ pub struct ReportQuery {
     teacher: Option<String>,
 }
 
-/// Default to the current month when the form has not chosen a period yet.
-fn month_bounds() -> (String, String) {
-    let today = sqlx::types::time::OffsetDateTime::now_utc().date();
-    let first = today
-        .replace_day(1)
-        .map(|d| d.to_string())
-        .unwrap_or_else(|_| today.to_string());
-    (first, today.to_string())
-}
-
 /// A date from the query string, but only when it is a real `YYYY-MM-DD` date.
 fn date_or(value: Option<&String>, fallback: &str) -> String {
     match value.map(|v| v.trim()) {
@@ -50,8 +40,9 @@ fn date_or(value: Option<&String>, fallback: &str) -> String {
     }
 }
 
-fn read_filter(q: &ReportQuery) -> Filter {
-    let (default_from, default_to) = month_bounds();
+async fn read_filter(db: &sqlx::PgPool, q: &ReportQuery) -> Result<Filter, AppError> {
+    let default_to = crate::services::attendance::today(db).await?;
+    let default_from = format!("{}-01", &default_to[..7]);
     let from = date_or(q.from.as_ref(), &default_from);
     let to = date_or(q.to.as_ref(), &default_to);
 
@@ -59,13 +50,13 @@ fn read_filter(q: &ReportQuery) -> Filter {
     // would silently return nothing: swap it instead.
     let (from, to) = if from > to { (to, from) } else { (from, to) };
 
-    Filter {
+    Ok(Filter {
         from,
         to,
         programme_id: q.programme.as_deref().and_then(parse_i64).unwrap_or(0).max(0),
         course_id: q.course.as_deref().and_then(parse_i64).unwrap_or(0).max(0),
         faculty_id: q.teacher.as_deref().and_then(parse_i64).unwrap_or(0).max(0),
-    }
+    })
 }
 
 #[derive(Template)]
@@ -114,7 +105,7 @@ pub async fn report(
     AdminOnly(user): AdminOnly,
     Query(q): Query<ReportQuery>,
 ) -> Result<ReportPage, AppError> {
-    let filter = read_filter(&q);
+    let filter = read_filter(&s.db, &q).await?;
     let (rows, sessions, totals, low_percent, leave_counts) = gather(&s, &filter).await?;
 
     Ok(ReportPage {
@@ -140,7 +131,7 @@ pub async fn csv(
     AdminOnly(_user): AdminOnly,
     Query(q): Query<ReportQuery>,
 ) -> Result<Response, AppError> {
-    let filter = read_filter(&q);
+    let filter = read_filter(&s.db, &q).await?;
     let (rows, _sessions, _totals, _low, _leave) = gather(&s, &filter).await?;
 
     let bytes = reports::students_csv(&rows).map_err(|e| {

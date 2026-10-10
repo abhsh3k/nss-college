@@ -103,8 +103,7 @@ pub async fn by_student(db: &PgPool, f: &Filter) -> Res<Vec<StudentSummary>> {
 /// Per-session totals, newest first.
 pub async fn by_session(db: &PgPool, f: &Filter) -> Res<Vec<SessionSummary>> {
     let sql = format!(
-        r#"SELECT sess.on_date,
-                  to_char(sess.on_date, 'YYYY-MM-DD') AS on_date,
+            r#"SELECT to_char(sess.on_date, 'YYYY-MM-DD') AS on_date,
                   to_char(sess.on_date, 'DD Mon YYYY') AS date_label,
                   c.code AS course_code,
                   c.title AS course_title,
@@ -114,13 +113,14 @@ pub async fn by_session(db: &PgPool, f: &Filter) -> Res<Vec<SessionSummary>> {
                   count(ar.id) FILTER (WHERE ar.status = 'present') AS present,
                   count(ar.id) FILTER (WHERE ar.status = 'absent') AS absent,
                   count(ar.id) FILTER (WHERE ar.status = 'leave') AS leave
-           FROM attendance_sessions sess
-           JOIN courses c ON c.id = sess.course_id
-           LEFT JOIN faculty f ON f.id = sess.taught_by
-           LEFT JOIN timetable_entries te ON te.id = sess.timetable_entry_id
-           JOIN attendance_records ar ON ar.session_id = sess.id
-           WHERE sess.on_date BETWEEN $1::date AND $2::date
-             AND ($3 = 0 OR c.programme_id = $3)
+            FROM attendance_sessions sess
+            JOIN courses c ON c.id = sess.course_id
+            LEFT JOIN faculty f ON f.id = sess.taught_by
+            LEFT JOIN timetable_entries te ON te.id = sess.timetable_entry_id
+            JOIN attendance_records ar ON ar.session_id = sess.id
+            JOIN students st ON st.id = ar.student_id
+            WHERE sess.on_date BETWEEN $1::date AND $2::date
+              AND ($3 = 0 OR st.programme_id = $3)
              AND ($4 = 0 OR sess.course_id = $4)
              AND ($5 = 0 OR sess.taught_by = $5)
            GROUP BY sess.id, sess.on_date, c.code, c.title, f.name, te.start_time, te.end_time

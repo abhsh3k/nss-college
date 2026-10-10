@@ -18,6 +18,7 @@ pub struct SessionUserRow {
     pub must_change_password: bool,
     pub is_hod: bool,
     pub can_manage: bool,
+    pub session_version: i64,
 }
 
 /// Sign in with the account email or, for students, the admission number.
@@ -48,7 +49,8 @@ pub async fn find_active(db: &PgPool, id: i64) -> Res<Option<SessionUserRow>> {
     sqlx::query_as::<_, SessionUserRow>(
         r#"SELECT u.id, u.full_name, u.role, u.must_change_password,
                   COALESCE(f.is_hod, false) AS is_hod,
-                  COALESCE(f.can_manage, false) AS can_manage
+                   COALESCE(f.can_manage, false) AS can_manage,
+                   u.session_version
            FROM users u
            LEFT JOIN faculty f ON f.user_id = u.id
            WHERE u.id = $1 AND u.is_active"#,
@@ -90,7 +92,7 @@ pub async fn password_hash(db: &PgPool, id: i64) -> Res<String> {
 
 pub async fn set_password(db: &PgPool, id: i64, new_hash: &str) -> Res<()> {
     sqlx::query(
-        "UPDATE users SET password_hash = $2, must_change_password = false, password_changed_at = now() WHERE id = $1",
+        "UPDATE users SET password_hash = $2, must_change_password = false, password_changed_at = now(), session_version = session_version + 1 WHERE id = $1",
     )
     .bind(id)
     .bind(new_hash)
@@ -159,7 +161,7 @@ pub async fn overview_counts(db: &PgPool) -> Res<Counts> {
 /// Reset: new temporary password, forced change at next sign-in, lock cleared.
 pub async fn set_temp_password(db: &PgPool, id: i64, new_hash: &str) -> Res<()> {
     sqlx::query(
-        "UPDATE users SET password_hash = $2, must_change_password = true, failed_logins = 0, locked_until = NULL WHERE id = $1",
+        "UPDATE users SET password_hash = $2, must_change_password = true, failed_logins = 0, locked_until = NULL, session_version = session_version + 1 WHERE id = $1",
     )
     .bind(id)
     .bind(new_hash)

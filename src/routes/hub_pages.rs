@@ -7,7 +7,6 @@ use std::collections::{BTreeMap, HashMap};
 use askama::Template;
 use axum::extract::{Query, State};
 use serde::Deserialize;
-use sqlx::types::time::OffsetDateTime;
 use crate::services::attendance;
 use tower_sessions::Session;
 
@@ -36,14 +35,7 @@ pub struct TimetableTemplate {
 }
 
 async fn now_parts(db: &sqlx::PgPool) -> Result<(String, String, i16), AppError> {
-    let today_str = attendance::today(db).await?;
-    let now = OffsetDateTime::now_utc();
-    let now_hm = format!("{:02}:{:02}", now.hour(), now.minute());
-    let weekday_today: i16 = sqlx::query_scalar("SELECT EXTRACT(ISODOW FROM (now() AT TIME ZONE 'Asia/Kolkata'))::int")
-        .fetch_one(db)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    Ok((today_str, now_hm, weekday_today))
+    Ok(attendance::now_parts(db).await?)
 }
 
 pub async fn timetable(

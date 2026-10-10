@@ -37,6 +37,19 @@ pub async fn today(db: &PgPool) -> Res<String> {
         .await
 }
 
+/// The college-local date, clock time and ISO weekday in one query. Keeping
+/// these values together prevents a UTC date from being combined with an IST
+/// weekday or timetable clock.
+pub async fn now_parts(db: &PgPool) -> Res<(String, String, i16)> {
+    sqlx::query_as(&format!(
+        "SELECT to_char({TODAY}, 'YYYY-MM-DD'),\
+                to_char(now() AT TIME ZONE 'Asia/Kolkata', 'HH24:MI'),\
+                EXTRACT(ISODOW FROM now() AT TIME ZONE 'Asia/Kolkata')::smallint"
+    ))
+    .fetch_one(db)
+    .await
+}
+
 /// The earliest date that can still be edited, as YYYY-MM-DD.
 pub async fn window_start(db: &PgPool, days: i32) -> Res<String> {
     sqlx::query_scalar(&format!("SELECT to_char({TODAY} - $1::int, 'YYYY-MM-DD')"))
@@ -477,12 +490,19 @@ pub async fn teacher_day(db: &PgPool, teacher_id: i64, date: &str) -> Res<Vec<Co
         r#"SELECT t.id AS entry_id,
                   to_char(t.start_time, 'HH24:MI') AS start_at,
                   to_char(t.end_time, 'HH24:MI') AS end_at,
-                  c.title AS course, p.name AS programme, t.semester,
+                   c.title AS course,
+                   COALESCE(p.name,
+                       (SELECT string_agg(DISTINCT pp.name, ' / ' ORDER BY pp.name)
+                          FROM course_offering_targets t2
+                          JOIN programmes pp ON pp.id = t2.programme_id
+                         WHERE t2.offering_id = t.course_offering_id),
+                       'Offered course') AS programme,
+                   t.semester,
                   COALESCE(sub.id, 0) AS substitution_id,
                   COALESCE(sf.name, '') AS substitute
            FROM timetable_entries t
            JOIN courses c ON c.id = t.course_id
-           JOIN programmes p ON p.id = t.programme_id
+            LEFT JOIN programmes p ON p.id = t.programme_id
            LEFT JOIN substitutions sub ON sub.timetable_entry_id = t.id AND sub.on_date = $2::date
            LEFT JOIN faculty sf ON sf.id = sub.substitute_faculty_id
            WHERE t.faculty_id = $1 AND t.weekday = EXTRACT(ISODOW FROM $2::date)::int
@@ -554,4 +574,25 @@ pub async fn remove_substitution(db: &PgPool, id: i64) -> Res<()> {
         .execute(db)
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn date_validation_rejects_impossible_and_out_of_range_dates() {
+        assert!(valid_date("2024-02-29"));
+        assert!(!valid_date("2023-02-29"));
+        assert!(!valid_date("2024-04-31"));
+        assert!(!valid_date("1999-12-31"));
+        assert!(!valid_date("2024-1-01"));
+    }
+
+    #[test]
+    fn attendance_percentage_applies_the_leave_policy() {
+        assert_eq!(percent(3, 1, 5, false), Some(60.0));
+        assert_eq!(percent(3, 1, 5, true), Some(80.0));
+        assert_eq!(percent(0, 0, 0, true), None);
+    }
 }

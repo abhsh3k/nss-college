@@ -17,16 +17,20 @@ use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::{seo, state::AppState};
 
-pub fn router() -> Router<AppState> {
-    // Signed-in pages: never cached, so the back button after sign-out shows nothing private.
-    let protected = Router::new()
+fn auth_routes() -> Router<AppState> {
+    Router::new()
         .route("/login", get(auth::login_form).post(auth::login_submit))
         .route("/logout", post(auth::logout))
         .route(
             "/account/password",
             get(auth::password_form).post(auth::password_submit),
         )
-        .route("/admin", get(dashboards::admin))
+}
+
+fn signed_in_public_routes() -> Router<AppState> {
+    // Signed-in pages: never cached, so the back button after sign-out shows
+    // nothing private. Administrative routes are deliberately not included.
+    Router::new()
         .route("/teacher", get(teacher::today))
         .route("/teacher/attendance", get(teacher::attendance_list))
         .route(
@@ -35,7 +39,6 @@ pub fn router() -> Router<AppState> {
         )
         .route("/teacher/timetable", get(teacher::timetable))
         .route("/teacher/reports", get(teacher::reports))
-        // The newer HTMX attendance sheet, kept alongside the pages above.
         .route("/teacher/sheet", get(dashboards::teacher))
         .route("/hub", get(dashboards::student))
         .route("/hub/timetable", get(hub_pages::timetable))
@@ -46,16 +49,24 @@ pub fn router() -> Router<AppState> {
         .route("/hub/courses/withdraw", post(hub_courses::withdraw))
         .route("/hub/courses/confirm", post(hub_courses::confirm))
         .route("/hub/courses/change", post(hub_courses::request_change))
-        // Add these alongside your existing dashboard routes:
-        .route("/dashboard/teacher/session/:entry_id/attendance", axum::routing::get(teacher::get_attendance_sheet))
-        .route("/dashboard/teacher/session/:session_id/toggle", axum::routing::post(teacher::toggle_attendance_status))
-        .merge(admin::routes())
+        .route(
+            "/dashboard/teacher/session/:entry_id/attendance",
+            get(teacher::get_attendance_sheet),
+        )
+        .route(
+            "/dashboard/teacher/session/:session_id/toggle",
+            post(teacher::toggle_attendance_status),
+        )
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),
-        ));
+        ))
+}
 
-    Router::new()
+/// Routes reachable on the public listener. The administrative management
+/// router is bound separately to loopback by `main`.
+pub fn public_router() -> Router<AppState> {
+    let site = Router::new()
         .route("/", get(public::home))
         .route("/academics", get(public::programmes))
         .route("/academics/rank-holders", get(public::rank_holders))
@@ -69,20 +80,35 @@ pub fn router() -> Router<AppState> {
         .route("/about/staff", get(about::page))
         .route("/fragments/notices", get(htmx::notices))
         .route("/fragments/account-link", get(htmx::account_link))
+        .route("/uploads/*path", get(public::upload))
         .route("/robots.txt", get(seo::robots))
         .route("/sitemap.xml", get(seo::sitemap))
         .route("/healthz", get(public::health))
-        // Informational pages (about, IQAC, fees, ...) are looked up by path in the database,
-        // so pages created in the admin dashboard work without a restart.
+        // Informational pages are rendered from the database, so an edit made
+        // in the admin must not be hidden behind a cached copy.
         .fallback(public::page_or_404)
-        // The public pages are rendered from the database, so an edit made in
-        // the admin must not be hidden behind a cached copy. `no-cache` makes
-        // the browser revalidate every time, on the routes above and on the
-        // fallback alike. It is applied before the merge, so the signed-in
-        // pages keep their stricter `no-store` from their own layer.
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-cache"),
+        ));
+
+    site.merge(auth_routes()).merge(signed_in_public_routes())
+}
+
+/// Routes for the loopback-only management listener. Keeping this router
+/// separate makes the network boundary independent of navigation and role
+/// checks.
+pub fn management_router() -> Router<AppState> {
+    auth_routes()
+        .merge(admin::routes())
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
         ))
-        .merge(protected)
+}
+
+/// Compatibility constructor for test harnesses that still need the complete
+/// route tree. Production uses `public_router` and `management_router`.
+pub fn router() -> Router<AppState> {
+    public_router().merge(admin::routes())
 }

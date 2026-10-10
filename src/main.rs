@@ -15,7 +15,8 @@ mod uploads;
 
 use std::time::Duration;
 
-use axum::http::{header, HeaderValue};
+use axum::{http::{header, HeaderValue}, Router};
+use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use tower_http::{
     compression::CompressionLayer, services::ServeDir, set_header::SetResponseHeaderLayer,
@@ -76,11 +77,7 @@ async fn main() {
         .unwrap_or(false)
     {
         match cli::seed_demo_users(&db).await {
-            Ok(lines) => {
-                for line in lines {
-                    tracing::warn!("{line}");
-                }
-            }
+            Ok(_) => tracing::warn!("demo accounts seeded; retrieve credentials through the operator-only bootstrap output"),
             Err(msg) => tracing::error!("SEED: demo user seeding failed: {msg}"),
         }
     }
@@ -114,10 +111,47 @@ async fn main() {
         upload_dir: cfg.upload_dir.clone(),
     };
 
-    // App assets (css/js/img) and user uploads live in separate directories.
-    let app = routes::router()
+    // App assets live on both listeners. User uploads are served through an
+    // authorization-aware route rather than a raw directory mount.
+    let public_app = apply_layers(routes::public_router(), &state.db, cfg.cookie_secure)
+        .with_state(state.clone());
+    let management_app = apply_layers(
+        routes::management_router(),
+        &state.db,
+        cfg.cookie_secure,
+    )
+    .with_state(state);
+
+    let public_listener = tokio::net::TcpListener::bind(cfg.addr)
+        .await
+        .expect("failed to bind public address");
+    let management_listener = tokio::net::TcpListener::bind(cfg.management_addr)
+        .await
+        .expect("failed to bind management address");
+    tracing::info!(address = %cfg.addr, "public listener ready");
+    tracing::info!(address = %cfg.management_addr, "loopback management listener ready");
+
+    tokio::try_join!(
+        axum::serve(public_listener, public_app),
+        axum::serve(management_listener, management_app),
+    )
+    .expect("server error");
+}
+
+fn apply_layers(
+    router: Router<AppState>,
+    db: &PgPool,
+    cookie_secure: bool,
+) -> Router<AppState> {
+    let session_store = PostgresStore::new(db.clone());
+    let session_layer = SessionManagerLayer::new(session_store)
+        .with_name("nss_session")
+        .with_secure(cookie_secure)
+        .with_same_site(SameSite::Lax)
+        .with_expiry(Expiry::OnInactivity(CookieDuration::hours(8)));
+
+    router
         .nest_service("/static", ServeDir::new("static"))
-        .nest_service("/uploads", ServeDir::new(&cfg.upload_dir))
         .layer(session_layer)
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_CONTENT_TYPE_OPTIONS,
@@ -133,11 +167,4 @@ async fn main() {
         ))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
-        .with_state(state);
-
-    let listener = tokio::net::TcpListener::bind(cfg.addr)
-        .await
-        .expect("failed to bind address");
-    tracing::info!("listening on http://{}", cfg.addr);
-    axum::serve(listener, app).await.expect("server error");
 }

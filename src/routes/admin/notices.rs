@@ -10,7 +10,7 @@ use tower_sessions::Session;
 
 use super::{audiences, statuses, TokenForm};
 use crate::{
-    auth::{csrf, AuthUser, OfficeOrAdmin},
+    auth::{csrf, AdminOnly, AuthUser, OfficeOrAdmin},
     error::AppError,
     services::{
         content_admin::{self, NoticeInput, NoticeRow},
@@ -312,7 +312,7 @@ pub async fn update(
 pub async fn set_status(
     State(s): State<AppState>,
     session: Session,
-    OfficeOrAdmin(user): OfficeOrAdmin,
+    AdminOnly(user): AdminOnly,
     Path(id): Path<i64>,
     Form(f): Form<TokenForm>,
 ) -> Result<Redirect, AppError> {
@@ -352,7 +352,7 @@ pub async fn set_status(
 pub async fn destroy(
     State(s): State<AppState>,
     session: Session,
-    OfficeOrAdmin(user): OfficeOrAdmin,
+    AdminOnly(user): AdminOnly,
     Path(id): Path<i64>,
     Form(f): Form<TokenForm>,
 ) -> Result<Redirect, AppError> {

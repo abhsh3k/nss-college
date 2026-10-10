@@ -71,10 +71,10 @@ pub async fn week_schedule(
                   -- cross-department course appears without re-entering it
                   -- per programme.
                   SELECT o.id
-                    FROM course_offerings o
-                    JOIN enrollments e ON e.course_id = o.course_id
-                                       AND e.status = 'active'
-                                       AND e.student_id = $1)
+                     FROM course_offerings o
+                     JOIN enrollments e ON e.offering_id = o.id
+                                        AND e.status = 'active'
+                                        AND e.student_id = $1)
            ORDER BY te.weekday, te.start_time"#,
     )
     .bind(student_id)

@@ -449,6 +449,7 @@ pub async fn update_section(
     let opts = layout::from_form(&body);
     site_admin::update_section(
         &s.db,
+        page_id,
         section_id,
         heading,
         body.field("body"),
@@ -479,7 +480,7 @@ pub async fn delete_section(
     if site_admin::page_for_edit(&s.db, page_id).await?.is_none() {
         return Err(AppError::NotFound);
     }
-    site_admin::delete_section(&s.db, section_id).await?;
+    site_admin::delete_section(&s.db, page_id, section_id).await?;
     users::audit(&s.db, Some(user.id), "page_section_deleted", "page", Some(page_id)).await?;
     flash(&session, "Section removed.").await?;
     Ok(Redirect::to(&back_to(page_id)))
@@ -504,7 +505,7 @@ pub async fn move_section(
         return Err(AppError::NotFound);
     }
     // The button carries "up" when ticked, so its presence means move up.
-    site_admin::move_section(&s.db, section_id, !f.up.is_empty()).await?;
+    site_admin::move_section(&s.db, page_id, section_id, !f.up.is_empty()).await?;
     users::audit(&s.db, Some(user.id), "page_section_moved", "page", Some(page_id)).await?;
     Ok(Redirect::to(&back_to(page_id)))
 }

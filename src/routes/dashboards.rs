@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use askama::Template;
 use axum::extract::State;
-use sqlx::{types::time::OffsetDateTime, FromRow};
+use sqlx::FromRow;
 use tower_sessions::Session;
 
 use crate::{
@@ -11,6 +11,7 @@ use crate::{
     models::Notice,
     sections::{self, Area},
     services::{
+        attendance,
         exams::{self, ExamNotice},
         hub,
         users::{self, Counts},
@@ -102,12 +103,7 @@ pub async fn teacher(
     session: Session,
     TeacherOnly(user): TeacherOnly,
 ) -> Result<TeacherTemplate, AppError> {
-    let now = OffsetDateTime::now_utc();
-    let today = now.date();
-    let today_str = today.to_string();
-
-    // Directly returns Monday=1 .. Sunday=7 as i16
-    let weekday_num = today.weekday().number_from_monday() as i16;
+    let (today_str, _, weekday_num) = attendance::now_parts(&s.db).await?;
 
     // Fetch faculty ID linked to logged-in user
     let faculty_id: Option<i64> = sqlx::query_scalar("SELECT id FROM faculty WHERE user_id = $1")
@@ -132,17 +128,17 @@ pub async fn teacher(
             JOIN courses c ON c.id = te.course_id
             LEFT JOIN substitutions s
                    ON s.timetable_entry_id = te.id
-                  AND s.on_date = $2
+                   AND s.on_date = $2::date
             LEFT JOIN attendance_sessions att
                    ON att.timetable_entry_id = te.id
-                  AND att.on_date = $2
+                   AND att.on_date = $2::date
             WHERE ((te.faculty_id = $1 AND te.weekday = $3 AND s.id IS NULL)
                OR s.substitute_faculty_id = $1)
             ORDER BY te.start_time ASC
             "#,
         )
         .bind(faculty_id)
-        .bind(today)
+        .bind(&today_str)
         .bind(weekday_num)
         .fetch_all(&s.db)
         .await?;
@@ -282,11 +278,7 @@ pub async fn student(
     let shell = Shell::build(&user, &session).await?;
     let feed = hub::student_feed(&s.db, 5).await?;
 
-    let now = OffsetDateTime::now_utc();
-    let today = now.date();
-    let today_str = today.to_string();
-    let now_hm = format!("{:02}:{:02}", now.hour(), now.minute());
-    let weekday_today = today.weekday().number_from_monday() as i16;
+    let (today_str, now_hm, weekday_today) = attendance::now_parts(&s.db).await?;
 
     // Without a student row there is nothing to show yet (account just created).
     let Some(p) = hub::student_profile(&s.db, user.id).await? else {

@@ -500,8 +500,17 @@ pub async fn offering_clashes(db: &PgPool, n: &NewOfferingSlot) -> Res<Vec<Clash
     sqlx::query_as::<_, Clash>(
         r#"SELECT COALESCE(t.faculty_id = NULLIF($3, 0), false) AS same_teacher,
                   COALESCE(t.room IS NOT NULL AND t.room <> '' AND lower(t.room) = lower($4), false) AS same_room,
-                  (t.course_offering_id = $1)
-                  OR (t.programme_id IS NOT NULL AND t.semester = (SELECT o.semester FROM course_offerings o WHERE o.id = $1)
+                   (t.course_offering_id = $1)
+                   OR (t.course_offering_id IS NOT NULL
+                       AND t.semester = (SELECT o.semester FROM course_offerings o WHERE o.id = $1)
+                       AND EXISTS (
+                           SELECT 1
+                             FROM course_offering_targets own_target
+                             JOIN course_offering_targets other_target
+                               ON other_target.programme_id = own_target.programme_id
+                            WHERE own_target.offering_id = $1
+                              AND other_target.offering_id = t.course_offering_id))
+                   OR (t.programme_id IS NOT NULL AND t.semester = (SELECT o.semester FROM course_offerings o WHERE o.id = $1)
                       AND EXISTS (SELECT 1 FROM course_offering_targets tg
                                    WHERE tg.offering_id = $1 AND tg.programme_id = t.programme_id)) AS same_class,
                   c.title AS course,
@@ -512,8 +521,17 @@ pub async fn offering_clashes(db: &PgPool, n: &NewOfferingSlot) -> Res<Vec<Clash
              AND t.start_time < $6::time AND t.end_time > $5::time
              AND ( COALESCE(t.faculty_id = NULLIF($3, 0), false)
                    OR COALESCE(t.room IS NOT NULL AND t.room <> '' AND lower(t.room) = lower($4), false)
-                   OR t.course_offering_id = $1
-                   OR (t.programme_id IS NOT NULL
+                    OR t.course_offering_id = $1
+                    OR (t.course_offering_id IS NOT NULL
+                        AND t.semester = (SELECT o.semester FROM course_offerings o WHERE o.id = $1)
+                        AND EXISTS (
+                            SELECT 1
+                              FROM course_offering_targets own_target
+                              JOIN course_offering_targets other_target
+                                ON other_target.programme_id = own_target.programme_id
+                             WHERE own_target.offering_id = $1
+                               AND other_target.offering_id = t.course_offering_id))
+                    OR (t.programme_id IS NOT NULL
                        AND t.semester = (SELECT o.semester FROM course_offerings o WHERE o.id = $1)
                        AND EXISTS (SELECT 1 FROM course_offering_targets tg
                                     WHERE tg.offering_id = $1 AND tg.programme_id = t.programme_id)) )"#,

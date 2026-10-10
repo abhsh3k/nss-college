@@ -17,7 +17,8 @@ Rust + Axum + Askama + HTMX (+ PostgreSQL/SQLx from Layer 3). Styling: Tailwind 
 
        cp .env.example .env
        cargo run
-       # http://127.0.0.1:3000
+        # public site: http://127.0.0.1:3000
+        # management interface (loopback only): http://127.0.0.1:3001/login
 
 On start-up the app connects using `DATABASE_URL`, applies every file in `migrations/`, and the site renders from the database. The first run loads starter content copied from the live site (programmes, departments, news, rank holders, pages, contact details).
 
@@ -73,12 +74,12 @@ Create test accounts for the other roles. These must choose a new password at fi
     cargo run -- create-user faculty teacher@example.com "Test Teacher"
     cargo run -- create-user student 1001@college.local "Test Student"
 
-Then run `cargo run` and open http://127.0.0.1:3000/login. Each role lands on its own dashboard:
+Then run `cargo run` and open http://127.0.0.1:3001/login for staff/admin management accounts. Students and teachers can sign in through the public listener at http://127.0.0.1:3000/login. Each role lands on its own dashboard:
 IT admin and office staff on `/admin`, teachers on `/teacher`, students on `/hub`.
 
 Rules built in: five wrong passwords lock an account for 15 minutes; sessions last 8 hours of inactivity;
 every form carries a CSRF token; passwords are stored with Argon2.
-In production set `COOKIE_SECURE=true` and serve the site over HTTPS.
+The management listener is hard-bound to loopback by the application and must not be exposed by a reverse proxy. In production set `COOKIE_SECURE=true`, serve the public site over HTTPS, and proxy management access only through a controlled local administration path.
 
 ## Building the CSS
 
