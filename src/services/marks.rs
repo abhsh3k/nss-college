@@ -190,7 +190,22 @@ pub struct FiledRow {
     pub obtained_label: String,
     pub max_label: String,
     pub published: bool,
+    /// `draft`/`reviewed`/`published`/`finalized`/`correction_pending`/
+    /// `superseded` — the lifecycle marker, independent of the published flag.
+    pub workflow_state: String,
     pub updated_label: String,
+}
+
+impl FiledRow {
+    /// A locked row: only the correction workflow may change it.
+    pub fn is_finalized(&self) -> bool {
+        self.workflow_state == "finalized"
+    }
+
+    /// A correction was proposed and is waiting for a second manager.
+    pub fn is_correction_pending(&self) -> bool {
+        self.workflow_state == "correction_pending"
+    }
 }
 
 fn num(v: f64) -> String {
@@ -210,7 +225,7 @@ pub async fn filed(
     semester: i32,
     limit: i64,
 ) -> Res<(Vec<FiledRow>, bool)> {
-    let rows: Vec<(i64, String, String, String, String, String, String, String, f64, f64, bool, String)> =
+    let rows: Vec<(i64, String, String, String, String, String, String, String, f64, f64, bool, String, String)> =
         sqlx::query_as(
             r#"SELECT m.id,
                       st.name,
@@ -223,6 +238,7 @@ pub async fn filed(
                       m.marks_obtained::float8,
                       m.max_marks::float8,
                       m.published,
+                      m.workflow_state,
                       to_char(m.updated_at, 'Dy DD Mon YYYY HH24:MI')
                  FROM marks m
                  JOIN students st ON st.id = m.student_id
@@ -255,6 +271,7 @@ pub async fn filed(
                 obtained,
                 maximum,
                 published,
+                workflow_state,
                 updated_label,
             )| FiledRow {
                 id,
@@ -266,11 +283,21 @@ pub async fn filed(
                 obtained_label: num(obtained),
                 max_label: num(maximum),
                 published,
+                workflow_state,
                 updated_label,
             },
         )
         .collect();
     Ok((out, more))
+}
+
+/// The lifecycle state of a filed mark, for refusing a toggle or delete on a
+/// locked row: `None` when the row is already gone.
+pub async fn mark_state(db: &PgPool, mark_id: i64) -> Res<Option<String>> {
+    sqlx::query_scalar("SELECT workflow_state FROM marks WHERE id = $1")
+        .bind(mark_id)
+        .fetch_optional(db)
+        .await
 }
 
 /// The programme of the student behind a filed mark, for authorising a
@@ -304,4 +331,398 @@ pub async fn delete_mark(db: &PgPool, mark_id: i64) -> Res<Option<()>> {
         .execute(db)
         .await?;
     Ok(if done.rows_affected() > 0 { Some(()) } else { None })
+}
+
+// ---------- Finalization and corrections ----------
+
+/// What a finalize or correction action did, so the route can say so without
+/// guessing from error strings.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CorrectionOutcome {
+    /// The finalize/correction wrote what was asked.
+    Done(u64),
+    /// No such mark row.
+    NotFound,
+    /// The row is not finalized, so the correction workflow does not apply.
+    NotFinalized,
+    /// A correction is already awaiting a decision.
+    AlreadyPending,
+    /// There is no pending correction to decide.
+    NotPending,
+    /// The approver is the person who requested the correction.
+    SameActor,
+    /// The proposed mark is outside `0..=max`.
+    OutOfRange,
+}
+
+/// Lock every published mark for one course in a programme and semester,
+/// moving it to `finalized`. Drafts and already-pending rows are left alone;
+/// returns how many rows were locked. The caller has already authorised the
+/// programme.
+pub async fn finalize_course(
+    db: &PgPool,
+    programme_id: i64,
+    semester: i32,
+    course_id: i64,
+    actor_id: i64,
+) -> Res<u64> {
+    let done = sqlx::query(
+        r#"UPDATE marks m
+              SET workflow_state = 'finalized',
+                  finalized_at   = now(),
+                  finalized_by   = $4,
+                  updated_at     = now()
+             FROM students st
+            WHERE st.id = m.student_id
+              AND st.programme_id = $1
+              AND m.semester = $2
+              AND m.course_id = $3
+              AND m.published
+              AND m.workflow_state IN ('draft', 'reviewed', 'published')"#,
+    )
+    .bind(programme_id)
+    .bind(semester)
+    .bind(course_id)
+    .bind(actor_id)
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected())
+}
+
+/// Propose a correction to one finalized mark. `max` is optional: when left
+/// empty the correction keeps the row's current maximum. The row is locked
+/// while the proposed value is written, so two requests cannot race.
+pub async fn request_correction(
+    db: &PgPool,
+    mark_id: i64,
+    actor_id: i64,
+    obtained: f64,
+    max: Option<f64>,
+    reason: &str,
+) -> Res<CorrectionOutcome> {
+    let mut tx = db.begin().await?;
+    let row: Option<(String, f64, f64)> = sqlx::query_as(
+        r#"SELECT m.workflow_state, m.marks_obtained::float8, m.max_marks::float8
+             FROM marks m
+            WHERE m.id = $1
+            FOR UPDATE OF m"#,
+    )
+    .bind(mark_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((state, _old_obtained, old_max)) = row else {
+        return Ok(CorrectionOutcome::NotFound);
+    };
+    match state.as_str() {
+        "correction_pending" => return Ok(CorrectionOutcome::AlreadyPending),
+        "finalized" => {}
+        _ => return Ok(CorrectionOutcome::NotFinalized),
+    }
+    let limit = max.unwrap_or(old_max);
+    if !(0.0..=limit).contains(&obtained) {
+        return Ok(CorrectionOutcome::OutOfRange);
+    }
+
+    sqlx::query(
+        r#"UPDATE marks
+              SET workflow_state              = 'correction_pending',
+                  correction_proposed_obtained = $2,
+                  correction_proposed_max      = $3,
+                  correction_reason            = $4,
+                  correction_requested_by      = $5,
+                  correction_requested_at      = now(),
+                  correction_decided_by        = NULL,
+                  correction_decided_at        = NULL,
+                  updated_at                   = now()
+            WHERE id = $1"#,
+    )
+    .bind(mark_id)
+    .bind(obtained)
+    .bind(max)
+    .bind(reason)
+    .bind(actor_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(CorrectionOutcome::Done(1))
+}
+
+/// Approve or reject the pending correction on one mark.
+///
+/// Approving snapshots the current (finalized) values into `mark_history` as a
+/// `superseded` row, then applies the proposed value to the live row and locks
+/// it again. Rejecting only clears the pending fields. A correction must be
+/// approved by someone other than the person who requested it.
+pub async fn decide_correction(
+    db: &PgPool,
+    mark_id: i64,
+    approver_id: i64,
+    approve: bool,
+) -> Res<CorrectionOutcome> {
+    let mut tx = db.begin().await?;
+    #[allow(clippy::type_complexity)]
+    let row: Option<(String, Option<i64>, String, i64, i64, String, String, String, Option<i32>, f64, f64, bool)> = sqlx::query_as(
+        r#"SELECT m.workflow_state,
+                  m.correction_requested_by,
+                  m.correction_reason,
+                  m.student_id,
+                  m.course_id,
+                  m.assessment,
+                  m.exam_kind,
+                  m.exam_name,
+                  m.semester,
+                  m.marks_obtained::float8,
+                  m.max_marks::float8,
+                  m.published
+             FROM marks m
+            WHERE m.id = $1
+            FOR UPDATE OF m"#,
+    )
+    .bind(mark_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((
+        state,
+        requested_by,
+        reason,
+        student_id,
+        course_id,
+        assessment,
+        exam_kind,
+        exam_name,
+        semester,
+        old_obtained,
+        old_max,
+        old_published,
+    )) = row
+    else {
+        return Ok(CorrectionOutcome::NotFound);
+    };
+    if state != "correction_pending" {
+        return Ok(CorrectionOutcome::NotPending);
+    }
+    if requested_by == Some(approver_id) {
+        return Ok(CorrectionOutcome::SameActor);
+    }
+
+    if approve {
+        // Keep the value being replaced, then overwrite the live row.
+        sqlx::query(
+            r#"INSERT INTO mark_history
+                   (mark_id, student_id, course_id, assessment, exam_kind, exam_name,
+                    semester, marks_obtained, max_marks, published, workflow_state,
+                    changed_by, change_reason)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'superseded', $11, $12)"#,
+        )
+        .bind(mark_id)
+        .bind(student_id)
+        .bind(course_id)
+        .bind(&assessment)
+        .bind(&exam_kind)
+        .bind(&exam_name)
+        .bind(semester)
+        .bind(old_obtained)
+        .bind(old_max)
+        .bind(old_published)
+        .bind(approver_id)
+        .bind(&reason)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r#"UPDATE marks
+                  SET marks_obtained               = correction_proposed_obtained,
+                      max_marks                    = COALESCE(correction_proposed_max, max_marks),
+                      workflow_state               = 'finalized',
+                      finalized_at                 = now(),
+                      finalized_by                 = $2,
+                      correction_proposed_obtained = NULL,
+                      correction_proposed_max      = NULL,
+                      correction_requested_by      = NULL,
+                      correction_requested_at      = NULL,
+                      correction_decided_by        = $2,
+                      correction_decided_at        = now(),
+                      updated_at                   = now()
+                WHERE id = $1"#,
+        )
+        .bind(mark_id)
+        .bind(approver_id)
+        .execute(&mut *tx)
+        .await?;
+    } else {
+        sqlx::query(
+            r#"UPDATE marks
+                  SET workflow_state               = 'finalized',
+                      correction_proposed_obtained = NULL,
+                      correction_proposed_max      = NULL,
+                      correction_reason            = '',
+                      correction_requested_by      = NULL,
+                      correction_requested_at      = NULL,
+                      correction_decided_by        = $2,
+                      correction_decided_at        = now(),
+                      updated_at                   = now()
+                WHERE id = $1"#,
+        )
+        .bind(mark_id)
+        .bind(approver_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(CorrectionOutcome::Done(1))
+}
+
+/// One correction waiting for a decision, for the review panel.
+#[derive(Debug)]
+pub struct PendingCorrection {
+    pub id: i64,
+    pub student_name: String,
+    pub course_code: String,
+    pub kind_label: String,
+    pub current_label: String,
+    pub proposed_label: String,
+    pub reason: String,
+    pub requester: String,
+    pub requested_label: String,
+}
+
+/// Every pending correction across a programme's semesters, oldest first.
+pub async fn pending_corrections(db: &PgPool, programme_id: i64) -> Res<Vec<PendingCorrection>> {
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(i64, String, String, String, String, String, f64, f64, f64, Option<f64>, String, String, String)> =
+        sqlx::query_as(
+            r#"SELECT m.id,
+                      st.name,
+                      c.code,
+                      m.assessment,
+                      m.exam_kind,
+                      m.exam_name,
+                      m.marks_obtained::float8,
+                      m.max_marks::float8,
+                      m.correction_proposed_obtained::float8,
+                      m.correction_proposed_max::float8,
+                      m.correction_reason,
+                      COALESCE(u.full_name, 'a manager'),
+                      to_char(m.correction_requested_at, 'Dy DD Mon YYYY HH24:MI')
+                 FROM marks m
+                 JOIN students st ON st.id = m.student_id
+                 JOIN courses  c  ON c.id  = m.course_id
+                 LEFT JOIN users u ON u.id = m.correction_requested_by
+                WHERE st.programme_id = $1
+                  AND m.workflow_state = 'correction_pending'
+                ORDER BY m.correction_requested_at"#,
+        )
+        .bind(programme_id)
+        .fetch_all(db)
+        .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                id,
+                student_name,
+                course_code,
+                assessment,
+                exam_kind,
+                exam_name,
+                obtained,
+                maximum,
+                proposed,
+                proposed_max,
+                reason,
+                requester,
+                requested_label,
+            )| PendingCorrection {
+                id,
+                student_name,
+                course_code,
+                kind_label: assessment_label(&assessment, &exam_kind, &exam_name),
+                current_label: format!("{} / {}", num(obtained), num(maximum)),
+                proposed_label: format!(
+                    "{} / {}",
+                    num(proposed),
+                    num(proposed_max.unwrap_or(maximum))
+                ),
+                reason,
+                requester,
+                requested_label,
+            },
+        )
+        .collect())
+}
+
+/// One applied correction, for the history panel: what the value used to be
+/// and who changed it, with the reason.
+pub struct HistoryRow {
+    pub student_name: String,
+    pub course_code: String,
+    pub kind_label: String,
+    pub semester: i32,
+    pub value_label: String,
+    pub reason: String,
+    pub changed_by: String,
+    pub changed_label: String,
+}
+
+/// The most recent corrections for a programme, newest first.
+pub async fn correction_history(
+    db: &PgPool,
+    programme_id: i64,
+    limit: i64,
+) -> Res<Vec<HistoryRow>> {
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(String, String, String, String, String, Option<i32>, f64, f64, String, String, String)> =
+        sqlx::query_as(
+            r#"SELECT st.name,
+                      c.code,
+                      h.assessment,
+                      h.exam_kind,
+                      h.exam_name,
+                      h.semester,
+                      h.marks_obtained::float8,
+                      h.max_marks::float8,
+                      h.change_reason,
+                      COALESCE(u.full_name, 'a manager'),
+                      to_char(h.changed_at, 'Dy DD Mon YYYY HH24:MI')
+                 FROM mark_history h
+                 JOIN students st ON st.id = h.student_id
+                 JOIN courses  c  ON c.id  = h.course_id
+                 LEFT JOIN users u ON u.id = h.changed_by
+                WHERE st.programme_id = $1
+                ORDER BY h.changed_at DESC, h.id DESC
+                LIMIT $2"#,
+        )
+        .bind(programme_id)
+        .bind(limit)
+        .fetch_all(db)
+        .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                student_name,
+                course_code,
+                assessment,
+                exam_kind,
+                exam_name,
+                semester,
+                obtained,
+                maximum,
+                reason,
+                changed_by,
+                changed_label,
+            )| HistoryRow {
+                student_name,
+                course_code,
+                kind_label: assessment_label(&assessment, &exam_kind, &exam_name),
+                semester: semester.unwrap_or(0),
+                value_label: format!("{} / {}", num(obtained), num(maximum)),
+                reason,
+                changed_by,
+                changed_label,
+            },
+        )
+        .collect())
 }

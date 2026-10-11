@@ -406,7 +406,14 @@ pub async fn push_results_csv(
         return Ok(Redirect::to(&back));
     }
 
-    let parsed = match exams::parse_csv(&file.bytes, kind) {
+    let csv = match crate::services::import_students::to_csv_text(&file.bytes, &file.filename) {
+        Ok(text) => text,
+        Err(msg) => {
+            shell::flash(&session, msg).await?;
+            return Ok(Redirect::to(&back));
+        }
+    };
+    let parsed = match exams::parse_csv(csv.as_bytes(), kind) {
         Ok(rows) => rows,
         Err(msg) => {
             shell::flash(&session, msg).await?;

@@ -1376,6 +1376,38 @@ pub async fn finalize_cohort_specialization(
         return Ok(0);
     }
 
+    // The offering's capacity must hold the whole cohort before anyone is
+    // enrolled. Lock the offering and count both the seats already taken and
+    // the cohort students who would still need one.
+    let (capacity, taken): (Option<i32>, i64) = sqlx::query_as(
+        r#"SELECT o.capacity,
+                  (SELECT count(*) FROM enrollments e
+                     JOIN students est ON est.id = e.student_id AND est.is_active
+                    WHERE e.offering_id = o.id AND e.status = 'active')
+             FROM course_offerings o WHERE o.id = $1 FOR UPDATE"#,
+    )
+    .bind(offering_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if let Some(cap) = capacity {
+        let needing: i64 = sqlx::query_scalar(
+            r#"SELECT count(*) FROM unnest($1::bigint[]) AS u(sid)
+                WHERE NOT EXISTS (SELECT 1 FROM enrollments e
+                                   WHERE e.student_id = u.sid AND e.offering_id = $2
+                                     AND e.status = 'active')"#,
+        )
+        .bind(&students)
+        .bind(offering_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if taken + needing > i64::from(cap) {
+            return Err(AppError::BadRequest(
+                "That offering does not have enough seats for the whole cohort; raise its capacity or pick another."
+                    .into(),
+            ));
+        }
+    }
+
     // The group's other offerings in the same academic year: what the cohort
     // had instead, or an earlier decision being replaced.
     let others: Vec<i64> = sqlx::query_scalar(

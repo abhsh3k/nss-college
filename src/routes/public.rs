@@ -41,29 +41,24 @@ pub async fn upload(
     let user_id = user.as_ref().map(|u| u.id).unwrap_or(0);
     let is_admin = user.as_ref().is_some_and(|u| u.role == Role::Admin);
 
-    let mime: Option<String> = sqlx::query_scalar(
+    // Content rows carry their own visibility window (see `content::visible`),
+    // so a draft, an unpublished or a time-expired asset never leaks its bytes.
+    let sql = format!(
         r#"SELECT u.mime_type
              FROM uploads u
             WHERE u.path = $1
               AND (
                     EXISTS (SELECT 1 FROM documents d
-                             WHERE d.file_path = u.path
-                               AND d.status = 'published'
-                               AND d.published_at <= now())
+                             WHERE d.file_path = u.path AND {d})
                  OR EXISTS (SELECT 1 FROM notices n
-                             WHERE n.attachment_path = u.path
-                               AND n.status = 'published'
-                               AND n.published_at <= now()
+                             WHERE n.attachment_path = u.path AND {n}
                                AND (n.audience = 'public'
                                     OR ($2 AND n.audience = 'students')
                                     OR ($3 AND n.audience = 'faculty')))
                  OR EXISTS (SELECT 1 FROM news n
-                             WHERE n.image_path = u.path
-                               AND n.status = 'published'
-                               AND n.published_at <= now())
+                             WHERE n.image_path = u.path AND {n})
                  OR EXISTS (SELECT 1 FROM events e
-                             WHERE e.image_path = u.path
-                               AND e.status = 'published'
+                             WHERE e.image_path = u.path AND {e}
                                AND e.audience = 'public')
                  OR EXISTS (SELECT 1 FROM rank_holders r
                              WHERE r.photo_path = u.path AND r.status = 'published')
@@ -74,7 +69,7 @@ pub async fn upload(
                  OR EXISTS (SELECT 1 FROM page_sections ps
                              JOIN pages p ON p.id = ps.page_id
                             WHERE ps.photo_path = u.path
-                              AND ps.published AND p.status = 'published')
+                              AND ps.published AND {p})
                  OR EXISTS (SELECT 1 FROM study_materials sm
                              WHERE sm.file_path = u.path
                                AND sm.status = 'published'
@@ -94,7 +89,12 @@ pub async fn upload(
                                                 AND te.course_id = sm.course_id))
                                    ))
               )"#,
-    )
+        d = svc::visible("d"),
+        n = svc::visible("n"),
+        e = svc::visible("e"),
+        p = svc::visible("p"),
+    );
+    let mime: Option<String> = sqlx::query_scalar(&sql)
     .bind(&web_path)
     .bind(is_student)
     .bind(is_faculty)

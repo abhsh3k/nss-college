@@ -23,12 +23,13 @@ use tower_sessions::Session;
 
 use super::{parse_i32, parse_i64, safe_back, TokenForm};
 use crate::{
-    auth::{csrf, Manager},
+    auth::{csrf, require_reauth, Manager},
     error::AppError,
     services::{
         academics::{self, ProgrammeOption},
         exams::{self, ExamCourseOption},
-        marks::{self, FiledRow},
+        marks::{self, CorrectionOutcome, FiledRow, HistoryRow, PendingCorrection},
+        notifications,
         result_import,
         users,
     },
@@ -217,6 +218,10 @@ pub struct MarksTemplate {
     rows: Vec<GridRow>,
     filed: Vec<FiledRow>,
     filed_more: bool,
+    /// Corrections awaiting a second manager's decision.
+    pending: Vec<PendingCorrection>,
+    /// Recently applied corrections, newest first.
+    history: Vec<HistoryRow>,
     problems: Vec<String>,
     notice: Option<String>,
 }
@@ -243,6 +248,8 @@ async fn render(
     let mut rows = Vec::new();
     let mut filed = Vec::new();
     let mut filed_more = false;
+    let mut pending = Vec::new();
+    let mut history = Vec::new();
 
     if sel.programme > 0 {
         // Only courses taught in the semester on the sheet.
@@ -291,6 +298,8 @@ async fn render(
         let (list, more) = marks::filed(&s.db, sel.programme, sel.semester, 500).await?;
         filed = list;
         filed_more = more;
+        pending = marks::pending_corrections(&s.db, sel.programme).await?;
+        history = marks::correction_history(&s.db, sel.programme, 20).await?;
     }
 
     Ok(MarksTemplate {
@@ -302,6 +311,8 @@ async fn render(
         rows,
         filed,
         filed_more,
+        pending,
+        history,
         problems,
         notice,
     })
@@ -507,8 +518,9 @@ pub async fn import_preview(
         shell::flash(&session, "That CSV file is larger than 5 MB — split it into smaller batches.").await?;
         return Ok(Redirect::to("/admin/marks").into_response());
     }
-    let text = String::from_utf8(file.bytes.clone())
-        .map_err(|_| AppError::BadRequest("CSV file is not valid UTF-8.".into()))?;
+    // A CSV/TSV file is decoded as before; a workbook is flattened to CSV first.
+    let text = crate::services::import_students::to_csv_text(&file.bytes, &file.filename)
+        .map_err(AppError::BadRequest)?;
     let (assessment, exam_kind, exam_name) = sel.sheet_key();
     let id = result_import::stage(
         &s.db,
@@ -580,7 +592,16 @@ pub async fn import_csv(
             .await?
             .into_response());
     }
-    let parsed = match exams::parse_csv(&file.bytes, kind) {
+    let csv = match crate::services::import_students::to_csv_text(&file.bytes, &file.filename) {
+        Ok(text) => text,
+        Err(msg) => {
+            problems.push(msg);
+            return Ok(render(&s, &session, &manager, sel, &HashMap::new(), problems, None)
+                .await?
+                .into_response());
+        }
+    };
+    let parsed = match exams::parse_csv(csv.as_bytes(), kind) {
         Ok(rows) => rows,
         Err(msg) => {
             problems.push(msg);
@@ -679,6 +700,25 @@ async fn authorise(
     Ok(programme)
 }
 
+/// Refuse an unpublish/delete on a row that is no longer freely editable.
+/// Returns the redirect to send back (after a flash) when the row is locked.
+async fn locked(
+    s: &AppState,
+    session: &Session,
+    mark_id: i64,
+    back: &str,
+) -> Result<Option<Redirect>, AppError> {
+    let msg = match marks::mark_state(&s.db, mark_id).await?.as_deref() {
+        Some("finalized") => "That row is finalized — use the correction workflow.",
+        Some("correction_pending") => "A correction is pending on that row.",
+        Some("superseded") => "That value has been superseded by a correction.",
+        None => "That mark row is already gone.",
+        _ => return Ok(None),
+    };
+    shell::flash(session, msg).await?;
+    Ok(Some(Redirect::to(back)))
+}
+
 pub async fn toggle(
     State(s): State<AppState>,
     session: Session,
@@ -689,6 +729,11 @@ pub async fn toggle(
     csrf::verify(&session, &f.csrf_token).await?;
     authorise(&s, &manager, id).await?;
     let back = safe_back(&f.back, "/admin/marks");
+
+    match locked(&s, &session, id, &back).await? {
+        Some(redirect) => return Ok(redirect),
+        None => {}
+    }
 
     match marks::toggle_published(&s.db, id).await? {
         Some(true) => {
@@ -724,6 +769,11 @@ pub async fn delete(
     authorise(&s, &manager, id).await?;
     let back = safe_back(&f.back, "/admin/marks");
 
+    match locked(&s, &session, id, &back).await? {
+        Some(redirect) => return Ok(redirect),
+        None => {}
+    }
+
     if marks::delete_mark(&s.db, id).await?.is_some() {
         users::audit(&s.db, Some(manager.user.id), "mark_deleted", "mark", Some(id)).await?;
         shell::flash(&session, "Mark row deleted.").await?;
@@ -731,4 +781,226 @@ pub async fn delete(
         shell::flash(&session, "That mark row is already gone.").await?;
     }
     Ok(Redirect::to(&back))
+}
+
+// ---------- Finalization and corrections ----------
+
+/// Lock every published mark for the open course and semester.
+#[derive(Deserialize)]
+pub struct FinalizeForm {
+    csrf_token: String,
+    programme: String,
+    semester: String,
+    course: String,
+    back: String,
+}
+
+pub async fn finalize(
+    State(s): State<AppState>,
+    session: Session,
+    manager: Manager,
+    Form(f): Form<FinalizeForm>,
+) -> Result<Redirect, AppError> {
+    csrf::verify(&session, &f.csrf_token).await?;
+    if let Err(redirect) = require_reauth(&session, "/admin/marks").await {
+        shell::flash(&session, "Re-enter your password to continue.").await?;
+        return Ok(redirect);
+    }
+    let back = safe_back(&f.back, "/admin/marks");
+    let programme = parse_i64(&f.programme).unwrap_or(0);
+    let semester = parse_i32(&f.semester).unwrap_or(0);
+    let course = parse_i64(&f.course).unwrap_or(0);
+    if programme == 0 || semester == 0 || course == 0 {
+        shell::flash(&session, "Open a course's sheet first, then finalize it.").await?;
+        return Ok(Redirect::to(&back));
+    }
+    if !academics::may_manage_programme(&s.db, programme, manager.department()).await? {
+        return Err(AppError::Forbidden);
+    }
+    // The course must be one offered for this programme and semester.
+    if !exams::course_options_for_semester(&s.db, programme, semester)
+        .await?
+        .iter()
+        .any(|c| c.id == course)
+    {
+        shell::flash(&session, "That course is not on this semester's sheet.").await?;
+        return Ok(Redirect::to(&back));
+    }
+
+    let n = marks::finalize_course(&s.db, programme, semester, course, manager.user.id).await?;
+    users::audit(
+        &s.db,
+        Some(manager.user.id),
+        "marks_finalized",
+        "course",
+        Some(course),
+    )
+    .await?;
+    shell::flash(
+        &session,
+        if n == 0 {
+            "Nothing to finalize — no published rows for that course.".to_string()
+        } else {
+            format!("Finalized {n} mark row(s); further changes need the correction workflow.")
+        },
+    )
+    .await?;
+    Ok(Redirect::to(&back))
+}
+
+#[derive(Deserialize)]
+pub struct CorrectForm {
+    csrf_token: String,
+    obtained: String,
+    max: String,
+    reason: String,
+    back: String,
+}
+
+pub async fn correct(
+    State(s): State<AppState>,
+    session: Session,
+    manager: Manager,
+    Path(id): Path<i64>,
+    Form(f): Form<CorrectForm>,
+) -> Result<Redirect, AppError> {
+    csrf::verify(&session, &f.csrf_token).await?;
+    if let Err(redirect) = require_reauth(&session, "/admin/marks").await {
+        shell::flash(&session, "Re-enter your password to continue.").await?;
+        return Ok(redirect);
+    }
+    authorise(&s, &manager, id).await?;
+    let back = safe_back(&f.back, "/admin/marks");
+
+    let reason = f.reason.trim();
+    if reason.is_empty() {
+        shell::flash(&session, "A correction needs a reason.").await?;
+        return Ok(Redirect::to(&back));
+    }
+    if reason.len() > 500 {
+        shell::flash(&session, "Keep the correction reason under 500 characters.").await?;
+        return Ok(Redirect::to(&back));
+    }
+    let obtained = match f.obtained.trim().parse::<f64>() {
+        Ok(v) => v,
+        Err(_) => {
+            shell::flash(&session, "Enter the corrected mark as a number.").await?;
+            return Ok(Redirect::to(&back));
+        }
+    };
+    let max = match f.max.trim() {
+        "" => None,
+        raw => match raw.parse::<f64>() {
+            Ok(v) if v > 0.0 && v <= MAX_MARKS_CEILING => Some(v),
+            _ => {
+                shell::flash(&session, "The corrected maximum must be a number above 0.").await?;
+                return Ok(Redirect::to(&back));
+            }
+        },
+    };
+
+    let msg = match marks::request_correction(&s.db, id, manager.user.id, obtained, max, reason).await? {
+        CorrectionOutcome::Done(_) => {
+            users::audit_detail(
+                &s.db,
+                Some(manager.user.id),
+                "mark_correction_requested",
+                "mark",
+                Some(id),
+                serde_json::json!({ "reason": reason, "obtained": obtained, "max": max }),
+            )
+            .await?;
+            notifications::notify_roles(
+                &s.db,
+                &["admin", "principal"],
+                "correction",
+                "A result correction needs approval",
+                "A finalized mark was proposed for correction; it needs a second manager.",
+                "/admin/marks",
+            )
+            .await?;
+            "Correction requested — a second manager must approve it."
+        }
+        CorrectionOutcome::NotFound => "That mark row is already gone.",
+        CorrectionOutcome::NotFinalized => "Only a finalized mark needs the correction workflow.",
+        CorrectionOutcome::AlreadyPending => "A correction for that mark is already waiting.",
+        CorrectionOutcome::OutOfRange => "The corrected mark is outside 0 to the maximum.",
+        _ => "That correction could not be requested.",
+    };
+    shell::flash(&session, msg).await?;
+    Ok(Redirect::to(&back))
+}
+
+#[derive(Deserialize)]
+pub struct DecideForm {
+    csrf_token: String,
+    back: String,
+}
+
+async fn decide(
+    s: &AppState,
+    session: &Session,
+    manager: &Manager,
+    id: i64,
+    f: &DecideForm,
+    approve: bool,
+) -> Result<Redirect, AppError> {
+    csrf::verify(session, &f.csrf_token).await?;
+    if let Err(redirect) = require_reauth(session, "/admin/marks").await {
+        shell::flash(session, "Re-enter your password to continue.").await?;
+        return Ok(redirect);
+    }
+    authorise(s, manager, id).await?;
+    let back = safe_back(&f.back, "/admin/marks");
+
+    let msg = match marks::decide_correction(&s.db, id, manager.user.id, approve).await? {
+        CorrectionOutcome::Done(_) => {
+            users::audit_detail(
+                &s.db,
+                Some(manager.user.id),
+                if approve {
+                    "mark_correction_applied"
+                } else {
+                    "mark_correction_rejected"
+                },
+                "mark",
+                Some(id),
+                serde_json::json!({ "approved": approve }),
+            )
+            .await?;
+            if approve {
+                "Correction applied — the previous value is kept in the history."
+            } else {
+                "Correction rejected; the finalized mark is unchanged."
+            }
+        }
+        CorrectionOutcome::SameActor => {
+            "A correction must be approved by someone other than the requester."
+        }
+        CorrectionOutcome::NotPending => "There is no pending correction on that mark.",
+        CorrectionOutcome::NotFound => "That mark row is already gone.",
+        _ => "That correction could not be decided.",
+    };
+    shell::flash(session, msg).await?;
+    Ok(Redirect::to(&back))
+}
+
+pub async fn approve(
+    State(s): State<AppState>,
+    session: Session,
+    manager: Manager,
+    Path(id): Path<i64>,
+    Form(f): Form<DecideForm>,
+) -> Result<Redirect, AppError> {
+    decide(&s, &session, &manager, id, &f, true).await
+}
+
+pub async fn reject(
+    State(s): State<AppState>,
+    session: Session,
+    manager: Manager,
+    Path(id): Path<i64>,
+    Form(f): Form<DecideForm>,
+) -> Result<Redirect, AppError> {
+    decide(&s, &session, &manager, id, &f, false).await
 }

@@ -70,6 +70,10 @@ pub async fn course_options(db: &PgPool, programme_id: i64) -> Res<Vec<ExamCours
 /// that semester, plus the catalogue courses offered to it that semester — a
 /// catalogue course carries no `semester` of its own, so its offering decides
 /// which semester it belongs to.
+/// The courses applicable to a programme and semester, for the exam and marks
+/// pickers. The same rule as `academics::applicable_course` (programme course,
+/// or a catalogue course carried by an offering that targets the programme), so
+/// a course the picker offers is a course the write will accept.
 pub async fn course_options_for_semester(
     db: &PgPool,
     programme_id: i64,

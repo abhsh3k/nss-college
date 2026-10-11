@@ -7,8 +7,9 @@ use sqlx::{FromRow, PgPool};
 
 type Res<T> = Result<T, sqlx::Error>;
 
-/// The statuses the tables' CHECK constraint allows.
-pub const STATUSES: [&str; 3] = ["draft", "published", "archived"];
+/// The statuses the tables' CHECK constraint allows. `scheduled` publishes at
+/// the explicit `publish_at` the editor sets.
+pub const STATUSES: [&str; 4] = ["draft", "published", "scheduled", "archived"];
 /// The audiences the tables' CHECK constraint allows.
 pub const AUDIENCES: [&str; 3] = ["public", "students", "faculty"];
 
@@ -16,9 +17,35 @@ pub const AUDIENCES: [&str; 3] = ["public", "students", "faculty"];
 pub fn clean_status(value: &str) -> &'static str {
     match value.trim() {
         "published" => "published",
+        "scheduled" => "scheduled",
         "archived" => "archived",
         _ => "draft",
     }
+}
+
+/// The publish-time SQL shared by every content write. `$status` and
+/// `$publish` are the two binds in order; `$publish` is a `YYYY-MM-DD HH:MM`
+/// string (validated by the caller) or empty.
+///
+/// * `published` — an explicit time wins, else the existing one, else now();
+/// * `scheduled` — exactly the explicit time (a missing one keeps the row);
+/// * anything else — left as it was.
+pub fn publish_set_sql(status: &str, publish: &str) -> String {
+    format!(
+        "CASE WHEN {status} = 'published' THEN COALESCE(NULLIF({publish}, '')::timestamptz, published_at, now()) \
+              WHEN {status} = 'scheduled' THEN NULLIF({publish}, '')::timestamptz \
+              ELSE published_at END"
+    )
+}
+
+/// The same decision for an INSERT, where there is no existing `published_at`
+/// to fall back on.
+pub fn publish_new_sql(status: &str, publish: &str) -> String {
+    format!(
+        "CASE WHEN {status} = 'published' THEN COALESCE(NULLIF({publish}, '')::timestamptz, now()) \
+              WHEN {status} = 'scheduled' THEN NULLIF({publish}, '')::timestamptz \
+              ELSE NULL END"
+    )
 }
 
 /// Normalise an audience coming from a form, falling back to `public`.
@@ -53,6 +80,10 @@ pub struct NoticeInput {
     pub audience: String,
     pub is_pinned: bool,
     pub status: String,
+    /// `YYYY-MM-DD HH:MM`, or empty to publish now.
+    pub publish_at: String,
+    /// `YYYY-MM-DD HH:MM`, or empty for no end.
+    pub unpublish_at: String,
 }
 
 /// One notice as the edit form needs it: raw values, no formatting.
@@ -66,6 +97,8 @@ pub struct NoticeEdit {
     pub audience: String,
     pub is_pinned: bool,
     pub status: String,
+    pub publish_at: String,
+    pub unpublish_at: String,
 }
 
 /// `status` empty means every status, so the list can show drafts too.
@@ -87,7 +120,9 @@ pub async fn notice_for_edit(db: &PgPool, id: i64) -> Res<Option<NoticeEdit>> {
     sqlx::query_as::<_, NoticeEdit>(
         r#"SELECT id, title, category, body,
                   COALESCE(attachment_path, '') AS attachment_path,
-                  audience, is_pinned, status
+                  audience, is_pinned, status,
+                  COALESCE(to_char(published_at, 'YYYY-MM-DD"T"HH24:MI'), '') AS publish_at,
+                  COALESCE(to_char(unpublish_at, 'YYYY-MM-DD"T"HH24:MI'), '') AS unpublish_at
            FROM notices WHERE id = $1"#,
     )
     .bind(id)
@@ -96,43 +131,53 @@ pub async fn notice_for_edit(db: &PgPool, id: i64) -> Res<Option<NoticeEdit>> {
 }
 
 pub async fn create_notice(db: &PgPool, n: &NoticeInput, author: Option<i64>) -> Res<i64> {
-    sqlx::query_scalar(
+    let sql = format!(
         r#"INSERT INTO notices
-             (title, category, body, attachment_path, audience, is_pinned, status, published_at, created_by)
+             (title, category, body, attachment_path, audience, is_pinned, status,
+              published_at, unpublish_at, created_by)
            VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7,
-                   CASE WHEN $7 = 'published' THEN now() ELSE NULL END, $8)
+                   {}, NULLIF($9, '')::timestamptz, $10)
            RETURNING id"#,
-    )
-    .bind(&n.title)
-    .bind(&n.category)
-    .bind(&n.body)
-    .bind(&n.attachment_path)
-    .bind(clean_audience(&n.audience))
-    .bind(n.is_pinned)
-    .bind(clean_status(&n.status))
-    .bind(author)
-    .fetch_one(db)
-    .await
+        publish_new_sql("$7", "$8")
+    );
+    sqlx::query_scalar(&sql)
+        .bind(&n.title)
+        .bind(&n.category)
+        .bind(&n.body)
+        .bind(&n.attachment_path)
+        .bind(clean_audience(&n.audience))
+        .bind(n.is_pinned)
+        .bind(clean_status(&n.status))
+        .bind(&n.publish_at)
+        .bind(&n.unpublish_at)
+        .bind(author)
+        .fetch_one(db)
+        .await
 }
 
 pub async fn update_notice(db: &PgPool, id: i64, n: &NoticeInput) -> Res<()> {
-    sqlx::query(
+    let sql = format!(
         r#"UPDATE notices
            SET title = $2, category = $3, body = $4,
                attachment_path = NULLIF($5, ''), audience = $6, is_pinned = $7, status = $8,
-               published_at = CASE WHEN $8 = 'published' THEN COALESCE(published_at, now()) ELSE published_at END
+               published_at = {},
+               unpublish_at = NULLIF($10, '')::timestamptz
            WHERE id = $1"#,
-    )
-    .bind(id)
-    .bind(&n.title)
-    .bind(&n.category)
-    .bind(&n.body)
-    .bind(&n.attachment_path)
-    .bind(clean_audience(&n.audience))
-    .bind(n.is_pinned)
-    .bind(clean_status(&n.status))
-    .execute(db)
-    .await?;
+        publish_set_sql("$8", "$9")
+    );
+    sqlx::query(&sql)
+        .bind(id)
+        .bind(&n.title)
+        .bind(&n.category)
+        .bind(&n.body)
+        .bind(&n.attachment_path)
+        .bind(clean_audience(&n.audience))
+        .bind(n.is_pinned)
+        .bind(clean_status(&n.status))
+        .bind(&n.publish_at)
+        .bind(&n.unpublish_at)
+        .execute(db)
+        .await?;
     Ok(())
 }
 
@@ -161,6 +206,8 @@ pub struct NewsInput {
     pub body: String,
     pub image_path: String,
     pub status: String,
+    pub publish_at: String,
+    pub unpublish_at: String,
 }
 
 #[derive(Debug, FromRow)]
@@ -170,6 +217,8 @@ pub struct NewsEdit {
     pub body: String,
     pub image_path: String,
     pub status: String,
+    pub publish_at: String,
+    pub unpublish_at: String,
 }
 
 pub async fn news(db: &PgPool, status: &str) -> Res<Vec<NewsRow>> {
@@ -188,7 +237,9 @@ pub async fn news(db: &PgPool, status: &str) -> Res<Vec<NewsRow>> {
 
 pub async fn news_for_edit(db: &PgPool, id: i64) -> Res<Option<NewsEdit>> {
     sqlx::query_as::<_, NewsEdit>(
-        r#"SELECT id, title, body, COALESCE(image_path, '') AS image_path, status
+        r#"SELECT id, title, body, COALESCE(image_path, '') AS image_path, status,
+                  COALESCE(to_char(published_at, 'YYYY-MM-DD"T"HH24:MI'), '') AS publish_at,
+                  COALESCE(to_char(unpublish_at, 'YYYY-MM-DD"T"HH24:MI'), '') AS unpublish_at
            FROM news WHERE id = $1"#,
     )
     .bind(id)
@@ -197,35 +248,44 @@ pub async fn news_for_edit(db: &PgPool, id: i64) -> Res<Option<NewsEdit>> {
 }
 
 pub async fn create_news(db: &PgPool, n: &NewsInput, author: Option<i64>) -> Res<i64> {
-    sqlx::query_scalar(
-        r#"INSERT INTO news (title, body, image_path, status, published_at, created_by)
+    let sql = format!(
+        r#"INSERT INTO news (title, body, image_path, status, published_at, unpublish_at, created_by)
            VALUES ($1, $2, NULLIF($3, ''), $4,
-                   CASE WHEN $4 = 'published' THEN now() ELSE NULL END, $5)
+                   {}, NULLIF($6, '')::timestamptz, $7)
            RETURNING id"#,
-    )
-    .bind(&n.title)
-    .bind(&n.body)
-    .bind(&n.image_path)
-    .bind(clean_status(&n.status))
-    .bind(author)
-    .fetch_one(db)
-    .await
+        publish_new_sql("$4", "$5")
+    );
+    sqlx::query_scalar(&sql)
+        .bind(&n.title)
+        .bind(&n.body)
+        .bind(&n.image_path)
+        .bind(clean_status(&n.status))
+        .bind(&n.publish_at)
+        .bind(&n.unpublish_at)
+        .bind(author)
+        .fetch_one(db)
+        .await
 }
 
 pub async fn update_news(db: &PgPool, id: i64, n: &NewsInput) -> Res<()> {
-    sqlx::query(
+    let sql = format!(
         r#"UPDATE news
            SET title = $2, body = $3, image_path = NULLIF($4, ''), status = $5,
-               published_at = CASE WHEN $5 = 'published' THEN COALESCE(published_at, now()) ELSE published_at END
+               published_at = {},
+               unpublish_at = NULLIF($7, '')::timestamptz
            WHERE id = $1"#,
-    )
-    .bind(id)
-    .bind(&n.title)
-    .bind(&n.body)
-    .bind(&n.image_path)
-    .bind(clean_status(&n.status))
-    .execute(db)
-    .await?;
+        publish_set_sql("$5", "$6")
+    );
+    sqlx::query(&sql)
+        .bind(id)
+        .bind(&n.title)
+        .bind(&n.body)
+        .bind(&n.image_path)
+        .bind(clean_status(&n.status))
+        .bind(&n.publish_at)
+        .bind(&n.unpublish_at)
+        .execute(db)
+        .await?;
     Ok(())
 }
 
@@ -262,6 +322,8 @@ pub struct EventInput {
     pub image_path: String,
     pub audience: String,
     pub status: String,
+    pub publish_at: String,
+    pub unpublish_at: String,
 }
 
 #[derive(Debug, FromRow)]
@@ -275,6 +337,8 @@ pub struct EventEdit {
     pub image_path: String,
     pub audience: String,
     pub status: String,
+    pub publish_at: String,
+    pub unpublish_at: String,
 }
 
 pub async fn events(db: &PgPool, status: &str) -> Res<Vec<EventRow>> {
@@ -298,7 +362,9 @@ pub async fn event_for_edit(db: &PgPool, id: i64) -> Res<Option<EventEdit>> {
                   to_char(starts_at, 'YYYY-MM-DD"T"HH24:MI') AS starts_value,
                   COALESCE(to_char(ends_at, 'YYYY-MM-DD"T"HH24:MI'), '') AS ends_value,
                   COALESCE(image_path, '') AS image_path,
-                  audience, status
+                  audience, status,
+                  COALESCE(to_char(published_at, 'YYYY-MM-DD"T"HH24:MI'), '') AS publish_at,
+                  COALESCE(to_char(unpublish_at, 'YYYY-MM-DD"T"HH24:MI'), '') AS unpublish_at
            FROM events WHERE id = $1"#,
     )
     .bind(id)
@@ -307,45 +373,57 @@ pub async fn event_for_edit(db: &PgPool, id: i64) -> Res<Option<EventEdit>> {
 }
 
 pub async fn create_event(db: &PgPool, e: &EventInput, author: Option<i64>) -> Res<i64> {
-    sqlx::query_scalar(
+    let sql = format!(
         r#"INSERT INTO events
-             (title, description, location, starts_at, ends_at, image_path, audience, status, created_by)
+             (title, description, location, starts_at, ends_at, image_path, audience, status,
+              published_at, unpublish_at, created_by)
            VALUES ($1, $2, NULLIF($3, ''), $4::timestamptz, NULLIF($5, '')::timestamptz,
-                   NULLIF($6, ''), $7, $8, $9)
+                   NULLIF($6, ''), $7, $8,
+                   {}, NULLIF($10, '')::timestamptz, $11)
            RETURNING id"#,
-    )
-    .bind(&e.title)
-    .bind(&e.description)
-    .bind(&e.location)
-    .bind(&e.starts_at)
-    .bind(&e.ends_at)
-    .bind(&e.image_path)
-    .bind(clean_audience(&e.audience))
-    .bind(clean_status(&e.status))
-    .bind(author)
-    .fetch_one(db)
-    .await
+        publish_new_sql("$8", "$9")
+    );
+    sqlx::query_scalar(&sql)
+        .bind(&e.title)
+        .bind(&e.description)
+        .bind(&e.location)
+        .bind(&e.starts_at)
+        .bind(&e.ends_at)
+        .bind(&e.image_path)
+        .bind(clean_audience(&e.audience))
+        .bind(clean_status(&e.status))
+        .bind(&e.publish_at)
+        .bind(&e.unpublish_at)
+        .bind(author)
+        .fetch_one(db)
+        .await
 }
 
 pub async fn update_event(db: &PgPool, id: i64, e: &EventInput) -> Res<()> {
-    sqlx::query(
+    let sql = format!(
         r#"UPDATE events
            SET title = $2, description = $3, location = NULLIF($4, ''),
                starts_at = $5::timestamptz, ends_at = NULLIF($6, '')::timestamptz,
-               image_path = NULLIF($7, ''), audience = $8, status = $9
+               image_path = NULLIF($7, ''), audience = $8, status = $9,
+               published_at = {},
+               unpublish_at = NULLIF($11, '')::timestamptz
            WHERE id = $1"#,
-    )
-    .bind(id)
-    .bind(&e.title)
-    .bind(&e.description)
-    .bind(&e.location)
-    .bind(&e.starts_at)
-    .bind(&e.ends_at)
-    .bind(&e.image_path)
-    .bind(clean_audience(&e.audience))
-    .bind(clean_status(&e.status))
-    .execute(db)
-    .await?;
+        publish_set_sql("$9", "$10")
+    );
+    sqlx::query(&sql)
+        .bind(id)
+        .bind(&e.title)
+        .bind(&e.description)
+        .bind(&e.location)
+        .bind(&e.starts_at)
+        .bind(&e.ends_at)
+        .bind(&e.image_path)
+        .bind(clean_audience(&e.audience))
+        .bind(clean_status(&e.status))
+        .bind(&e.publish_at)
+        .bind(&e.unpublish_at)
+        .execute(db)
+        .await?;
     Ok(())
 }
 

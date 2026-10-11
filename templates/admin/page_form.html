@@ -34,6 +34,19 @@
     </select>
   </div>
 
+  <div class="grid gap-5 sm:grid-cols-2">
+    <div>
+      <label for="publish_at" class="block font-semibold">Publish at <span class="font-normal text-ink/70">(optional)</span></label>
+      <input id="publish_at" name="publish_at" type="datetime-local" value="{{ form.publish_value }}" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+      <p class="mt-1 text-sm text-ink/70">Leave empty to go live as soon as the status is “published”.</p>
+    </div>
+    <div>
+      <label for="unpublish_at" class="block font-semibold">Expires <span class="font-normal text-ink/70">(optional)</span></label>
+      <input id="unpublish_at" name="unpublish_at" type="datetime-local" value="{{ form.unpublish_value }}" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+      <p class="mt-1 text-sm text-ink/70">Leave empty to keep it published.</p>
+    </div>
+  </div>
+
   <fieldset class="rounded border border-ink/15 p-4">
     <legend class="px-1 font-semibold">Site menu</legend>
     <p class="text-sm text-ink/70">Where the page is linked from the header. A page left out of the menu is still reachable by its path.</p>

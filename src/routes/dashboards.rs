@@ -6,7 +6,7 @@ use sqlx::FromRow;
 use tower_sessions::Session;
 
 use crate::{
-    auth::{OfficeOrAdmin, Role, StudentOnly, TeacherOnly},
+    auth::{AdminDashboard, Role, StudentOnly, TeacherOnly},
     error::AppError,
     models::Notice,
     sections::{self, Area},
@@ -34,16 +34,18 @@ pub struct AdminTemplate {
 pub async fn admin(
     State(s): State<AppState>,
     session: Session,
-    OfficeOrAdmin(user): OfficeOrAdmin,
+    AdminDashboard(user): AdminDashboard,
 ) -> Result<AdminTemplate, AppError> {
     Ok(AdminTemplate {
         shell: Shell::build(&user, &session).await?,
         is_admin: user.role == Role::Admin,
         counts: users::overview_counts(&s.db).await?,
-        areas: if user.role == Role::Admin {
-            sections::ADMIN
-        } else {
-            sections::STAFF
+        areas: match user.role {
+            Role::Admin => sections::ADMIN,
+            // The Principal oversees the academic areas; the content cards stay
+            // with the roles that may actually publish.
+            Role::Principal => sections::HOD,
+            _ => sections::STAFF,
         },
     })
 }

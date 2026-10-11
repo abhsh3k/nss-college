@@ -8,7 +8,7 @@ use axum::{
 use serde::Deserialize;
 use tower_sessions::Session;
 
-use super::{statuses, TokenForm};
+use super::{normalise_datetime, statuses, TokenForm};
 use crate::{
     auth::{csrf, AdminOnly, AuthUser, OfficeOrAdmin},
     error::AppError,
@@ -66,6 +66,8 @@ pub struct NewsFormValues {
     pub body: String,
     pub image_path: String,
     pub status: String,
+    pub publish_value: String,
+    pub unpublish_value: String,
     pub error: Option<String>,
 }
 
@@ -77,6 +79,8 @@ impl NewsFormValues {
             body: String::new(),
             image_path: String::new(),
             status: "draft".into(),
+            publish_value: String::new(),
+            unpublish_value: String::new(),
             error: None,
         }
     }
@@ -87,6 +91,8 @@ impl NewsFormValues {
             body: self.body.clone(),
             image_path: self.image_path.clone(),
             status: self.status.clone(),
+            publish_at: normalise_datetime(&self.publish_value).unwrap_or_default(),
+            unpublish_at: normalise_datetime(&self.unpublish_value).unwrap_or_default(),
         }
     }
 }
@@ -131,6 +137,8 @@ pub async fn edit_form(
             body: row.body,
             image_path: row.image_path,
             status: row.status,
+            publish_value: row.publish_at,
+            unpublish_value: row.unpublish_at,
             error: None,
         },
         Shell::build(&user, &session).await?,
@@ -151,10 +159,16 @@ async fn read_form(
         body: body.field("body").to_string(),
         image_path: existing.image_path,
         status: content_admin::clean_status(body.field("status")).to_string(),
+        publish_value: body.field("publish_at").to_string(),
+        unpublish_value: body.field("unpublish_at").to_string(),
         error: None,
     };
     let mut values = values;
-    if values.title.is_empty() {
+    if let Err(msg) = super::clean_when(&values.publish_value) {
+        values.error = Some(msg);
+    } else if let Err(msg) = super::clean_when(&values.unpublish_value) {
+        values.error = Some(msg);
+    } else if values.title.is_empty() {
         values.error = Some("Give the news item a title.".into());
     } else if !crate::validate::fits(&values.title, crate::validate::MAX_TITLE) {
         values.error = Some(crate::validate::too_long_message("The title", crate::validate::MAX_TITLE));
@@ -243,6 +257,8 @@ pub async fn update(
         body: current.body,
         image_path: current.image_path,
         status: current.status,
+        publish_value: current.publish_at,
+        unpublish_value: current.unpublish_at,
         error: None,
     };
     let (mut values, body) = read_form(multipart, &session, existing).await?;

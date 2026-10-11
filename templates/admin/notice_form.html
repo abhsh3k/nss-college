@@ -55,6 +55,19 @@
     </div>
   </div>
 
+  <div class="grid gap-5 sm:grid-cols-2">
+    <div>
+      <label for="publish_at" class="block font-semibold">Publish at <span class="font-normal text-ink/70">(optional)</span></label>
+      <input id="publish_at" name="publish_at" type="datetime-local" value="{{ form.publish_at }}" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+      <p class="mt-1 text-sm text-ink/70">Leave empty to go live as soon as the status is “published”.</p>
+    </div>
+    <div>
+      <label for="unpublish_at" class="block font-semibold">Expires <span class="font-normal text-ink/70">(optional)</span></label>
+      <input id="unpublish_at" name="unpublish_at" type="datetime-local" value="{{ form.unpublish_at }}" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+      <p class="mt-1 text-sm text-ink/70">Leave empty to keep it published.</p>
+    </div>
+  </div>
+
   <div class="flex flex-wrap gap-3 pt-2">
     <button type="submit" class="rounded bg-brand px-5 py-2 font-semibold text-chalk hover:bg-ink">Save notice</button>
     <a href="/admin/notices" class="rounded border border-ink/40 px-5 py-2 font-semibold hover:bg-mist">Cancel</a>

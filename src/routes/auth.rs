@@ -10,7 +10,10 @@ use serde::Deserialize;
 use tower_sessions::Session;
 
 use crate::{
-    auth::{csrf, password, safe_next_for_role, AuthUser, SESSION_USER, SESSION_VERSION},
+    auth::{
+        csrf, password, reauth_recent, safe_next_for_role, AuthUser, SESSION_REAUTH, SESSION_USER,
+        SESSION_VERSION,
+    },
     error::{internal, AppError},
     services::users,
     shell::Shell,
@@ -226,4 +229,74 @@ pub async fn password_submit(
     users::audit(&s.db, Some(user.id), "password_changed", "user", Some(user.id)).await?;
     session.cycle_id().await.map_err(internal)?;
     Ok(Redirect::to(user.role.home()).into_response())
+}
+
+// ---------- Re-authentication ----------
+
+#[derive(Template)]
+#[template(path = "account/reauth.html")]
+pub struct ReauthTemplate {
+    shell: Shell,
+    next: String,
+    error: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ReauthQuery {
+    next: Option<String>,
+}
+
+/// Ask for the password again before a critical action. Already-fresh callers
+/// are sent straight on to where they were going.
+pub async fn reauth_form(
+    user: AuthUser,
+    session: Session,
+    Query(q): Query<ReauthQuery>,
+) -> Result<Response, AppError> {
+    let next = q.next.unwrap_or_default();
+    if reauth_recent(&session).await {
+        let target = safe_next_for_role(&next, user.role).unwrap_or(user.role.home());
+        return Ok(Redirect::to(target).into_response());
+    }
+    Ok(ReauthTemplate {
+        shell: Shell::build(&user, &session).await?,
+        next,
+        error: None,
+    }
+    .into_response())
+}
+
+#[derive(Deserialize)]
+pub struct ReauthForm {
+    password: String,
+    #[serde(default)]
+    next: String,
+    csrf_token: String,
+}
+
+pub async fn reauth_submit(
+    State(s): State<AppState>,
+    user: AuthUser,
+    session: Session,
+    Form(f): Form<ReauthForm>,
+) -> Result<Response, AppError> {
+    csrf::verify(&session, &f.csrf_token).await?;
+
+    let stored = users::password_hash(&s.db, user.id).await?;
+    if !password::verify_blocking(f.password.clone(), stored).await? {
+        return Ok(ReauthTemplate {
+            shell: Shell::build(&user, &session).await?,
+            next: f.next.clone(),
+            error: Some("That password is not right.".to_string()),
+        }
+        .into_response());
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    session.insert(SESSION_REAUTH, now).await.map_err(internal)?;
+    let target = safe_next_for_role(&f.next, user.role).unwrap_or(user.role.home());
+    Ok(Redirect::to(target).into_response())
 }

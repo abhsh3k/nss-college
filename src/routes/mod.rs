@@ -26,6 +26,11 @@ fn auth_routes() -> Router<AppState> {
             "/account/password",
             get(auth::password_form).post(auth::password_submit),
         )
+        // Password re-entry for critical operations.
+        .route(
+            "/account/reauth",
+            get(auth::reauth_form).post(auth::reauth_submit),
+        )
 }
 
 fn signed_in_public_routes() -> Router<AppState> {

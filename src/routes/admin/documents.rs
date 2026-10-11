@@ -8,7 +8,7 @@ use axum::{
 use serde::Deserialize;
 use tower_sessions::Session;
 
-use super::{statuses, TokenForm};
+use super::{normalise_datetime, statuses, TokenForm};
 use crate::{
     auth::{csrf, AuthUser, AdminOnly},
     error::AppError,
@@ -68,6 +68,9 @@ pub struct DocumentFormValues {
     pub file_path: String,
     pub file_name: String,
     pub status: String,
+    /// Raw `datetime-local` values for a scheduled publish and an expiry.
+    pub publish_value: String,
+    pub unpublish_value: String,
     pub error: Option<String>,
 }
 
@@ -80,6 +83,8 @@ impl DocumentFormValues {
             file_path: String::new(),
             file_name: String::new(),
             status: "draft".into(),
+            publish_value: String::new(),
+            unpublish_value: String::new(),
             error: None,
         }
     }
@@ -90,6 +95,8 @@ impl DocumentFormValues {
             category: self.category.clone(),
             file_path: self.file_path.clone(),
             status: self.status.clone(),
+            publish_at: normalise_datetime(&self.publish_value).unwrap_or_default(),
+            unpublish_at: normalise_datetime(&self.unpublish_value).unwrap_or_default(),
         }
     }
 }
@@ -135,6 +142,8 @@ pub async fn edit_form(
             file_name: row.file_path.rsplit('/').next().unwrap_or("").to_string(),
             file_path: row.file_path,
             status: row.status,
+            publish_value: row.publish_at,
+            unpublish_value: row.unpublish_at,
             error: None,
         },
         Shell::build(&user, &session).await?,
@@ -157,10 +166,20 @@ async fn read_form(
         file_path: existing.file_path,
         file_name: existing.file_name,
         status: content_admin::clean_status(body.field("status")).to_string(),
+        publish_value: body.field("publish_at").to_string(),
+        unpublish_value: body.field("unpublish_at").to_string(),
         error: None,
     };
+    if let Err(msg) = super::clean_when(&values.publish_value) {
+        values.error = Some(msg);
+    } else if let Err(msg) = super::clean_when(&values.unpublish_value) {
+        values.error = Some(msg);
+    }
     if values.category.is_empty() {
         values.category = "General".into();
+    }
+    if values.error.is_some() {
+        return Ok((values, body));
     }
     if values.title.is_empty() {
         values.error = Some("Give the document a title.".into());
@@ -263,6 +282,8 @@ pub async fn update(
         file_path: current.file_path.clone(),
         file_name: String::new(),
         status: current.status,
+        publish_value: current.publish_at,
+        unpublish_value: current.unpublish_at,
         error: None,
     };
     let previous = existing.file_path.clone();

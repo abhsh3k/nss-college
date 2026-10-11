@@ -15,7 +15,7 @@ use tower_sessions::Session;
 
 use super::{parse_i32, parse_i64};
 use crate::{
-    auth::{csrf, Manager},
+    auth::{csrf, require_reauth, Manager},
     error::{internal, AppError},
     services::{
         exams::PushKind,
@@ -119,8 +119,10 @@ pub async fn upload(
         shell::flash(&session, "That CSV file is larger than 5 MB — split it into smaller batches.").await?;
         return Ok(Redirect::to(&format!("/admin/exams?programme={programme_id}")).into_response());
     }
-    let text = String::from_utf8(file.bytes.clone())
-        .map_err(|_| AppError::BadRequest("CSV file is not valid UTF-8.".into()))?;
+    // A CSV/TSV file is decoded as before; a workbook is flattened to CSV, so
+    // the same staging pipeline accepts `.xlsx`/`.xls`/`.ods`.
+    let text = crate::services::import_students::to_csv_text(&file.bytes, &file.filename)
+        .map_err(AppError::BadRequest)?;
     let semester = semester_of(form.field("semester"));
     let kind = PushKind::parse(form.field("kind"));
     let source = if file.filename.is_empty() { "upload.csv".to_string() } else { file.filename.clone() };
@@ -175,6 +177,10 @@ pub async fn commit(
     Form(f): Form<BatchForm>,
 ) -> Result<Response, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
+    if let Err(redirect) = require_reauth(&session, "/admin/marks").await {
+        shell::flash(&session, "Re-enter your password to commit an import.").await?;
+        return Ok(redirect.into_response());
+    }
     let Some(id) = parse_i64(&f.batch) else {
         return Err(AppError::NotFound);
     };

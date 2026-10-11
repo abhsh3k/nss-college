@@ -374,15 +374,42 @@ pub struct Clash {
     pub end_at: String,
 }
 
-pub async fn course_in_class(db: &PgPool, course_id: i64, programme_id: i64, semester: i32) -> Res<bool> {
+/// Whether a course is applicable to a programme and semester.
+///
+/// One rule for every write that keys a record to a class: a course belongs to
+/// the programme directly, or it is a catalogue course (`programme_id IS NULL`)
+/// carried for that programme and semester by a course offering. The exam,
+/// marks, import and timetable paths all validate through this so their lists
+/// and their checks cannot drift apart.
+pub async fn applicable_course(
+    db: &PgPool,
+    programme_id: i64,
+    semester: i32,
+    course_id: i64,
+) -> Res<bool> {
     sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM courses WHERE id = $1 AND programme_id = $2 AND semester = $3)",
+        r#"SELECT EXISTS (
+               SELECT 1 FROM courses c
+                WHERE c.id = $3
+                  AND COALESCE(c.is_active, true)
+                  AND ( (c.programme_id = $1 AND c.semester = $2)
+                     OR (c.programme_id IS NULL
+                         AND EXISTS (SELECT 1 FROM course_offerings o
+                                       JOIN course_offering_targets t ON t.offering_id = o.id
+                                      WHERE o.course_id = c.id
+                                        AND o.semester = $2
+                                        AND t.programme_id = $1)) ))"#,
     )
-    .bind(course_id)
     .bind(programme_id)
     .bind(semester)
+    .bind(course_id)
     .fetch_one(db)
     .await
+}
+
+/// The old name for [`applicable_course`], kept for the timetable call sites.
+pub async fn course_in_class(db: &PgPool, course_id: i64, programme_id: i64, semester: i32) -> Res<bool> {
+    applicable_course(db, programme_id, semester, course_id).await
 }
 
 pub async fn course_teacher(db: &PgPool, course_id: i64) -> Res<i64> {

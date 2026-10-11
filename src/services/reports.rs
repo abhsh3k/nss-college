@@ -255,12 +255,22 @@ pub struct CourseOption {
     pub title: String,
 }
 
-/// Courses offered by a programme, for the course filter. Zero id means all.
+/// Courses relevant to a programme, for the course filter. Zero id means all.
+///
+/// The reports scope a row by the *student's* programme, so a catalogue course
+/// (`programmes_id IS NULL`) taught to that programme's students belongs in the
+/// list too — matching it on its own `programme_id` alone would hide it, and
+/// leave a programme filter whose sessions mention a course the dropdown never
+/// offers. A course is therefore included when it belongs to the programme or
+/// when any active student of the programme is enrolled in it.
 pub async fn course_options(db: &PgPool, programme_id: i64) -> Res<Vec<CourseOption>> {
     sqlx::query_as::<_, CourseOption>(
-        r#"SELECT id, code, title FROM courses
-           WHERE ($1 = 0 OR programme_id = $1)
-           ORDER BY code"#,
+        r#"SELECT DISTINCT c.id, c.code, c.title
+             FROM courses c
+             LEFT JOIN enrollments e ON e.course_id = c.id AND e.status = 'active'
+             LEFT JOIN students st ON st.id = e.student_id
+            WHERE $1 = 0 OR c.programme_id = $1 OR st.programme_id = $1
+            ORDER BY c.code"#,
     )
     .bind(programme_id)
     .fetch_all(db)

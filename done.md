@@ -10,7 +10,7 @@ Test commands referenced throughout:
 
     docker compose up -d
     DATABASE_URL=postgres://nss:nss@localhost:5432/nss_college cargo test
-    # 57 unit + 16 database + 8 end-to-end, currently all passing
+    # 61 unit + 32 database + 13 end-to-end, currently all passing
 
 ---
 
@@ -21,31 +21,32 @@ Test commands referenced throughout:
 | §3 Stack constraints (Rust/Axum/Askama/HTMX/Tailwind/SQLx/PostgreSQL) | Done — unchanged |
 | §5 Super Admin (loopback-only listener) | Done |
 | §5 IT Admin | Done |
-| §5 Principal / Academic Admin | **Not started** |
+| §5 Principal / Academic Admin | Done / Partial (Super Admin appoints it — see §3.A.2) |
 | §5 HOD, one per department, effective dates | Done |
 | §5 Acting HOD | Done |
 | §5 Delegation + non-carryover handover | Done |
 | §5 Faculty / student scoping and account lifecycle | Done |
 | §6 Route-by-route authorization audit | Done (every handler takes a role/scope extractor) / Partial (no per-route test matrix — see §3.B.18) |
 | §6 Upstream login throttle, CSRF, session revocation, cookies | Done |
-| §6 Re-authentication for critical operations | **Not started** |
+| §6 Re-authentication for critical operations | Done |
 | §6 Append-only, complete audit log | Done (append-only) / Partial (no before/after or reason on every row) |
 | §6 Unpublished CMS content cannot leak via direct URL | Done |
 | §6 Backups protected, with retention and restore instructions | Done |
 | §7 Appointment/approval lifecycle | Done |
-| §7 Record states + no silent overwrite of finalized | Done / Partial (no correction path) |
-| §7 In-app notifications and task lists | **Not started** (work queue only) |
+| §7 Record states + no silent overwrite of finalized | Done |
+| §7 In-app notifications and task lists | Done (feed) / Partial (the work queue is unchanged) |
 | §7 Stable course identity and versions | Done |
 | §7 Timetable/course relationship validation | Partial |
 | §7 Internal vs university results kept separately | Done |
 | §7 1–3 internal assessments without a schema change | Done |
-| §7 CSV/Excel import with preview, validation, confirmation | Done for CSV, **not started** for Excel |
-| §7 Correction of finalized results | **Not started** |
+| §7 CSV/Excel import with preview, validation, confirmation | Done (CSV and Excel) |
+| §7 Correction of finalized results | Done |
 | §7 Versioned migrations, history preserved | Done |
 | §8 Role-specific workspaces, HTMX, responsive UI | Done / Partial (reusable components incomplete) |
 | §9 Automated test suite (unit / DB / authz / workflow / e2e / migration) | Done for what exists; gaps listed in §3.B.18–19 |
 | §8, §9 README + architecture/permission notes | Done |
-| §8, §6 Scheduled/timed CMS publishing | **Not started** |
+| §8, §6 Scheduled/timed CMS publishing | Done |
+| §6 Reserved CMS page paths | Done |
 
 ---
 
@@ -169,57 +170,117 @@ Test commands referenced throughout:
 
 ### A. Not started — no implementation exists
 
-1. **Principal / Academic Admin role** (brief §5). There is no `Principal` in `Role`, no route, and no
-   approver for HOD appointments: the IT admin appoints directly, and there is no self-approval rule to
-   enforce because there is no separate approver. `role_assignments.role` accepts `'principal'` in its
-   CHECK, so the schema half is in place.
+1. ~~**Principal / Academic Admin role** (brief §5).~~ **Done.** `Role::Principal` (migration `0028`
+   widens the `users.role` CHECK) lands on `/admin`, gets `Scope::All` *academic* authority through
+   `Manager` (cross-department, but no technical powers), and its own sidebar. The IT admin now
+   **requests** an HOD appointment (`appointments::request_head`, status `pending`, grants nothing) and the
+   Principal **approves** it (`appointments::approve_head`), with self-approval refused. Evidence:
+   `tests/database.rs` — `a_head_appointment_is_pending_until_the_principal_approves`,
+   `a_rejected_head_appointment_never_activates`; unit test `the_principal_is_a_distinct_role_with_an_academic_workspace`.
+   Remaining: the Super Admin appointing/activating the Principal appointment is part of §3.A.2.
 2. **Super Admin as a distinct authority from IT Admin.** The listener boundary exists, but there is no
    `super_admin` handling in code — no role-management screen, no emergency-recovery or
    emergency-intervention flow, and no "last recovery account cannot be deactivated" guard.
-3. **Result correction workflow** (brief §7, P1.1). Finalized marks are *blocked* with "use the correction
-   workflow" and `mark_history` exists, but there is no correction route or UI: nothing can write a
-   correct-with-reason, nothing writes `mark_history`, and there is no approval step or supersession view.
-   This is the largest single functional gap, because the brief calls it out explicitly.
-4. **Notifications** (brief §7, §8). No table and no feed. `/admin/work-queue` is a task list, but there are
-   no actionable notifications for approvals, deadlines, failed imports or handovers.
-5. **Scheduled CMS publishing** (brief §7, §8). `clean_status` has only `draft`/`published`/`archived`; there
-   is no scheduled state, no start/end times, and no single timezone-aware visibility predicate.
-6. **Excel result import.** `calamine` is used only for the student import; results accept CSV only.
-7. **Re-authentication for critical operations** (brief §6): role/appointment changes, result
-   finalization/correction, backup/restore and emergency actions do not ask for the password again.
-8. **Reserved route paths for CMS pages.** A page path is normalized and must start with `/`, but nothing
-   stops an admin creating a page that shadows `/login`, `/admin`, `/hub`, `/static` or `/uploads`.
+3. ~~**Result correction workflow** (brief §7, P1.1).~~ **Done.** Migration `0027_result_corrections.sql`
+   adds the proposed-value/decision columns (with a constraint that `correction_pending` is present iff a
+   proposed value is). `services::marks` gains `finalize_course`, `request_correction` and
+   `decide_correction`. The marks page has a **Finalize & correct** section, an **Corrections awaiting
+   approval** panel, and a **Correction history** table; a finalized row offers a reason-bearing correction
+   form. A correction must be approved by a *different* manager; applying it snapshots the replaced value
+   into `mark_history` as `superseded` (the first writer of that state) and re-locks the row. Toggle/delete
+   on a finalized or pending row is refused server-side. Evidence: `tests/database.rs` —
+   `finalizing_a_course_locks_its_published_marks`, `a_correction_needs_a_second_manager_and_keeps_the_old_value`,
+   `only_a_finalized_mark_can_be_corrected` (19 database tests now).
+4. ~~**Notifications** (brief §7, §8).~~ **Done.** Migration `0029_notifications.sql` adds a per-user
+   `notifications` table; `services::notifications` creates/lists them, counts unread, and marks them read
+   (scoped to the owner). `/admin/notifications` (guarded by `Ready`, so any signed-in user reads only
+   their own) is the feed, with per-item and Mark-all-read actions, linked from every workspace sidebar.
+   Notifications are created when an HOD appointment is requested (→ Principals and IT admins), when a
+   result correction is requested (→ IT admins and the Principal). A notification is a pointer only: the
+   page it opens re-checks authorization. Evidence: `tests/database.rs` —
+   `notifications_are_per_user_and_marked_read_by_their_owner`, `notifying_roles_reaches_every_active_holder`.
+   Remaining: the `/admin/work-queue` list itself is unchanged, and notifications are not yet raised for
+   deadlines or failed imports.
+5. ~~**Scheduled CMS publishing** (brief §7, §8).~~ **Done.** Migration `0030` adds `unpublish_at` to
+   `notices`, `news`, `events`, `documents` and `pages` (plus the `published_at` column `pages` never had)
+   and widens each status check to allow `scheduled`. `content::visible(alias)` is now the one visibility
+   predicate — published, or scheduled with a time that has arrived, and not past `unpublish_at` — and every
+   read path goes through it (`content.rs`, `hub.rs`, and the upload authorization in `public.rs` replaced
+   its own hand-written copies). `content_admin::{publish_new_sql, publish_set_sql}` decide the stored
+   publish time on write, so editing a published row keeps its original time and an explicit time wins; the
+   status and `datetime-local` fields were added to the notice, news, event, document and page forms, and
+   the page list's quick Publish stamps the time so it is live at once. Note: `dates::valid_date` bounds a
+   publish time to 2000–2100, the same limit the other date fields already have. Evidence: `tests/database.rs`
+   — `a_scheduled_notice_stays_hidden_until_its_publish_time`, `an_expired_notice_drops_out_of_the_public_list`,
+   `a_scheduled_page_is_not_served_until_its_time`, `a_published_update_keeps_its_stored_publish_time`; e2e
+   `the_notice_form_schedules_a_publish_time` (renders the field, posts a scheduled notice, asserts the row
+   is hidden from the public list).
+6. ~~**Excel result import.**~~ **Done.** `import_students::to_csv_text` flattens an uploaded
+   `.xlsx`/`.xlsm`/`.xls`/`.ods` workbook to CSV text with the same `calamine` path the student import uses;
+   the guided marks import, the staged result import and the paste/CSV push all go through it, so they
+   accept the same file types. A plain CSV/TSV file is still decoded as before. Evidence: unit test
+   `a_csv_upload_converts_to_csv_text_unchanged` (the workbook branch is the existing, already-shipped
+   `spreadsheet` reader; no `.xlsx` fixture is checked in).
+7. ~~**Re-authentication for critical operations** (brief §6).~~ **Done.** `/account/reauth` asks for the
+   password again and records a timestamp in the session (`auth::SESSION_REAUTH`); a confirmation counts for
+   15 minutes (`auth::reauth_valid`, unit-tested). `auth::require_reauth` gates the critical handlers:
+   appointment request/approve/reject/revoke and delegations, marks finalize/request-correction/approve/
+   reject, and the result-import commit — each redirects to the re-auth page (then back) when the check has
+   lapsed. Backup/restore are CLI-only. Evidence: unit test `a_reentry_only_counts_within_the_window`,
+   e2e `re_authentication_requires_a_signed_in_session`.
+8. ~~**Reserved route paths for CMS pages.**~~ **Done.** `site_admin::reserved_path` rejects a page whose
+   path is `/login`, `/logout`, `/admin`, `/teacher`, `/hub`, `/account`, `/static`, `/uploads`, `/healthz`
+   or `/robots.txt` (whole-segment match, trailing slash ignored), enforced in `read_form` for a friendly
+   message and again in `create_page`/`update_page` as defence in depth. Evidence: unit test
+   `reserved_paths_cannot_be_shadowed_by_a_cms_page`.
 
-### B. Partial — the data or half the flow exists, the feature does not
-
-9. **Single applicability rule for exams/timetable** (P0.12). Exam creation checks `may_manage_programme`
-   (department scope) but does not verify that the submitted course belongs to the selected
-   programme/semester, and there is no shared `applicable_course` helper across exam, marks, import and
-   timetable writes.
+### B. Partial — the data or half the flow exists, the feature does not9. ~~**Single applicability rule for exams/timetable** (P0.12).~~ **Done.** `academics::applicable_course`
+    is the one rule (programme course, or a catalogue course carried by an offering that targets the
+    programme); `course_in_class` now delegates to it, so the timetable validator and the exam/marks
+    pickers (`exams::course_options_for_semester`, documented as the same rule) cannot drift. Exam and marks
+    writes already rejected a course outside the picker. Evidence: `tests/database.rs` —
+    `a_catalogue_course_is_applicable_through_its_offering`.
 10. **Timetable/course relationship enforcement** (P0.10). Forms no longer treat a bad id as "unassigned",
     but a published period still does not require a validated teacher, and there is no explicit
     `teacher_tbd` state with a work-queue item.
-11. **Capacity policy** (P0.11). Student confirmation is now race-safe (`SELECT … FOR UPDATE` with a
-    fresh enrolment count). HOD assignment and cohort finalization still do not enforce capacity.
-12. **Offerings in the student results view** (P1.3). Results are filed per course, and the results query
-    filters on `courses.semester`, which is `NULL` for catalogue courses — so a confirmed offering appears
-    in "Enrolled courses" but not in `/hub/results`. The separate internal/university storage is correct;
-    the read path is not.
-13. **Offerings in substitution candidates** (P1.4). `attendance::teacher_day` joins `programmes`, so an
-    offering period never appears in the substitute-teacher candidate list.
-14. **Clash detection between two offerings** (P1.4). Programme-vs-offering is covered; two different
-    offerings targeting the same programme can still be scheduled on top of each other.
-15. **Attendance report filters** (P1.4). `by_session` filters on the course's programme while
-    `totals`/`by_student` filter on the student's, so the session table can be empty while the totals are
-    not; the course dropdown hides catalogue courses under a programme filter.
-16. **Audit detail** (P0.7). Rows carry actor/action/entity/entity_id, and the log is append-only by
-    trigger, but most rows have no before/after summary, reason or correlation id, and some audit calls
-    still discard their error with `let _ =`.
+11. ~~**Capacity policy** (P0.11).~~ **Done.** Student confirmation is race-safe (`SELECT … FOR UPDATE`
+    with a fresh enrolment count); HOD assignment enforces it through `offering_for_confirm`; and cohort
+    finalization now locks the offering and refuses when the cohort does not fit
+    (`taken + needing > capacity`), before any enrolment is written. Evidence: `tests/database.rs` —
+    `cohort_finalization_refuses_when_the_offering_cannot_hold_the_cohort` (covers both the refusal and the
+    fits-and-enrols path).
+12. ~~**Offerings in the student results view** (P1.3).~~ **Fixed.** `exams::results_for` and
+    `exams::result_semesters` read the semester through `COALESCE(e.semester, c.semester)`, so a catalogue
+    course (`courses.semester IS NULL`) carried by an offering enrollment appears correctly. The read path
+    was already correct on re-inspection; a regression test now pins it. Evidence: `tests/database.rs` —
+    `a_catalogue_course_offering_shows_in_the_student_results`.
+13. ~~**Offerings in substitution candidates** (P1.4).~~ **Already addressed by inspection.**
+    `attendance::teacher_day` (which the substitutions page uses for candidates) already resolves an
+    offering period's programme from `course_offering_targets` via `COALESCE(p.name, subquery, 'Offered
+    course')`. No regression test covers it yet.
+14. ~~**Clash detection between two offerings** (P1.4).~~ **Already addressed by inspection.**
+    `academics::offering_clashes` compares two offerings that both target the same programme in the same
+    semester (`EXISTS` over paired `course_offering_targets`), so they clash. No regression test yet.
+15. ~~**Attendance report filters** (P1.4).~~ **Fixed.** `by_session`, `totals` and `by_student` all scope
+    by the *student's* programme (`st.programme_id = $3`), so they agree. The remaining defect — the course
+    dropdown hiding catalogue courses under a programme filter — is fixed in `reports::course_options`:
+    a course is listed when it belongs to the programme *or* any active student of the programme is
+    enrolled in it (catalogue courses have `programme_id IS NULL`). Evidence: `tests/database.rs` —
+    `the_attendance_course_filter_includes_catalogue_courses_taught_to_the_programme`.
+16. **Audit detail** (P0.7) — **improved, partial.** Rows carry actor/action/entity/entity_id and the log is
+    append-only by trigger. `users::audit_detail` now writes the structured `details` JSONB, used for result
+    corrections (reason + proposed value, and the decision) and HOD appointments (department, acting,
+    reason, appointed user). Remaining: other audit calls still pass no detail, and some still discard their
+    error with `let _ =`; there is no correlation id. Evidence: `tests/database.rs` —
+    `an_audit_detail_row_keeps_its_structured_payload`.
 17. **Reusable UI components** (brief §8). Tables, empty states and form errors are consistent by
     convention, not by shared components; there is no pending-approval badge in the navigation.
-18. **Authentication test depth** (brief §9). There is no test that signs in as each role and attempts
-    cross-department or cross-user requests through the router; authorization is covered by unit tests on
-    the decision functions plus the service-level checks.
+18. **Authentication test depth** (brief §9) — **started, partial.** `tests/app.rs` now has a real sign-in
+    helper (login through the router, session cookie reused) and three through-the-router authorization
+    tests: `an_hod_cannot_touch_another_departments_programme` (cross-department mutation is 403),
+    `a_teacher_with_no_appointment_cannot_reach_the_academic_tools` (403), and
+    `the_it_admin_may_act_for_any_programme` (positive control). Remaining: the same matrix for the other
+    roles and resource kinds (student-vs-student, teacher-vs-assigned-course, CMS ownership).
 19. **JS behaviour coverage.** The `data-*` hooks in `app.js` are not covered by automated tests (no
     browser in this environment); they were verified by inspecting rendered markup and reading the script.
 
@@ -236,13 +297,20 @@ Test commands referenced throughout:
 
 Dependency-aware, highest value first:
 
-1. **Result correction workflow** (schema is already there). Unblocks the "finalized records cannot be
-   silently overwritten *or* corrected" half of the brief and gives `mark_history` a writer.
-2. **Offerings in the student results view** (§3.B.12) — one read path fix that makes the whole
-   offering/results feature coherent.
-3. **Principal role and the HOD appointment approval** — the last missing authority in the brief.
-4. **Scheduled CMS publishing** plus reserved-path validation — self-contained, touches content only.
-5. **Notifications/task list** — builds on the work queue that already exists.
-6. **Exam/timetable applicability helper** (§3.B.9) and **capacity everywhere** (§3.B.11).
-7. **Remaining P1.4 defects** (substitutions, offering-vs-offering clashes, report filters).
-8. **Super Admin distinct powers, re-authentication, audit detail, `.xlsx` results, authz test matrix.**
+1. ~~**Result correction workflow**~~ **Done** (migration `0027`, `services::marks`, marks page).
+2. ~~**Offerings in the student results view** (§3.B.12)~~ **Done** — verified fixed with a regression test.
+3. ~~**Principal role and the HOD appointment approval**~~ **Done** — pending request by the IT admin,
+   Principal approval with self-approval refused; the Super Admin half remains in §3.A.2.
+4. ~~**Scheduled CMS publishing and reserved-path validation**~~ **Done** — reserved paths (§3.A.8,
+   `site_admin::reserved_path`) and scheduled/time-limited publishing (migration `0030` plus the shared
+   `content::visible` predicate).
+5. ~~**Notifications/task list**~~ **Done** — notifications feed added (`/admin/notifications`); the
+   work-queue list is unchanged.
+6. ~~**Exam/timetable applicability helper** (§3.B.9) and **capacity everywhere** (§3.B.11).~~ **Done** —
+   one `applicable_course` rule; cohort finalization enforces capacity.
+7. ~~**Remaining P1.4 defects** (substitutions, offering-vs-offering clashes, report filters).~~ **Addressed**
+   — substitutions (§3.B.13) and offering-vs-offering clashes (§3.B.14) were already handled in code;
+   the attendance course filter (§3.B.15) is fixed with a regression test.
+8. **Super Admin distinct powers.** — audit detail (§3.B.16), re-authentication (§3.A.7), the `.xlsx`
+   result import and the through-the-router authorization matrix (§3.B.18) are now done. The one item left
+   is what authority the Super Admin holds beyond the IT admin, which needs a product decision.

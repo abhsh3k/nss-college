@@ -171,21 +171,21 @@ pub async fn setting_bool(db: &PgPool, key: &str, default: bool) -> Res<bool> {
 
 /// Announcements aimed at students (public ones included), newest first.
 pub async fn student_feed(db: &PgPool, limit: i64) -> Res<Vec<Notice>> {
-    sqlx::query_as::<_, Notice>(
+    let sql = format!(
         r#"SELECT title,
                   category,
                   COALESCE(attachment_path, '/notices') AS href,
                   (published_at > now() - interval '7 days') AS is_new
-           FROM notices
-           WHERE status = 'published'
-             AND audience IN ('public', 'students')
-             AND published_at <= now()
-           ORDER BY is_pinned DESC, published_at DESC
+           FROM notices n
+           WHERE {} AND n.audience IN ('public', 'students')
+           ORDER BY n.is_pinned DESC, n.published_at DESC
            LIMIT $1"#,
-    )
-    .bind(limit)
-    .fetch_all(db)
-    .await
+        crate::services::content::visible("n")
+    );
+    sqlx::query_as::<_, Notice>(&sql)
+        .bind(limit)
+        .fetch_all(db)
+        .await
 }
 
 // Internal marks moved to `services::exams::results_for`, which reads every

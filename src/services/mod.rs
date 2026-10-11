@@ -9,6 +9,7 @@ pub mod exams;
 pub mod hub;
 pub mod import_students;
 pub mod marks;
+pub mod notifications;
 pub mod maintenance;
 pub mod materials;
 pub mod result_import;

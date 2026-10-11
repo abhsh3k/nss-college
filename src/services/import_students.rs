@@ -68,6 +68,38 @@ pub fn parse(bytes: &[u8], filename: &str) -> Result<Parsed, String> {
     rows_from(&table)
 }
 
+/// Turn an uploaded tabular file into CSV text, so a CSV-based pipeline (the
+/// result import) accepts the same `.xlsx`/`.xls`/`.ods` files the student
+/// import does. A CSV/TSV file is decoded and returned unchanged.
+pub fn to_csv_text(bytes: &[u8], filename: &str) -> Result<String, String> {
+    let ext = filename.rsplit('.').next().unwrap_or_default().trim().to_lowercase();
+    match ext.as_str() {
+        "xlsx" | "xlsm" | "xls" | "ods" => {
+            let table = spreadsheet(bytes)?;
+            Ok(rows_to_csv(&table))
+        }
+        _ => decode(bytes),
+    }
+}
+
+fn rows_to_csv(table: &[Vec<String>]) -> String {
+    let mut out = String::new();
+    for row in table {
+        let cells: Vec<String> = row.iter().map(|c| csv_field(c)).collect();
+        out.push_str(&cells.join(","));
+        out.push('\n');
+    }
+    out
+}
+
+fn csv_field(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
 /// Tab-separated when the first line looks like a table copied out of Excel,
 /// comma-separated otherwise.
 fn delimited(bytes: &[u8]) -> Result<Vec<Vec<String>>, String> {
@@ -649,6 +681,16 @@ mod tests {
     use super::*;
 
 
+
+    #[test]
+    fn a_csv_upload_converts_to_csv_text_unchanged() {
+        let raw = "prn,course_code,marks_obtained,maxmarks\n2025BCA0001,BCA101,42,50\n";
+        let text = to_csv_text(raw.as_bytes(), "results.csv").unwrap();
+        assert!(text.contains("2025BCA0001,BCA101,42,50"), "got: {text}");
+        // The default (no recognised workbook extension) is the old text path,
+        // so a file with no extension at all still decodes.
+        assert_eq!(to_csv_text(raw.as_bytes(), "results").unwrap(), raw);
+    }
 
     #[test]
     fn header_names_are_matched_loosely() {

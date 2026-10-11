@@ -8,20 +8,40 @@ use crate::models::*;
 
 type Res<T> = Result<T, sqlx::Error>;
 
+/// The one public-visibility rule for content, for a table alias.
+///
+/// A row is visible when it is published (or scheduled with a publish time that
+/// has arrived) and has not passed its `unpublish_at`, the time-limited
+/// publish. `COALESCE(published_at, now())` keeps rows that predate scheduling
+/// visible, while a `scheduled` row with no time at all stays hidden. Kept as
+/// one function so the notice, news, page, feed and upload checks cannot drift
+/// apart.
+pub fn visible(alias: &str) -> String {
+    format!(
+        "(({a}.status = 'published' AND COALESCE({a}.published_at, now()) <= now()) \
+           OR ({a}.status = 'scheduled' AND {a}.published_at IS NOT NULL \
+               AND {a}.published_at <= now())) \
+         AND ({a}.unpublish_at IS NULL OR {a}.unpublish_at > now())",
+        a = alias
+    )
+}
+
 pub async fn notices(db: &PgPool, limit: i64) -> Res<Vec<Notice>> {
-    sqlx::query_as::<_, Notice>(
+    let sql = format!(
         r#"SELECT title,
                   category,
                   COALESCE(attachment_path, '/notices') AS href,
                   (published_at > now() - interval '7 days') AS is_new
-           FROM notices
-           WHERE status = 'published' AND audience = 'public' AND published_at <= now()
-           ORDER BY is_pinned DESC, published_at DESC
+           FROM notices n
+           WHERE {} AND n.audience = 'public'
+           ORDER BY n.is_pinned DESC, n.published_at DESC
            LIMIT $1"#,
-    )
-    .bind(limit)
-    .fetch_all(db)
-    .await
+        visible("n")
+    );
+    sqlx::query_as::<_, Notice>(&sql)
+        .bind(limit)
+        .fetch_all(db)
+        .await
 }
 
 const NEWS_COLUMNS: &str = r#"title,
@@ -32,17 +52,16 @@ const NEWS_COLUMNS: &str = r#"title,
 
 pub async fn latest_news(db: &PgPool, limit: i64) -> Res<Vec<NewsItem>> {
     let sql = format!(
-        "SELECT {NEWS_COLUMNS} FROM news
-         WHERE status = 'published' AND published_at <= now()
-         ORDER BY published_at DESC LIMIT $1"
+        "SELECT {NEWS_COLUMNS} FROM news n WHERE {} ORDER BY n.published_at DESC LIMIT $1",
+        visible("n")
     );
     sqlx::query_as::<_, NewsItem>(&sql).bind(limit).fetch_all(db).await
 }
 
 pub async fn news_by_id(db: &PgPool, id: i64) -> Res<Option<NewsItem>> {
     let sql = format!(
-        "SELECT {NEWS_COLUMNS} FROM news
-         WHERE id = $1 AND status = 'published' AND published_at <= now()"
+        "SELECT {NEWS_COLUMNS} FROM news n WHERE n.id = $1 AND {}",
+        visible("n")
     );
     sqlx::query_as::<_, NewsItem>(&sql).bind(id).fetch_optional(db).await
 }
@@ -146,12 +165,8 @@ pub async fn milestones(db: &PgPool) -> Res<Vec<Milestone>> {
 }
 
 pub async fn page_by_path(db: &PgPool, path: &str) -> Res<Option<Page>> {
-    sqlx::query_as::<_, Page>(
-        "SELECT id, title, lede FROM pages WHERE path = $1 AND status = 'published'",
-    )
-    .bind(path)
-    .fetch_optional(db)
-    .await
+    let sql = format!("SELECT id, title, lede FROM pages p WHERE p.path = $1 AND {}", visible("p"));
+    sqlx::query_as::<_, Page>(&sql).bind(path).fetch_optional(db).await
 }
 
 pub async fn page_sections(db: &PgPool, page_id: i64) -> Res<Vec<PageSection>> {
@@ -225,14 +240,14 @@ pub async fn site_info(db: &PgPool) -> Res<SiteInfo> {
     // The header menu, drawn from `pages` so a page created in the admin shows
     // up in the menu without a template edit. Draft pages drop out; a page with
     // no group set is one the header never draws.
-    let nav_rows: Vec<(String, String, String)> = sqlx::query_as(
+    let nav_sql = format!(
         r#"SELECT nav_group, COALESCE(NULLIF(nav_label, ''), title), path
-           FROM pages
-           WHERE status = 'published' AND nav_group <> 'none'
-           ORDER BY nav_sort, id"#,
-    )
-    .fetch_all(db)
-    .await?;
+           FROM pages p
+           WHERE {} AND p.nav_group <> 'none'
+           ORDER BY p.nav_sort, p.id"#,
+        visible("p")
+    );
+    let nav_rows: Vec<(String, String, String)> = sqlx::query_as(&nav_sql).fetch_all(db).await?;
     let links = |group: &str| -> Vec<NavItem> {
         nav_rows
             .iter()
@@ -388,14 +403,14 @@ pub async fn home_copy(db: &PgPool) -> Res<HomeCopy> {
 
 /// Every public path, for sitemap.xml.
 pub async fn sitemap_paths(db: &PgPool) -> Res<Vec<String>> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        r#"SELECT path FROM pages WHERE status = 'published'
+    let sql = format!(
+        r#"SELECT path FROM pages p WHERE {}
            UNION ALL SELECT '/academics/' || slug FROM programmes WHERE status = 'published'
            UNION ALL SELECT '/departments/' || slug FROM departments
-           UNION ALL SELECT '/news/' || id::text FROM news
-                     WHERE status = 'published' AND published_at <= now()"#,
-    )
-    .fetch_all(db)
-    .await?;
+           UNION ALL SELECT '/news/' || n.id::text FROM news n WHERE {}"#,
+        visible("p"),
+        visible("n")
+    );
+    let rows: Vec<(String,)> = sqlx::query_as(&sql).fetch_all(db).await?;
     Ok(rows.into_iter().map(|(p,)| p).collect())
 }

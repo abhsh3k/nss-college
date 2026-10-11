@@ -53,6 +53,7 @@ fn nav_for(user: &AuthUser) -> Vec<NavGroup> {
                 vec![
                     item("Overview", "/admin", ),
                     item("Work queue", "/admin/work-queue", ),
+                    item("Notifications", "/admin/notifications", ),
                 ],
             ),
             group(
@@ -117,8 +118,60 @@ fn nav_for(user: &AuthUser) -> Vec<NavGroup> {
                 vec![item("Site settings", "/admin/settings", )],
             ),
         ],
+        Role::Principal => vec![
+            group(
+                None,
+                vec![
+                    item("Overview", "/admin", ),
+                    item("Work queue", "/admin/work-queue", ),
+                    item("Notifications", "/admin/notifications", ),
+                    // Where the Principal signs off the academic appointments.
+                    item("Appointments", "/admin/appointments", ),
+                ],
+            ),
+            group(
+                Some("Academic management"),
+                vec![
+                    item("Departments", "/admin/departments", ),
+                    item("Courses and programmes", "/admin/academics", ),
+                    item("Course catalogue", "/admin/courses", ),
+                ],
+            ),
+            group(
+                Some("Course operations"),
+                vec![
+                    item("Course offerings", "/admin/courses/offerings", ),
+                    item("External offerings", "/admin/courses/external", ),
+                    item("Student selections", "/admin/courses/selections", ),
+                ],
+            ),
+            group(
+                Some("Timetable & scheduling"),
+                vec![
+                    item("Timetable", "/admin/timetable", ),
+                    item("Substitutions", "/admin/substitutions", ),
+                ],
+            ),
+            group(
+                Some("Attendance"),
+                vec![item("Attendance reports", "/admin/attendance", )],
+            ),
+            group(
+                Some("Examinations & results"),
+                vec![
+                    item("Exam timetable", "/admin/exams", ),
+                    item("Marks entry", "/admin/marks", ),
+                ],
+            ),
+        ],
         Role::Staff => vec![
-            group(None, vec![item("Overview", "/admin", )]),
+            group(
+                None,
+                vec![
+                    item("Overview", "/admin", ),
+                    item("Notifications", "/admin/notifications", ),
+                ],
+            ),
             // Office staff are `OfficeOrAdmin`: content and nothing else.
             group(
                 Some("Website & content"),
@@ -146,7 +199,10 @@ fn nav_for(user: &AuthUser) -> Vec<NavGroup> {
                 // which confines the query to the HOD's own department.
                 groups.push(group(
                     Some("Your department"),
-                    vec![item("Work queue", "/admin/work-queue", )],
+                    vec![
+                        item("Work queue", "/admin/work-queue", ),
+                        item("Notifications", "/admin/notifications", ),
+                    ],
                 ));
                 groups.push(group(
                     Some("Department & students"),

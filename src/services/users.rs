@@ -139,6 +139,32 @@ pub async fn audit(
     Ok(())
 }
 
+/// Record an audit row with a structured `details` payload — a reason, or a
+/// before/after summary — for the sensitive operations that need more than the
+/// actor and the entity. Never pass a secret (password, session, CSRF token).
+pub async fn audit_detail(
+    db: &PgPool,
+    actor: Option<i64>,
+    action: &str,
+    entity: &str,
+    entity_id: Option<i64>,
+    details: serde_json::Value,
+) -> Res<()> {
+    // The JSON is bound as text and cast, so the `json` compile-time feature is
+    // not needed just for the audit payload.
+    sqlx::query(
+        "INSERT INTO audit_log (actor_user_id, action, entity, entity_id, details) VALUES ($1, $2, $3, $4, $5::jsonb)",
+    )
+    .bind(actor)
+    .bind(action)
+    .bind(entity)
+    .bind(entity_id)
+    .bind(details.to_string())
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 #[derive(Debug, FromRow)]
 pub struct Counts {
     pub students: i64,

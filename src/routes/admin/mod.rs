@@ -13,6 +13,7 @@ mod marks;
 mod materials;
 mod news;
 mod notices;
+mod notifications;
 mod pages;
 mod people;
 mod rank_holders;
@@ -135,8 +136,14 @@ pub fn routes() -> Router<AppState> {
         // Marks entry grid and the management of filed results.
         .route("/admin/marks", get(marks::page))
         .route("/admin/marks/save", post(marks::save))
+        // Finalize a course's published marks, then correct them through a
+        // reasoned, separately-approved correction.
+        .route("/admin/marks/finalize", post(marks::finalize))
         .route("/admin/marks/:id/toggle", post(marks::toggle))
-        .route("/admin/marks/:id/delete", post(marks::delete));
+        .route("/admin/marks/:id/delete", post(marks::delete))
+        .route("/admin/marks/:id/correct", post(marks::correct))
+        .route("/admin/marks/:id/correction/approve", post(marks::approve))
+        .route("/admin/marks/:id/correction/reject", post(marks::reject));
 
     // Notices, news and events take multipart bodies, so they need a body limit
     // well above axum's 2 MB default.
@@ -238,10 +245,20 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/exams/results/discard", post(results_import::discard))
         .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
 
+    // The in-app notification feed, readable by any signed-in user for their
+    // own rows.
+    let notifications = Router::new()
+        .route("/admin/notifications", get(notifications::page))
+        .route("/admin/notifications/:id/read", post(notifications::mark_read))
+        .route("/admin/notifications/read-all", post(notifications::mark_all));
+
     // HOD appointments and delegations: plain urlencoded forms, no uploads.
     let appointments = Router::new()
         .route("/admin/appointments", get(appointments::index))
         .route("/admin/appointments/grant", post(appointments::grant))
+        // The Principal signs off the academic appointment the IT admin asks for.
+        .route("/admin/appointments/:id/approve", post(appointments::approve))
+        .route("/admin/appointments/:id/reject", post(appointments::reject))
         .route("/admin/appointments/:id/revoke", post(appointments::revoke))
         .route("/admin/appointments/delegate", post(appointments::delegate))
         .route(
@@ -266,6 +283,7 @@ pub fn routes() -> Router<AppState> {
         .merge(areas)
         .merge(marks_import)
         .merge(results_import)
+        .merge(notifications)
         .merge(appointments)
         .merge(materials)
         .merge(publishing)
@@ -343,6 +361,17 @@ pub(super) fn normalise_datetime(s: &str) -> Option<String> {
         return None;
     }
     Some(format!("{date} {h:02}:{m:02}"))
+}
+
+/// Normalise an optional `datetime-local` field (publish/expire times). An
+/// empty value stays empty; a valid one becomes `YYYY-MM-DD HH:MM`; anything
+/// else is an error the form can show.
+pub(super) fn clean_when(value: &str) -> Result<String, String> {
+    let v = value.trim();
+    if v.is_empty() {
+        return Ok(String::new());
+    }
+    normalise_datetime(v).ok_or_else(|| "Use a valid publish or expire time, or leave it blank.".to_string())
 }
 
 /// The CSRF token on its own, for the small per-row buttons that carry no other fields.

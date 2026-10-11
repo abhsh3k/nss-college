@@ -12,10 +12,57 @@ use crate::{error::{internal, AppError}, services::users, state::AppState};
 
 pub const SESSION_USER: &str = "user_id";
 pub const SESSION_VERSION: &str = "session_version";
+/// When the user last re-entered their password, as a Unix timestamp.
+pub const SESSION_REAUTH: &str = "reauth_at";
+/// How long a password re-entry stays good for a critical operation.
+pub const REAUTH_WINDOW_SECS: i64 = 15 * 60;
+
+/// A fresh password check, judged on its timestamp alone.
+///
+/// A re-entry counts for [`REAUTH_WINDOW_SECS`]; a timestamp in the future (a
+/// clock skew or a tampered value) never counts.
+pub fn reauth_valid(at: Option<i64>, now: i64) -> bool {
+    matches!(at, Some(ts) if ts <= now && now - ts <= REAUTH_WINDOW_SECS)
+}
+
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Whether the session holds a currently-valid password re-entry.
+pub async fn reauth_recent(session: &Session) -> bool {
+    let at: Option<i64> = session.get(SESSION_REAUTH).await.unwrap_or(None);
+    reauth_valid(at, now_unix())
+}
+
+/// Redirect target for a critical action when the password check has lapsed.
+pub fn reauth_url(next: &str) -> String {
+    if safe_next(next).is_some() {
+        format!("/account/reauth?next={next}")
+    } else {
+        "/account/reauth".to_string()
+    }
+}
+
+/// Gate a critical action on a recent password check. `Ok(())` when the session
+/// is fresh; otherwise `Err` is the redirect the handler should return.
+pub async fn require_reauth(session: &Session, next: &str) -> Result<(), Redirect> {
+    if reauth_recent(session).await {
+        Ok(())
+    } else {
+        Err(Redirect::to(&reauth_url(next)))
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     Admin,
+    /// Principal / Academic Admin: institution-wide academic authority, but no
+    /// technical administration privileges.
+    Principal,
     Staff,
     Faculty,
     Student,
@@ -26,6 +73,7 @@ impl Role {
     pub fn parse(s: &str) -> Option<Role> {
         match s {
             "admin" => Some(Role::Admin),
+            "principal" => Some(Role::Principal),
             "staff" => Some(Role::Staff),
             "faculty" => Some(Role::Faculty),
             "student" => Some(Role::Student),
@@ -37,6 +85,7 @@ impl Role {
     pub fn label(&self) -> &'static str {
         match self {
             Role::Admin => "IT administrator",
+            Role::Principal => "Principal",
             Role::Staff => "Office staff",
             Role::Faculty => "Teacher",
             Role::Student => "Student",
@@ -47,7 +96,7 @@ impl Role {
     /// Where this role lands after signing in.
     pub fn home(&self) -> &'static str {
         match self {
-            Role::Admin | Role::Staff => "/admin",
+            Role::Admin | Role::Principal | Role::Staff => "/admin",
             Role::Faculty => "/teacher",
             Role::Student => "/hub",
             Role::Alumni => "/",
@@ -199,11 +248,22 @@ macro_rules! role_guard {
 mod guards {
     use super::*;
     role_guard!(AdminOnly, &[Role::Admin]);
+    // The Principal signs off academic appointments, so they share the
+    // appointments screen with the IT admin.
+    role_guard!(AdminOrPrincipal, &[Role::Admin, Role::Principal]);
+    // The landing page at `/admin`: everyone who works in the management area,
+    // including the Principal (whose home it is). Content authoring stays on
+    // `OfficeOrAdmin`, so the Principal gets no publishing powers here.
+    role_guard!(AdminDashboard, &[Role::Admin, Role::Principal, Role::Staff]);
+    role_guard!(PrincipalOnly, &[Role::Principal]);
     role_guard!(OfficeOrAdmin, &[Role::Admin, Role::Staff]);
     role_guard!(TeacherOnly, &[Role::Faculty]);
     role_guard!(StudentOnly, &[Role::Student]);
 }
-pub use guards::{AdminOnly, OfficeOrAdmin, StudentOnly, TeacherOnly};
+pub use guards::{
+    AdminDashboard, AdminOnly, AdminOrPrincipal, OfficeOrAdmin, PrincipalOnly, StudentOnly,
+    TeacherOnly,
+};
 
 /// How far across the college a manager may reach.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -253,7 +313,10 @@ impl FromRequestParts<AppState> for Manager {
         let Ready(user) = Ready::from_request_parts(parts, state).await?;
 
         // The IT admin keeps every power and is not confined to a department.
-        if user.role == Role::Admin {
+        // The Principal has institution-wide *academic* authority — the same
+        // cross-department scope — but not the technical powers, which stay
+        // behind `AdminOnly`.
+        if matches!(user.role, Role::Admin | Role::Principal) {
             return Ok(Manager {
                 user,
                 scope: Scope::All,
@@ -297,7 +360,9 @@ pub fn safe_next(next: &str) -> Option<&str> {
 pub fn safe_next_for_role(next: &str, role: Role) -> Option<&str> {
     let next = safe_next(next)?;
     let allowed = match role {
-        Role::Admin | Role::Staff => next.starts_with("/admin") || next.starts_with("/account/"),
+        Role::Admin | Role::Principal | Role::Staff => {
+            next.starts_with("/admin") || next.starts_with("/account/")
+        }
         Role::Faculty => next.starts_with("/teacher") || next.starts_with("/admin/") || next.starts_with("/account/"),
         Role::Student => next.starts_with("/hub") || next.starts_with("/account/"),
         Role::Alumni => next == "/" || next.starts_with("/account/"),
@@ -315,5 +380,29 @@ mod tests {
         assert_eq!(safe_next_for_role("/admin", Role::Student), None);
         assert_eq!(safe_next_for_role("/admin/people", Role::Admin), Some("/admin/people"));
         assert_eq!(safe_next_for_role("//evil.example", Role::Admin), None);
+    }
+
+    #[test]
+    fn a_reentry_only_counts_within_the_window() {
+        let now = 1_000_000;
+        assert!(reauth_valid(Some(now), now));
+        assert!(reauth_valid(Some(now - REAUTH_WINDOW_SECS + 1), now));
+        assert!(!reauth_valid(Some(now - REAUTH_WINDOW_SECS - 1), now));
+        assert!(!reauth_valid(None, now));
+        // A timestamp in the future is not a fresh check.
+        assert!(!reauth_valid(Some(now + 10), now));
+    }
+
+    #[test]
+    fn the_principal_is_a_distinct_role_with_an_academic_workspace() {
+        assert_eq!(Role::parse("principal"), Some(Role::Principal));
+        assert_eq!(Role::Principal.home(), "/admin");
+        assert_eq!(Role::Principal.label(), "Principal");
+        // The Principal may reach the academic management area, not a student's.
+        assert_eq!(
+            safe_next_for_role("/admin/appointments", Role::Principal),
+            Some("/admin/appointments")
+        );
+        assert_eq!(safe_next_for_role("/hub", Role::Principal), None);
     }
 }

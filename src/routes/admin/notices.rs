@@ -8,7 +8,7 @@ use axum::{
 use serde::Deserialize;
 use tower_sessions::Session;
 
-use super::{audiences, statuses, TokenForm};
+use super::{audiences, normalise_datetime, statuses, TokenForm};
 use crate::{
     auth::{csrf, AdminOnly, AuthUser, OfficeOrAdmin},
     error::AppError,
@@ -71,6 +71,8 @@ pub struct NoticeFormValues {
     pub audience: String,
     pub is_pinned: bool,
     pub status: String,
+    pub publish_at: String,
+    pub unpublish_at: String,
     pub error: Option<String>,
 }
 
@@ -85,6 +87,8 @@ impl NoticeFormValues {
             audience: "public".into(),
             is_pinned: false,
             status: "draft".into(),
+            publish_at: String::new(),
+            unpublish_at: String::new(),
             error: None,
         }
     }
@@ -98,6 +102,8 @@ impl NoticeFormValues {
             audience: self.audience.clone(),
             is_pinned: self.is_pinned,
             status: self.status.clone(),
+            publish_at: normalise_datetime(&self.publish_at).unwrap_or_default(),
+            unpublish_at: normalise_datetime(&self.unpublish_at).unwrap_or_default(),
         }
     }
 }
@@ -147,6 +153,8 @@ async fn edit_page(
             audience: row.audience,
             is_pinned: row.is_pinned,
             status: row.status,
+            publish_at: row.publish_at,
+            unpublish_at: row.unpublish_at,
             error: None,
         },
         Shell::build(user, session).await?,
@@ -186,8 +194,15 @@ async fn read_form(
         audience: content_admin::clean_audience(body.field("audience")).to_string(),
         is_pinned: body.flag("is_pinned"),
         status: content_admin::clean_status(body.field("status")).to_string(),
+        publish_at: body.field("publish_at").to_string(),
+        unpublish_at: body.field("unpublish_at").to_string(),
         error: None,
     };
+    if let Err(msg) = super::clean_when(&values.publish_at) {
+        values.error = Some(msg);
+    } else if let Err(msg) = super::clean_when(&values.unpublish_at) {
+        values.error = Some(msg);
+    }
     if values.category.is_empty() {
         values.category = "Notice".into();
     }
@@ -289,6 +304,8 @@ pub async fn update(
         audience: current.audience,
         is_pinned: current.is_pinned,
         status: current.status,
+        publish_at: current.publish_at,
+        unpublish_at: current.unpublish_at,
         error: None,
     };
     let (mut values, body) = read_form(multipart, &session, existing).await?;

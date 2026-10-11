@@ -71,6 +71,9 @@ pub struct EventFormValues {
     pub image_path: String,
     pub audience: String,
     pub status: String,
+    /// Raw `datetime-local` values for a scheduled publish and an expiry.
+    pub publish_value: String,
+    pub unpublish_value: String,
     pub error: Option<String>,
 }
 
@@ -86,6 +89,8 @@ impl EventFormValues {
             image_path: String::new(),
             audience: "public".into(),
             status: "draft".into(),
+            publish_value: String::new(),
+            unpublish_value: String::new(),
             error: None,
         }
     }
@@ -137,6 +142,8 @@ pub async fn edit_form(
             image_path: row.image_path,
             audience: row.audience,
             status: row.status,
+            publish_value: row.publish_at,
+            unpublish_value: row.unpublish_at,
             error: None,
         },
         Shell::build(&user, &session).await?,
@@ -161,9 +168,19 @@ async fn read_form(
         image_path: existing.image_path,
         audience: content_admin::clean_audience(body.field("audience")).to_string(),
         status: content_admin::clean_status(body.field("status")).to_string(),
+        publish_value: body.field("publish_at").to_string(),
+        unpublish_value: body.field("unpublish_at").to_string(),
         error: None,
     };
 
+    if let Err(msg) = super::clean_when(&values.publish_value) {
+        values.error = Some(msg);
+        return Ok((values, body));
+    }
+    if let Err(msg) = super::clean_when(&values.unpublish_value) {
+        values.error = Some(msg);
+        return Ok((values, body));
+    }
     if values.title.is_empty() {
         values.error = Some("Give the event a title.".into());
         return Ok((values, body));
@@ -235,6 +252,8 @@ fn to_input(values: &EventFormValues) -> Result<EventInput, AppError> {
         image_path: values.image_path.clone(),
         audience: values.audience.clone(),
         status: values.status.clone(),
+        publish_at: normalise_datetime(&values.publish_value).unwrap_or_default(),
+        unpublish_at: normalise_datetime(&values.unpublish_value).unwrap_or_default(),
     })
 }
 
@@ -291,6 +310,8 @@ pub async fn update(
         image_path: current.image_path,
         audience: current.audience,
         status: current.status,
+        publish_value: current.publish_at,
+        unpublish_value: current.unpublish_at,
         error: None,
     };
     let (mut values, body) = read_form(multipart, &session, existing).await?;

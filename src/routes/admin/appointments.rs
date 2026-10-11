@@ -15,9 +15,9 @@ use tower_sessions::Session;
 
 use super::{is_valid_date, parse_i64, TokenForm};
 use crate::{
-    auth::{csrf, AdminOnly},
+    auth::{csrf, require_reauth, AdminOnly, AdminOrPrincipal, PrincipalOnly, Role},
     error::{is_unique_violation, AppError},
-    services::{appointments, users},
+    services::{appointments, notifications, users},
     shell::{flash, Shell},
     state::AppState,
 };
@@ -29,8 +29,11 @@ const LIST: &str = "/admin/appointments";
 pub struct AppointmentsTemplate {
     shell: Shell,
     heads: Vec<appointments::HeadRow>,
+    pending: Vec<appointments::PendingHeadRow>,
     delegations: Vec<appointments::DelegationRow>,
     faculty: Vec<appointments::FacultyOption>,
+    /// The Principal approves requests; the IT admin initiates them.
+    is_principal: bool,
     error: Option<String>,
 }
 
@@ -43,8 +46,10 @@ async fn render(
     Ok(AppointmentsTemplate {
         shell: Shell::build(user, session).await?,
         heads: appointments::list_heads(&s.db).await?,
+        pending: appointments::list_pending_heads(&s.db).await?,
         delegations: appointments::list_delegations(&s.db).await?,
         faculty: appointments::faculty_options(&s.db).await?,
+        is_principal: user.role == Role::Principal,
         error,
     }
     .into_response())
@@ -53,9 +58,9 @@ async fn render(
 pub async fn index(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    user: AdminOrPrincipal,
 ) -> Result<Response, AppError> {
-    render(&s, &user, &session, None).await
+    render(&s, &user.0, &session, None).await
 }
 
 #[derive(Deserialize)]
@@ -77,6 +82,10 @@ pub async fn grant(
     Form(f): Form<GrantForm>,
 ) -> Result<Response, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
+    if let Err(redirect) = require_reauth(&session, LIST).await {
+        flash(&session, "Re-enter your password to continue.").await?;
+        return Ok(redirect.into_response());
+    }
 
     let Some(target) = parse_i64(&f.user_id) else {
         return render(&s, &user, &session, Some("Choose a teacher.".into())).await;
@@ -92,7 +101,7 @@ pub async fn grant(
     let ends = f.ends_at.trim();
     let acting = f.acting.is_some();
 
-    match appointments::grant_head(
+    match appointments::request_head(
         &s.db,
         target,
         department,
@@ -104,9 +113,35 @@ pub async fn grant(
     .await
     {
         Ok(id) => {
-            users::audit(&s.db, Some(user.id), "appointment_granted", "role_assignment", Some(id))
-                .await?;
-            flash(&session, "Appointment recorded. The teacher now heads that department.").await?;
+            users::audit_detail(
+                &s.db,
+                Some(user.id),
+                "appointment_requested",
+                "role_assignment",
+                Some(id),
+                serde_json::json!({
+                    "department_id": department,
+                    "acting": acting,
+                    "ends_at": if ends.is_empty() { serde_json::Value::Null } else { serde_json::json!(ends) },
+                    "reason": f.reason.trim(),
+                }),
+            )
+            .await?;
+            let kind = if acting { "acting head" } else { "head" };
+            notifications::notify_roles(
+                &s.db,
+                &["principal", "admin"],
+                "appointment",
+                "Head appointment request",
+                &format!("A request to appoint the {kind} of a department needs a decision."),
+                "/admin/appointments",
+            )
+            .await?;
+            flash(
+                &session,
+                "Appointment requested. The Principal must approve it before it takes effect.",
+            )
+            .await?;
             Ok(Redirect::to(LIST).into_response())
         }
         Err(e) if is_unique_violation(&e) => {
@@ -122,14 +157,104 @@ pub async fn grant(
     }
 }
 
+/// The Principal approves a pending head appointment, activating it.
+pub async fn approve(
+    State(s): State<AppState>,
+    session: Session,
+    PrincipalOnly(user): PrincipalOnly,
+    Path(id): Path<i64>,
+    Form(f): Form<TokenForm>,
+) -> Result<Response, AppError> {
+    csrf::verify(&session, &f.csrf_token).await?;
+    if let Err(redirect) = require_reauth(&session, LIST).await {
+        flash(&session, "Re-enter your password to continue.").await?;
+        return Ok(redirect.into_response());
+    }
+    match appointments::approve_head(&s.db, id, user.id).await {
+        Ok(Some(appointed)) => {
+            users::audit_detail(
+                &s.db,
+                Some(user.id),
+                "appointment_approved",
+                "role_assignment",
+                Some(id),
+                serde_json::json!({ "appointed_user_id": appointed }),
+            )
+            .await?;
+            notifications::create(
+                &s.db,
+                appointed,
+                "appointment",
+                "Your head appointment was approved",
+                "It is now active; department tools are available from the sidebar.",
+                "/admin/work-queue",
+            )
+            .await?;
+            flash(&session, "Appointment approved and now active.").await?;
+            Ok(Redirect::to(LIST).into_response())
+        }
+        Ok(None) => {
+            flash(&session, "That request is no longer pending.").await?;
+            Ok(Redirect::to(LIST).into_response())
+        }
+        Err(e) if is_unique_violation(&e) => render(
+            &s,
+            &user,
+            &session,
+            Some("That department already has an active head.".into()),
+        )
+        .await,
+        Err(sqlx::Error::Protocol(_)) => {
+            flash(&session, "You cannot approve your own appointment.").await?;
+            Ok(Redirect::to(LIST).into_response())
+        }
+        Err(e) => Err(AppError::from(e)),
+    }
+}
+
+/// The Principal rejects a pending head appointment; it never becomes active.
+pub async fn reject(
+    State(s): State<AppState>,
+    session: Session,
+    PrincipalOnly(user): PrincipalOnly,
+    Path(id): Path<i64>,
+    Form(f): Form<TokenForm>,
+) -> Result<Response, AppError> {
+    csrf::verify(&session, &f.csrf_token).await?;
+    if let Err(redirect) = require_reauth(&session, LIST).await {
+        flash(&session, "Re-enter your password to continue.").await?;
+        return Ok(redirect.into_response());
+    }
+    if appointments::reject_head(&s.db, id, user.id).await? {
+        users::audit_detail(
+            &s.db,
+            Some(user.id),
+            "appointment_rejected",
+            "role_assignment",
+            Some(id),
+            serde_json::json!({ "rejected": true }),
+        )
+        .await?;
+        flash(&session, "Appointment request rejected.").await?;
+    } else {
+        flash(&session, "That request is no longer pending.").await?;
+    }
+    Ok(Redirect::to(LIST).into_response())
+}
+
 pub async fn revoke(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    user: AdminOrPrincipal,
     Path(id): Path<i64>,
     Form(f): Form<TokenForm>,
 ) -> Result<Redirect, AppError> {
+    let user = user.0;
     csrf::verify(&session, &f.csrf_token).await?;
+    if let Err(redirect) = require_reauth(&session, LIST).await {
+        flash(&session, "Re-enter your password to continue.").await?;
+        return Ok(redirect);
+    }
     appointments::revoke_head(&s.db, id, user.id).await?;
     users::audit(&s.db, Some(user.id), "appointment_revoked", "role_assignment", Some(id)).await?;
     flash(&session, "Appointment ended. A handover task was opened for the successor.").await?;
@@ -150,6 +275,10 @@ pub async fn delegate(
     Form(f): Form<DelegateForm>,
 ) -> Result<Response, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
+    if let Err(redirect) = require_reauth(&session, LIST).await {
+        flash(&session, "Re-enter your password to continue.").await?;
+        return Ok(redirect.into_response());
+    }
 
     let Some(target) = parse_i64(&f.user_id) else {
         return render(&s, &user, &session, Some("Choose a teacher.".into())).await;
@@ -197,6 +326,10 @@ pub async fn revoke_delegation(
     Form(f): Form<TokenForm>,
 ) -> Result<Redirect, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
+    if let Err(redirect) = require_reauth(&session, LIST).await {
+        flash(&session, "Re-enter your password to continue.").await?;
+        return Ok(redirect);
+    }
     appointments::revoke_delegation(&s.db, id, user.id).await?;
     users::audit(&s.db, Some(user.id), "delegation_revoked", "delegation", Some(id)).await?;
     flash(&session, "Delegation revoked.").await?;

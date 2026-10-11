@@ -38,6 +38,7 @@ pub struct ManageTemplate {
 fn catalogue(user: &AuthUser) -> Option<&'static [Area]> {
     match user.role {
         Role::Admin => Some(sections::ADMIN),
+        Role::Principal => Some(sections::HOD),
         Role::Staff => Some(sections::STAFF),
         Role::Faculty if user.manages_department() => Some(sections::HOD),
         _ => None,

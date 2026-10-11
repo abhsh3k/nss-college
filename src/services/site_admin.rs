@@ -32,6 +32,8 @@ pub struct DocumentInput {
     pub category: String,
     pub file_path: String,
     pub status: String,
+    pub publish_at: String,
+    pub unpublish_at: String,
 }
 
 #[derive(Debug, FromRow)]
@@ -41,6 +43,9 @@ pub struct DocumentEdit {
     pub category: String,
     pub file_path: String,
     pub status: String,
+    /// Raw `datetime-local` values, so the form can show them back unchanged.
+    pub publish_at: String,
+    pub unpublish_at: String,
 }
 
 /// The filename shown to a reader, which is the last path segment.
@@ -95,7 +100,10 @@ pub async fn documents(db: &PgPool, status: &str) -> Res<Vec<DocumentRow>> {
 
 pub async fn document_for_edit(db: &PgPool, id: i64) -> Res<Option<DocumentEdit>> {
     sqlx::query_as::<_, DocumentEdit>(
-        r#"SELECT id, title, category, file_path, status FROM documents WHERE id = $1"#,
+        r#"SELECT id, title, category, file_path, status,
+                  COALESCE(to_char(published_at, 'YYYY-MM-DD"T"HH24:MI'), '') AS publish_at,
+                  COALESCE(to_char(unpublish_at, 'YYYY-MM-DD"T"HH24:MI'), '') AS unpublish_at
+           FROM documents WHERE id = $1"#,
     )
     .bind(id)
     .fetch_optional(db)
@@ -103,35 +111,47 @@ pub async fn document_for_edit(db: &PgPool, id: i64) -> Res<Option<DocumentEdit>
 }
 
 pub async fn create_document(db: &PgPool, d: &DocumentInput, author: Option<i64>) -> Res<i64> {
-    sqlx::query_scalar(
-        r#"INSERT INTO documents (title, category, file_path, status, published_at, created_by)
+    use crate::services::content_admin::{clean_status, publish_new_sql};
+    let sql = format!(
+        r#"INSERT INTO documents
+             (title, category, file_path, status, published_at, unpublish_at, created_by)
            VALUES ($1, $2, $3, $4,
-                   CASE WHEN $4 = 'published' THEN now() ELSE NULL END, $5)
+                   {}, NULLIF($6, '')::timestamptz, $7)
            RETURNING id"#,
-    )
-    .bind(&d.title)
-    .bind(&d.category)
-    .bind(&d.file_path)
-    .bind(crate::services::content_admin::clean_status(&d.status))
-    .bind(author)
-    .fetch_one(db)
-    .await
+        publish_new_sql("$4", "$5")
+    );
+    sqlx::query_scalar(&sql)
+        .bind(&d.title)
+        .bind(&d.category)
+        .bind(&d.file_path)
+        .bind(clean_status(&d.status))
+        .bind(&d.publish_at)
+        .bind(&d.unpublish_at)
+        .bind(author)
+        .fetch_one(db)
+        .await
 }
 
 pub async fn update_document(db: &PgPool, id: i64, d: &DocumentInput) -> Res<()> {
-    sqlx::query(
+    use crate::services::content_admin::{clean_status, publish_set_sql};
+    let sql = format!(
         r#"UPDATE documents
            SET title = $2, category = $3, file_path = $4, status = $5,
-               published_at = CASE WHEN $5 = 'published' THEN COALESCE(published_at, now()) ELSE published_at END
+               published_at = {},
+               unpublish_at = NULLIF($7, '')::timestamptz
            WHERE id = $1"#,
-    )
-    .bind(id)
-    .bind(&d.title)
-    .bind(&d.category)
-    .bind(&d.file_path)
-    .bind(crate::services::content_admin::clean_status(&d.status))
-    .execute(db)
-    .await?;
+        publish_set_sql("$5", "$6")
+    );
+    sqlx::query(&sql)
+        .bind(id)
+        .bind(&d.title)
+        .bind(&d.category)
+        .bind(&d.file_path)
+        .bind(clean_status(&d.status))
+        .bind(&d.publish_at)
+        .bind(&d.unpublish_at)
+        .execute(db)
+        .await?;
     Ok(())
 }
 
@@ -192,6 +212,10 @@ pub struct PageInput {
     pub nav_label: String,
     /// Position inside its group, lowest first.
     pub nav_sort: i32,
+    /// `YYYY-MM-DD HH:MM`, or empty to publish as soon as the status allows.
+    pub publish_at: String,
+    /// `YYYY-MM-DD HH:MM`, or empty to never expire.
+    pub unpublish_at: String,
 }
 
 #[derive(Debug, FromRow)]
@@ -204,6 +228,8 @@ pub struct PageEdit {
     pub nav_group: String,
     pub nav_label: String,
     pub nav_sort: i32,
+    pub publish_at: String,
+    pub unpublish_at: String,
 }
 
 /// The menu groups the header draws, in the order they appear.
@@ -254,6 +280,31 @@ const LIST_PAGES: [&str; 5] = [
     "/academics/rank-holders",
 ];
 
+/// Prefixes the application itself owns. A CMS page must never be allowed to
+/// shadow one of these, or a direct URL would be answered by the wrong thing.
+/// The check is on whole path segments, so `/hub` and `/hub/x` are reserved but
+/// `/hubbub` is not.
+pub const RESERVED_PREFIXES: [&str; 10] = [
+    "/login",
+    "/logout",
+    "/admin",
+    "/teacher",
+    "/hub",
+    "/account",
+    "/static",
+    "/uploads",
+    "/healthz",
+    "/robots.txt",
+];
+
+/// Whether a page path collides with a route the application reserves.
+pub fn reserved_path(path: &str) -> bool {
+    let p = path.trim().trim_end_matches('/');
+    RESERVED_PREFIXES
+        .iter()
+        .any(|r| p == *r || p.starts_with(&format!("{r}/")))
+}
+
 pub async fn pages(db: &PgPool, status: &str) -> Res<Vec<PageRow>> {
     let rows: Vec<(i64, String, String, String, String, i64)> = sqlx::query_as(
         r#"SELECT p.id, p.path, p.title, p.lede, p.status,
@@ -282,7 +333,10 @@ pub async fn pages(db: &PgPool, status: &str) -> Res<Vec<PageRow>> {
 
 pub async fn page_for_edit(db: &PgPool, id: i64) -> Res<Option<PageEdit>> {
     sqlx::query_as::<_, PageEdit>(
-        "SELECT id, path, title, lede, status, nav_group, nav_label, nav_sort FROM pages WHERE id = $1",
+        r#"SELECT id, path, title, lede, status, nav_group, nav_label, nav_sort,
+                  COALESCE(to_char(published_at, 'YYYY-MM-DD"T"HH24:MI'), '') AS publish_at,
+                  COALESCE(to_char(unpublish_at, 'YYYY-MM-DD"T"HH24:MI'), '') AS unpublish_at
+           FROM pages WHERE id = $1"#,
     )
     .bind(id)
     .fetch_optional(db)
@@ -290,10 +344,20 @@ pub async fn page_for_edit(db: &PgPool, id: i64) -> Res<Option<PageEdit>> {
 }
 
 pub async fn create_page(db: &PgPool, p: &PageInput) -> Res<i64> {
-    sqlx::query_scalar(
-        r#"INSERT INTO pages (path, title, lede, status, nav_group, nav_label, nav_sort)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id"#,
-    )
+    if reserved_path(&p.path) {
+        return Err(sqlx::Error::Protocol(
+            "that path is reserved by the application".into(),
+        ));
+    }
+    let sql = format!(
+        r#"INSERT INTO pages
+             (path, title, lede, status, nav_group, nav_label, nav_sort, published_at, unpublish_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7,
+                   {}, NULLIF($9, '')::timestamptz)
+           RETURNING id"#,
+        crate::services::content_admin::publish_new_sql("$4", "$8")
+    );
+    sqlx::query_scalar(&sql)
     .bind(&p.path)
     .bind(&p.title)
     .bind(&p.lede)
@@ -301,6 +365,8 @@ pub async fn create_page(db: &PgPool, p: &PageInput) -> Res<i64> {
     .bind(clean_nav_group(&p.nav_group))
     .bind(p.nav_label.trim())
     .bind(p.nav_sort)
+    .bind(&p.publish_at)
+    .bind(&p.unpublish_at)
     .fetch_one(db)
     .await
     .map_err(|e| match e {
@@ -312,9 +378,21 @@ pub async fn create_page(db: &PgPool, p: &PageInput) -> Res<i64> {
 }
 
 pub async fn update_page(db: &PgPool, id: i64, p: &PageInput) -> Res<()> {
-    sqlx::query(
-        "UPDATE pages SET path = $2, title = $3, lede = $4, status = $5, nav_group = $6, nav_label = $7, nav_sort = $8 WHERE id = $1",
-    )
+    if reserved_path(&p.path) {
+        return Err(sqlx::Error::Protocol(
+            "that path is reserved by the application".into(),
+        ));
+    }
+    let sql = format!(
+        r#"UPDATE pages
+           SET path = $2, title = $3, lede = $4, status = $5, nav_group = $6,
+               nav_label = $7, nav_sort = $8,
+               published_at = {},
+               unpublish_at = NULLIF($10, '')::timestamptz
+           WHERE id = $1"#,
+        crate::services::content_admin::publish_set_sql("$5", "$9")
+    );
+    sqlx::query(&sql)
     .bind(id)
     .bind(&p.path)
     .bind(&p.title)
@@ -323,6 +401,8 @@ pub async fn update_page(db: &PgPool, id: i64, p: &PageInput) -> Res<()> {
     .bind(clean_nav_group(&p.nav_group))
     .bind(p.nav_label.trim())
     .bind(p.nav_sort)
+    .bind(&p.publish_at)
+    .bind(&p.unpublish_at)
     .execute(db)
     .await?;
     Ok(())
@@ -337,11 +417,21 @@ pub async fn delete_page(db: &PgPool, id: i64) -> Res<()> {
 }
 
 pub async fn set_page_status(db: &PgPool, id: i64, status: &str) -> Res<()> {
-    sqlx::query("UPDATE pages SET status = $2 WHERE id = $1")
-        .bind(id)
-        .bind(crate::services::content_admin::clean_status(status))
-        .execute(db)
-        .await?;
+    // The quick publish/unpublish toggle makes the page live now: it stamps the
+    // publish time the first time, and pulls a future schedule forward so that
+    // "Publish" always means "visible immediately".
+    sqlx::query(
+        r#"UPDATE pages
+           SET status = $2,
+               published_at = CASE WHEN $2 = 'published'
+                                   THEN LEAST(COALESCE(published_at, now()), now())
+                                   ELSE published_at END
+           WHERE id = $1"#,
+    )
+    .bind(id)
+    .bind(crate::services::content_admin::clean_status(status))
+    .execute(db)
+    .await?;
     Ok(())
 }
 
@@ -740,4 +830,22 @@ pub async fn update_home_section(
     .execute(db)
     .await?;
     Ok(updated.rows_affected() > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reserved_path;
+
+    #[test]
+    fn reserved_paths_cannot_be_shadowed_by_a_cms_page() {
+        for path in ["/login", "/admin", "/admin/people", "/hub", "/static", "/uploads/x.png"] {
+            assert!(reserved_path(path), "{path} must be reserved");
+        }
+        // A prefix that only shares characters is not the same segment.
+        assert!(!reserved_path("/hubbub"));
+        assert!(!reserved_path("/about"));
+        assert!(!reserved_path("/identity"));
+        // A trailing slash does not defeat the check.
+        assert!(reserved_path("/admin/"));
+    }
 }

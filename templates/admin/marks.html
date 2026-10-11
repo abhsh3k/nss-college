@@ -2,7 +2,7 @@
 {% block title %}Marks entry{% endblock %}
 {% block content %}
 <h1 class="font-display text-3xl font-semibold md:text-4xl">Marks entry</h1>
-<p class="mt-3 max-w-2xl text-ink/80">Pick a course, type a mark per student and save — or upload a CSV of results: rows reach each student's Results page immediately under <strong>Semester {{ sel.semester }}</strong>, and every filed row can be unpublished or deleted in the list at the bottom.</p>
+<p class="mt-3 max-w-2xl text-ink/80">Pick a course, type a mark per student and save — or upload a CSV of results: rows reach each student's Results page immediately under <strong>Semester {{ sel.semester }}</strong>. Every filed row can be unpublished or deleted until it is finalized; after that a change needs a corrected value and a reason approved by a second manager.</p>
 
 <form method="get" action="/admin/marks" class="mt-6 flex flex-wrap items-end gap-4">
   <div>
@@ -136,6 +136,74 @@
   {% endif %}
 </section>
 
+<!-- Lock the open sheet, and give its locked rows a correction path -->
+<section class="mt-8 max-w-5xl border border-ink/15 bg-mist p-5" aria-labelledby="finalize-results">
+  <h2 id="finalize-results" class="font-display text-2xl font-semibold">Finalize &amp; correct</h2>
+  <p class="mt-2 max-w-3xl text-sm text-ink/70">Finalizing locks every published row for the open course and semester. A locked row can no longer be edited, unpublished or deleted — changing it needs a correction, which a second manager approves and which keeps the replaced value in the history at the bottom of this page.</p>
+  {% if sel.course == 0 %}
+  <p class="mt-4 text-ink/70">Open a course above to finalize its marks.</p>
+  {% else %}
+  <form method="post" action="/admin/marks/finalize" class="mt-4 flex flex-wrap items-center gap-4">
+    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+    <input type="hidden" name="programme" value="{{ sel.programme }}">
+    <input type="hidden" name="semester" value="{{ sel.semester }}">
+    <input type="hidden" name="course" value="{{ sel.course }}">
+    <input type="hidden" name="back" value="{{ sel.back_url() }}">
+    <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Finalize this course's marks</button>
+    <span class="text-sm text-ink/60">Semester {{ sel.semester }}.</span>
+  </form>
+  {% endif %}
+</section>
+
+{% if !pending.is_empty() %}
+<!-- Corrections waiting for a second manager -->
+<section class="mt-8 max-w-6xl border border-amber-300 bg-amber-50 p-5" aria-labelledby="pending-corrections">
+  <h2 id="pending-corrections" class="font-display text-2xl font-semibold">Corrections awaiting approval</h2>
+  <p class="mt-2 max-w-3xl text-sm text-ink/80">A finalized mark is never changed twice over: the requested value is held until a <strong>different</strong> manager approves it.</p>
+  <div class="mt-4 overflow-x-auto">
+    <table class="w-full min-w-[56rem] text-left">
+      <thead>
+        <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+          <th scope="col" class="py-2 pr-4 font-medium">Student</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Course</th>
+          <th scope="col" class="py-2 pr-4 font-medium">What</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Current</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Proposed</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Reason</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Requested by</th>
+          <th scope="col" class="py-2 font-medium"><span class="sr-only">Decide</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in pending %}
+        <tr class="border-b border-ink/10">
+          <td class="py-2 pr-4 text-sm font-medium">{{ p.student_name }}</td>
+          <td class="py-2 pr-4 text-sm font-mono">{{ p.course_code }}</td>
+          <td class="py-2 pr-4 text-sm">{{ p.kind_label }}</td>
+          <td class="py-2 pr-4 text-sm font-mono">{{ p.current_label }}</td>
+          <td class="py-2 pr-4 text-sm font-mono font-semibold">{{ p.proposed_label }}</td>
+          <td class="py-2 pr-4 text-sm">{{ p.reason }}</td>
+          <td class="py-2 pr-4 text-sm text-ink/70">{{ p.requester }}<br><span class="text-xs">{{ p.requested_label }}</span></td>
+          <td class="py-2 text-right whitespace-nowrap">
+            <form method="post" action="/admin/marks/{{ p.id }}/correction/approve" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+              <input type="hidden" name="back" value="{{ sel.back_url() }}">
+              <button type="submit" class="font-semibold text-emerald-700 underline underline-offset-4 hover:text-ink">Approve</button>
+            </form>
+            <form method="post" action="/admin/marks/{{ p.id }}/correction/reject" class="inline ml-4">
+              <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+              <input type="hidden" name="back" value="{{ sel.back_url() }}">
+              <button type="submit" class="font-semibold text-rose-700 underline underline-offset-4 hover:text-ink">Reject</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
 <!-- Whole batches at once: one CSV row per result -->
 <section class="mt-8 max-w-5xl border border-ink/15 bg-mist p-5" aria-labelledby="import-csv">
   <h2 id="import-csv" class="font-display text-2xl font-semibold">Import marks from a CSV file</h2>
@@ -157,7 +225,7 @@
     <input type="hidden" name="exam_name" value="{{ sel.exam_name }}">
     <div class="min-w-72 flex-1">
       <label for="csv_file" class="block text-sm font-semibold">CSV file</label>
-      <input id="csv_file" name="csv_file" type="file" accept=".csv,text/csv" required
+      <input id="csv_file" name="csv_file" type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls,.ods" required
              class="mt-2 block w-full text-sm text-ink/70 file:mr-4 file:rounded file:border-0 file:bg-brand file:px-4 file:py-2 file:text-sm file:font-semibold file:text-chalk hover:file:bg-ink">
     </div>
     <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Import CSV</button>
@@ -192,9 +260,38 @@
           <td class="py-2 pr-4 text-sm"><span class="font-mono font-medium">{{ f.course_code }}</span> <span class="text-ink/70">{{ f.course_title }}</span></td>
           <td class="py-2 pr-4 text-sm">{{ f.kind_label }}</td>
           <td class="py-2 pr-4 text-sm font-mono">{{ f.obtained_label }} / {{ f.max_label }}</td>
-          <td class="py-2 pr-4 text-sm font-semibold">{% if f.published %}<span class="text-emerald-700">Published</span>{% else %}<span class="text-amber-700">Draft</span>{% endif %}</td>
+          <td class="py-2 pr-4 text-sm font-semibold">
+            {% if f.is_finalized() %}<span class="text-sky-700">Finalized</span>
+            {% else if f.is_correction_pending() %}<span class="text-amber-700">Correction pending</span>
+            {% else if f.published %}<span class="text-emerald-700">Published</span>
+            {% else %}<span class="text-amber-700">Draft</span>{% endif %}
+          </td>
           <td class="py-2 pr-4 text-sm text-ink/70">{{ f.updated_label }}</td>
           <td class="py-2 text-right whitespace-nowrap">
+            {% if f.is_finalized() %}
+            <details class="inline-block text-left">
+              <summary class="cursor-pointer font-semibold text-brand underline underline-offset-4 hover:text-ink">Correct<span class="sr-only"> {{ f.course_code }} for {{ f.student_name }}</span></summary>
+              <form method="post" action="/admin/marks/{{ f.id }}/correct" class="mt-2 flex flex-wrap items-end gap-2 rounded border border-ink/20 bg-white p-3">
+                <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+                <input type="hidden" name="back" value="{{ sel.back_url() }}">
+                <div>
+                  <label class="block text-xs font-semibold" for="obtained_{{ f.id }}">New mark</label>
+                  <input id="obtained_{{ f.id }}" name="obtained" type="number" min="0" step="0.01" required class="mt-1 w-24 rounded border border-ink/40 px-2 py-1 text-sm text-right">
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold" for="max_{{ f.id }}">New max <span class="font-normal text-ink/50">(optional)</span></label>
+                  <input id="max_{{ f.id }}" name="max" type="number" min="0.01" step="0.01" class="mt-1 w-24 rounded border border-ink/40 px-2 py-1 text-sm text-right">
+                </div>
+                <div class="min-w-56 flex-1">
+                  <label class="block text-xs font-semibold" for="reason_{{ f.id }}">Reason</label>
+                  <input id="reason_{{ f.id }}" name="reason" type="text" maxlength="500" required class="mt-1 w-full rounded border border-ink/40 px-2 py-1 text-sm" placeholder="Why is this mark being corrected?">
+                </div>
+                <button type="submit" class="rounded bg-brand px-3 py-1.5 text-sm font-semibold text-chalk hover:bg-ink">Request correction</button>
+              </form>
+            </details>
+            {% else if f.is_correction_pending() %}
+            <span class="text-xs text-ink/60">Awaiting approval</span>
+            {% else %}
             <form method="post" action="/admin/marks/{{ f.id }}/toggle" class="inline">
               <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
               <input type="hidden" name="back" value="{{ sel.back_url() }}">
@@ -205,6 +302,7 @@
               <input type="hidden" name="back" value="{{ sel.back_url() }}">
               <button type="submit" class="font-semibold text-rose-700 underline underline-offset-4 hover:text-ink">Delete<span class="sr-only"> {{ f.course_code }} for {{ f.student_name }}</span></button>
             </form>
+            {% endif %}
           </td>
         </tr>
         {% endfor %}
@@ -216,6 +314,42 @@
   {% endif %}
   {% endif %}
 </section>
+
+{% if !history.is_empty() %}
+<!-- The value that was replaced by each applied correction -->
+<section class="mt-8 max-w-6xl" aria-labelledby="correction-history">
+  <h2 id="correction-history" class="font-display text-2xl font-semibold">Correction history</h2>
+  <p class="mt-2 max-w-3xl text-sm text-ink/70">Every value that a correction replaced, kept beside the live row rather than overwritten.</p>
+  <div class="mt-4 overflow-x-auto">
+    <table class="w-full min-w-[52rem] text-left">
+      <thead>
+        <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+          <th scope="col" class="py-2 pr-4 font-medium">Student</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Course</th>
+          <th scope="col" class="py-2 pr-4 font-medium">What</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Semester</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Replaced value</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Reason</th>
+          <th scope="col" class="py-2 pr-4 font-medium">Approved by</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for h in history %}
+        <tr class="border-b border-ink/10">
+          <td class="py-2 pr-4 text-sm font-medium">{{ h.student_name }}</td>
+          <td class="py-2 pr-4 text-sm font-mono">{{ h.course_code }}</td>
+          <td class="py-2 pr-4 text-sm">{{ h.kind_label }}</td>
+          <td class="py-2 pr-4 text-sm">{{ h.semester }}</td>
+          <td class="py-2 pr-4 text-sm font-mono">{{ h.value_label }}</td>
+          <td class="py-2 pr-4 text-sm">{{ h.reason }}</td>
+          <td class="py-2 pr-4 text-sm text-ink/70">{{ h.changed_by }}<br><span class="text-xs">{{ h.changed_label }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
 
 {% endif %}
 {% endblock %}

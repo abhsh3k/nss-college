@@ -42,6 +42,10 @@ Sign in as the IT admin, then use the sidebar:
   pending external offering approvals, unanswered change requests, cohort decisions that are not finalised,
   published offerings with no timetable periods, and offerings with no seats left. Every row links to the
   catalogue, offering-detail or selections page that handles it; those pages are unchanged.
+- **Notifications** (`/admin/notifications`): a per-user, actionable feed. An HOD appointment request
+  notifies the Principal and IT admins; a result correction request notifies the IT admins and the
+  Principal. Each item is a pointer to the page that owns the decision, and that page re-checks access,
+  so a notification never grants anything. Items can be marked read individually or all at once.
 
 After pulling this update, rebuild the CSS (new classes were added) and restart:
 
@@ -75,7 +79,12 @@ Create test accounts for the other roles. These must choose a new password at fi
     cargo run -- create-user student 1001@college.local "Test Student"
 
 Then run `cargo run` and open http://127.0.0.1:3001/login for staff/admin management accounts. Students and teachers can sign in through the public listener at http://127.0.0.1:3000/login. Each role lands on its own dashboard:
-IT admin and office staff on `/admin`, teachers on `/teacher`, students on `/hub`.
+IT admin, the Principal and office staff on `/admin`, teachers on `/teacher`, students on `/hub`.
+
+The **Principal** (`create-user principal ...`) holds institution-wide *academic* authority — the same
+cross-department reach as the IT admin on the academic tools, but no technical powers. The IT admin
+creates each account and **requests** an HOD appointment at `/admin/appointments`; the Principal
+**approves** it before it takes effect, and a person cannot approve their own appointment.
 
 Rules built in: five wrong passwords lock an account for 15 minutes; sessions last 8 hours of inactivity;
 every form carries a CSRF token; passwords are stored with Argon2.
@@ -198,7 +207,10 @@ Keep the colours and fonts in `tailwind.config.js` and `styles.html` identical.
                     delegations, handover tasks, append-only audit), 0022 result workflow (marks
                     states and mark_history, staged result imports), 0023 appointment reconciliation,
                     0024 result-import payload, 0025 guided result import, 0026 course versions
-                    (course_versions, offerings pinned to the version they were built from)
+                    (course_versions, offerings pinned to the version they were built from),
+                    0027 result corrections (reasoned, separately-approved correction of finalized
+                    marks), 0028 principal role (a distinct 'principal' account role),
+                    0029 notifications (a per-user actionable feed)
 
 ## Layers
 

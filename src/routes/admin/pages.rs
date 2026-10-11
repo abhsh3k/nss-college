@@ -83,6 +83,9 @@ pub struct PageFormValues {
     pub nav_label: String,
     /// Position inside the group, lowest first.
     pub nav_sort: String,
+    /// Raw `datetime-local` values for a scheduled publish and an expiry.
+    pub publish_value: String,
+    pub unpublish_value: String,
     pub error: Option<String>,
 }
 
@@ -97,6 +100,8 @@ impl PageFormValues {
             nav_group: "none".into(),
             nav_label: String::new(),
             nav_sort: "0".into(),
+            publish_value: String::new(),
+            unpublish_value: String::new(),
             error: None,
         }
     }
@@ -110,6 +115,8 @@ impl PageFormValues {
             nav_group: self.nav_group.clone(),
             nav_label: self.nav_label.clone(),
             nav_sort: site_admin::clean_nav_sort(&self.nav_sort),
+            publish_at: super::normalise_datetime(&self.publish_value).unwrap_or_default(),
+            unpublish_at: super::normalise_datetime(&self.unpublish_value).unwrap_or_default(),
         }
     }
 
@@ -125,6 +132,8 @@ impl PageFormValues {
             nav_group: row.nav_group,
             nav_label: row.nav_label,
             nav_sort: row.nav_sort.to_string(),
+            publish_value: row.publish_at,
+            unpublish_value: row.unpublish_at,
             error: None,
         }
     }
@@ -241,8 +250,18 @@ fn read_form(f: &PageFormSubmit, existing_id: i64) -> PageFormValues {
         nav_group: site_admin::clean_nav_group(&f.nav_group),
         nav_label: f.nav_label.trim().to_string(),
         nav_sort: site_admin::clean_nav_sort(&f.nav_sort).to_string(),
+        publish_value: f.publish_at.trim().to_string(),
+        unpublish_value: f.unpublish_at.trim().to_string(),
         error: None,
     };
+    if let Err(msg) = super::clean_when(&form.publish_value) {
+        form.error = Some(msg);
+    } else if let Err(msg) = super::clean_when(&form.unpublish_value) {
+        form.error = Some(msg);
+    }
+    if form.error.is_some() {
+        return form;
+    }
     if form.title.is_empty() {
         form.error = Some("Give the page a title.".into());
     } else if !crate::validate::fits(&form.title, crate::validate::MAX_TITLE) {
@@ -251,6 +270,11 @@ fn read_form(f: &PageFormSubmit, existing_id: i64) -> PageFormValues {
         form.error = Some("Give the page a path, for example /about.".into());
     } else if !form.path.starts_with('/') || form.path == "/" || form.path.contains(' ') {
         form.error = Some("A page path starts with a slash and has no spaces.".into());
+    } else if site_admin::reserved_path(&form.path) {
+        form.error = Some(
+            "That path is reserved by the application (for example /login, /admin, /hub, /static or /uploads)."
+                .into(),
+        );
     }
     form
 }
@@ -297,6 +321,10 @@ pub struct PageFormSubmit {
     nav_label: String,
     #[serde(default)]
     nav_sort: String,
+    #[serde(default)]
+    publish_at: String,
+    #[serde(default)]
+    unpublish_at: String,
 }
 
 pub async fn update(

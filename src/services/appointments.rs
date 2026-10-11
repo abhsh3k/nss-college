@@ -299,6 +299,117 @@ pub async fn grant_head(
     Ok(id)
 }
 
+/// Request a head appointment, left `pending` until the Principal approves it.
+/// The account is created by the IT admin; this only records the academic
+/// request, so a pending row grants nothing (`active_head` ignores it).
+pub async fn request_head(
+    db: &PgPool,
+    user_id: i64,
+    department_id: i64,
+    acting: bool,
+    ends_at: Option<&str>,
+    actor: i64,
+    reason: &str,
+) -> Res<i64> {
+    // `actor` is the IT admin who asked; it is recorded in the audit log by the
+    // route, while `approved_by` is reserved for the Principal's decision.
+    let _ = actor;
+    let role = if acting { "acting_hod" } else { "hod" };
+    sqlx::query_scalar(
+        r#"INSERT INTO role_assignments
+               (user_id, role, department_id, status, starts_at, ends_at, reason)
+           VALUES ($1, $2, $3, 'pending', now(), NULLIF($4, '')::timestamptz, $5)
+           RETURNING id"#,
+    )
+    .bind(user_id)
+    .bind(role)
+    .bind(department_id)
+    .bind(ends_at.unwrap_or(""))
+    .bind(reason)
+    .fetch_one(db)
+    .await
+}
+
+/// Approve a pending head appointment, making it active. Refuses when the
+/// approver is the person being appointed (a Principal cannot approve their
+/// own appointment) and when the department already has an active head.
+pub async fn approve_head(db: &PgPool, assignment_id: i64, approver: i64) -> Res<Option<i64>> {
+    let mut tx = db.begin().await?;
+    let user_id: Option<i64> = sqlx::query_scalar(
+        r#"SELECT user_id FROM role_assignments
+            WHERE id = $1 AND status = 'pending'"#,
+    )
+    .bind(assignment_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(user_id) = user_id else {
+        return Ok(None);
+    };
+    if user_id == approver {
+        return Err(sqlx::Error::Protocol(
+            "a Principal cannot approve their own appointment".into(),
+        ));
+    }
+    sqlx::query(
+        r#"UPDATE role_assignments
+              SET status = 'active', starts_at = now(), approved_by = $2,
+                  approved_at = now(), updated_at = now()
+            WHERE id = $1 AND status = 'pending'"#,
+    )
+    .bind(assignment_id)
+    .bind(approver)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("UPDATE faculty SET is_hod = true WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Some(user_id))
+}
+
+/// Reject a pending head appointment. It never becomes active.
+pub async fn reject_head(db: &PgPool, assignment_id: i64, approver: i64) -> Res<bool> {
+    let done = sqlx::query(
+        r#"UPDATE role_assignments
+              SET status = 'revoked', ends_at = now(), approved_by = $2,
+                  approved_at = now(), updated_at = now()
+            WHERE id = $1 AND status = 'pending'"#,
+    )
+    .bind(assignment_id)
+    .bind(approver)
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected() > 0)
+}
+
+/// One head appointment waiting for the Principal's decision.
+#[derive(Debug, FromRow)]
+pub struct PendingHeadRow {
+    pub assignment_id: i64,
+    pub name: String,
+    pub department: String,
+    pub role: String,
+    pub requested_label: String,
+}
+
+/// The pending head appointments, oldest first.
+pub async fn list_pending_heads(db: &PgPool) -> Res<Vec<PendingHeadRow>> {
+    sqlx::query_as::<_, PendingHeadRow>(
+        r#"SELECT ra.id AS assignment_id, u.full_name AS name, d.name AS department,
+                  ra.role,
+                  to_char(ra.starts_at, 'Dy DD Mon YYYY HH24:MI') AS requested_label
+             FROM role_assignments ra
+             JOIN users u ON u.id = ra.user_id
+             JOIN departments d ON d.id = ra.department_id
+            WHERE ra.role IN ('hod', 'acting_hod')
+              AND ra.status = 'pending'
+            ORDER BY ra.starts_at, ra.id"#,
+    )
+    .fetch_all(db)
+    .await
+}
+
 /// End a head appointment and open a handover task for the successor.
 pub async fn revoke_head(db: &PgPool, assignment_id: i64, actor: i64) -> Res<()> {
     let mut tx = db.begin().await?;
