@@ -48,6 +48,9 @@ pub struct CatalogueTemplate {
     courses: Vec<CatalogueCourse>,
     department_name: String,
     can_edit: bool,
+    /// The category options, so the form is generated from the service list
+    /// rather than a second hardcoded copy of it.
+    categories: &'static [courses::Category],
 }
 
 pub async fn catalogue(
@@ -66,6 +69,7 @@ pub async fn catalogue(
         // Authoring courses is a department act: the IT admin may read every
         // department's catalogue but does not add or retire courses in it.
         can_edit: department.is_some(),
+        categories: &courses::CATEGORIES,
     })
 }
 #[derive(Deserialize, Default)]
@@ -79,21 +83,22 @@ pub struct CourseForm {
     semester: String,
 }
 
-const CATEGORIES: [&str; 10] = [
-    "", "MAJOR", "MINOR", "SPECIALIZATION", "DSC", "DSE", "MDC", "SEC", "VAC", "AEC",
-];
-
 fn check_course(f: &CourseForm) -> Result<CourseInput, &'static str> {
     let code = f.code.trim().to_string();
     let title = f.title.trim().to_string();
     if code.is_empty() || title.is_empty() {
         return Err("Enter both the course code and the title.");
     }
+    if !crate::validate::fits(&code, crate::validate::MAX_CODE)
+        || !crate::validate::fits(&title, crate::validate::MAX_TITLE)
+    {
+        return Err("That course code or title is too long.");
+    }
     let credits = parse_i32(&f.credits)
         .filter(|v| (0..=40).contains(v))
         .ok_or("Credits must be a number from 0 to 40.")?;
     let category = f.category.trim().to_uppercase();
-    if !CATEGORIES.contains(&category.as_str()) {
+    if !courses::category_is_valid(&category) {
         return Err("Choose a valid course category.");
     }
     let semester = parse_i32(&f.semester)
@@ -130,6 +135,54 @@ pub async fn add_course(
     Ok(Redirect::to("/admin/courses"))
 }
 
+#[derive(Template)]
+#[template(path = "admin/course_catalogue_edit.html")]
+pub struct CatalogueEditTemplate {
+    shell: Shell,
+    course_id: i64,
+    code: String,
+    title: String,
+    credits: i32,
+    category: String,
+    /// The suggested semester as a string, "0" for none.
+    semester: String,
+    /// Append-only history, newest first.
+    versions: Vec<courses::CourseVersion>,
+    /// The category options, from the service list rather than a second copy.
+    categories: &'static [courses::Category],
+}
+
+/// The form for a catalogue course. A programme-bound course is edited on its
+/// programme page, so this only offers the department's own catalogue entries.
+pub async fn edit_form(
+    State(s): State<AppState>,
+    session: Session,
+    manager: Manager,
+    Path(id): Path<i64>,
+) -> Result<CatalogueEditTemplate, AppError> {
+    let department_id = manager.department().ok_or(AppError::Forbidden)?;
+    let course = courses::catalogue_course(&s.db, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    // Only a catalogue course of this manager's own department is editable here.
+    if course.programme.is_some()
+        || courses::course_department(&s.db, id).await? != Some(department_id)
+    {
+        return Err(AppError::Forbidden);
+    }
+    Ok(CatalogueEditTemplate {
+        shell: Shell::build(&manager.user, &session).await?,
+        course_id: course.id,
+        code: course.code,
+        title: course.title,
+        credits: course.credits,
+        category: course.category,
+        semester: course.semester.unwrap_or(0).to_string(),
+        versions: courses::course_versions(&s.db, id).await?,
+        categories: &courses::CATEGORIES,
+    })
+}
+
 pub async fn edit_course(
     State(s): State<AppState>,
     session: Session,
@@ -151,10 +204,17 @@ pub async fn edit_course(
             return Ok(Redirect::to("/admin/courses"));
         }
     };
-    match courses::update_catalogue_course(&s.db, id, &input).await {
-        Ok(()) => {
+    match courses::update_catalogue_course(&s.db, id, &input, Some(manager.user.id)).await {
+        Ok(made) => {
             users::audit(&s.db, Some(manager.user.id), "catalogue_course_updated", "course", Some(id)).await?;
-            shell::flash(&session, "Course saved.").await?;
+            shell::flash(
+                &session,
+                match made {
+                    Some(n) => format!("Course saved as version {n}."),
+                    None => "Course saved; nothing had changed, so no new version was made.".to_string(),
+                },
+            )
+            .await?;
         }
         Err(e) => return Err(e.into()),
     }

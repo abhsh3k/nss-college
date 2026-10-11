@@ -1142,13 +1142,22 @@ async fn unique_email(db: &PgPool, base: &str) -> Result<Option<String>, AppErro
 
 pub async fn import_credentials_csv(
     State(s): State<AppState>,
-    user: AdminOnly,
+    AdminOnly(user): AdminOnly,
     Query(q): Query<ReviewQuery>,
 ) -> Result<Response, AppError> {
     let Some(batch) = review_batch(&s, q.batch).await? else {
         return Err(AppError::NotFound);
     };
     let rows = import_students::credentials(&s.db, batch.id).await?;
+    // The credentials file carries temporary passwords, so record who exported it.
+    let _ = users::audit(
+        &s.db,
+        Some(user.id),
+        "import_credentials_downloaded",
+        "import_batch",
+        Some(batch.id),
+    )
+    .await;
     let bytes = import_students::credentials_csv(&rows)
         .map_err(|e| internal(format!("Could not build the credentials file: {e}")))?;
     let name = credentials_name(&batch.source_name);

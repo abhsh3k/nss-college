@@ -114,10 +114,15 @@ impl FromRequestParts<AppState> for AuthUser {
 
         match users::find_active(&state.db, user_id).await {
             Ok(Some(row)) => {
-                if let Some(version) = session.get::<i64>(SESSION_VERSION).await
-                    .map_err(|e| internal(e).into_response())?
-                    && version != row.session_version
-                {
+                // Sessions carry the user's revocation version at sign-in. Any
+                // mismatch (including a session that predates the field) means
+                // the session was revoked by a password reset, deactivation, or
+                // role change, so force a fresh sign-in.
+                let session_version: Option<i64> = session
+                    .get(SESSION_VERSION)
+                    .await
+                    .map_err(|e| internal(e).into_response())?;
+                if session_version != Some(row.session_version) {
                     let _ = session.flush().await;
                     return Err(to_login(parts));
                 }
@@ -237,13 +242,6 @@ impl Manager {
     }
 }
 
-#[derive(sqlx::FromRow)]
-struct FacultyPowers {
-    department_id: Option<i64>,
-    is_hod: bool,
-    can_manage: bool,
-}
-
 #[axum::async_trait]
 impl FromRequestParts<AppState> for Manager {
     type Rejection = Response;
@@ -266,23 +264,17 @@ impl FromRequestParts<AppState> for Manager {
             return Err(AppError::Forbidden.into_response());
         }
 
-        let powers = sqlx::query_as::<_, FacultyPowers>(
-            "SELECT department_id, is_hod, can_manage FROM faculty WHERE user_id = $1",
-        )
-        .bind(user.id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|e| AppError::from(e).into_response())?;
+        // Authority is decided by the appointment/delegation model, which keeps
+        // the legacy faculty flags in step for accounts created before it and
+        // respects effective dates (an expired appointment denies).
+        let department_id =
+            crate::services::appointments::effective_department(&state.db, user.id)
+                .await
+                .map_err(|e| AppError::from(e).into_response())?;
 
-        // No faculty profile, or neither head nor approved: nothing to manage.
-        let Some(p) = powers.filter(|p| p.is_hod || p.can_manage) else {
-            return Err(AppError::Forbidden.into_response());
-        };
-
-        // A department-scoped appointment without a department is invalid. It
-        // must deny access rather than being interpreted as a global scope by
-        // helpers that use Option<i64> for the department filter.
-        let Some(department_id) = p.department_id else {
+        // No effective appointment, or one without a department: nothing to
+        // manage. A missing department must deny, never mean "all departments".
+        let Some(department_id) = department_id else {
             return Err(AppError::Forbidden.into_response());
         };
 

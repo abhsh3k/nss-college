@@ -21,15 +21,7 @@
       <label for="category" class="block font-semibold">Category</label>
       <select id="category" name="category" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
         <option value="">Uncategorised</option>
-        <option value="MAJOR">Major</option>
-        <option value="MINOR">Minor</option>
-        <option value="SPECIALIZATION">Specialization</option>
-        <option value="DSC">DSC</option>
-        <option value="DSE">DSE</option>
-        <option value="MDC">MDC</option>
-        <option value="SEC">SEC</option>
-        <option value="VAC">VAC</option>
-        <option value="AEC">AEC</option>
+        {% for c in categories %}<option value="{{ c.value }}">{{ c.label }}</option>{% endfor %}
       </select>
     </div>
     <div class="sm:col-span-4">
@@ -71,6 +63,9 @@
         <td class="py-2 pr-4">{{ c.credits }}</td>
         <td class="py-2 pr-4 text-sm">{% if let Some(p) = c.programme %}{{ p }}{% else %}{{ c.department }} catalogue{% endif %}</td>
         <td class="py-2 text-right whitespace-nowrap">
+          {% if can_edit && c.programme.is_none() %}
+          <a class="mr-3 font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses/{{ c.id }}/edit">Edit</a>
+          {% endif %}
           {% if can_edit && c.programme.is_none() && c.is_active %}
           <form method="post" action="/admin/courses/{{ c.id }}/toggle" class="inline">
             <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">

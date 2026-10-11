@@ -3,6 +3,8 @@
 //!   cargo run -- create-user <admin|staff|faculty|student> <email> "<Full name>" [password]
 //!   cargo run -- set-password <email>
 //!   cargo run -- seed-demo-users
+//!   cargo run -- backup [--list]
+//!   cargo run -- maintenance
 //!
 //! The password is typed at a hidden prompt, never passed on the command line,
 //! *unless* a fourth argument is given — that path is only intended for
@@ -15,7 +17,7 @@ use sqlx::PgPool;
 
 use crate::{
     auth::{password, Role},
-    services::{people, users},
+    services::{backup, maintenance, people, users},
 };
 
 /// Returns true when a command was handled and the server should not start.
@@ -37,11 +39,36 @@ pub async fn run(args: &[String], db: &PgPool) -> bool {
         }
         Some("seed-demo-users") => {
             match seed_demo_users(db).await {
-                Ok(lines) => {
-                    for line in &lines {
-                        println!("{line}");
+                Ok(lines) => match credentials_destination(&args[1..]) {
+                    // Writing to a file keeps generated passwords out of the
+                    // shell history, out of CI logs and out of a recorded
+                    // terminal. The file is created 0600.
+                    Ok(Some(path)) => match write_credentials(&lines, &path) {
+                        Ok(()) => println!(
+                            "Wrote {} demo credential line(s) to {}. \
+                             Move them to your password manager and delete the file.",
+                            lines.len(),
+                            path.display()
+                        ),
+                        Err(msg) => {
+                            eprintln!("error: {msg}");
+                            std::process::exit(1);
+                        }
+                    },
+                    Ok(None) => {
+                        for line in &lines {
+                            println!("{line}");
+                        }
+                        eprintln!(
+                            "note: these passwords are now in your terminal scrollback. \
+                             Use `seed-demo-users --credentials-file <path>` to avoid that."
+                        );
                     }
-                }
+                    Err(msg) => {
+                        eprintln!("error: {msg}");
+                        std::process::exit(2);
+                    }
+                },
                 Err(msg) => {
                     eprintln!("error: {msg}");
                     std::process::exit(1);
@@ -49,17 +76,107 @@ pub async fn run(args: &[String], db: &PgPool) -> bool {
             }
             true
         }
+        Some("backup") => {
+            if let Err(msg) = backup_command(&args[1..], db).await {
+                eprintln!("error: {msg}");
+                std::process::exit(1);
+            }
+            true
+        }
+        Some("maintenance") => {
+            let report = maintenance::purge(db).await;
+            println!(
+                "purged: {} expired session(s), {} stale student import batch(es), \
+                 {} expired result import(s), {} old result import(s)",
+                report.sessions,
+                report.stale_student_batches,
+                report.expired_result_imports,
+                report.old_result_imports
+            );
+            true
+        }
         Some(other) => {
             eprintln!(
                 "unknown command: {other}\n\
                  usage: cargo run -- create-user <admin|staff|faculty|student> <email> \"<Full name>\"\n\
                  \x20      cargo run -- set-password <email>\n\
-                 \x20      cargo run -- seed-demo-users"
+                 \x20      cargo run -- seed-demo-users\n\
+                 \x20      cargo run -- backup [--list]\n\
+                 \x20      cargo run -- maintenance"
             );
             std::process::exit(2);
         }
         None => false,
     }
+}
+
+/// Where the seeded credentials should go: `None` means print them (the
+/// explicit interactive path).
+pub fn credentials_destination(args: &[String]) -> Result<Option<std::path::PathBuf>, String> {
+    match args {
+        [] => Ok(None),
+        [flag, path] if flag == "--credentials-file" => {
+            if path.trim().is_empty() {
+                return Err("--credentials-file needs a path".into());
+            }
+            Ok(Some(std::path::PathBuf::from(path)))
+        }
+        _ => Err("usage: cargo run -- seed-demo-users [--credentials-file <path>]".into()),
+    }
+}
+
+/// Write the credential report to a file only the current user can read.
+pub fn write_credentials(lines: &[String], path: &std::path::Path) -> Result<(), String> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+        .map_err(|e| format!("could not create {}: {e}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
+    }
+    for line in lines {
+        writeln!(file, "{line}").map_err(|e| format!("could not write {}: {e}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// Take a backup now, or list the sets already on disk.
+///
+/// `--list` needs no database connection beyond the one already made, and no
+/// `pg_dump`: it just reports what a restore could use.
+async fn backup_command(args: &[String], db: &PgPool) -> Result<(), String> {
+    let cfg = backup::BackupConfig::from_env();
+    if args.first().map(String::as_str) == Some("--list") {
+        let sets = backup::list_sets(&cfg.dir);
+        if sets.is_empty() {
+            println!("No backups in {}. Run `cargo run -- backup`.", cfg.dir.display());
+        } else {
+            println!("Backups in {} (newest first):", cfg.dir.display());
+            for set in sets {
+                println!("  {}", set.display());
+            }
+        }
+        return Ok(());
+    }
+    if !args.is_empty() {
+        return Err("usage: cargo run -- backup [--list]".into());
+    }
+    let report = backup::run(db, &cfg).await?;
+    println!("Backup written to {}", report.path.display());
+    println!("  database: {} bytes", report.database_bytes);
+    match report.uploads_bytes {
+        Some(bytes) => println!("  uploads:  {bytes} bytes"),
+        None => println!("  uploads:  not archived (see the manifest for why)"),
+    }
+    if report.removed_old > 0 {
+        println!("  removed {} older set(s) beyond the retention of {}", report.removed_old, cfg.keep);
+    }
+    Ok(())
 }
 
 async fn create_user(args: &[String], db: &PgPool) -> Result<(), String> {
@@ -182,15 +299,21 @@ pub async fn seed_demo_users(db: &PgPool) -> Result<Vec<String>, String> {
     }
 
     /// The id of an account with this email, if it already exists.
+    ///
+    /// Looked up by email rather than through `find_for_login`: that helper
+    /// signs students in by admission number, so it would report a seeded
+    /// student's email as "not found" and the second seed run would then try to
+    /// insert a duplicate email.
     async fn existing_id(db: &PgPool, email: &str) -> Result<Option<i64>, String> {
-        Ok(users::find_for_login(db, email)
+        sqlx::query_scalar("SELECT id FROM users WHERE lower(email) = lower($1)")
+            .bind(email.trim())
+            .fetch_optional(db)
             .await
-            .map_err(|e| e.to_string())?
-            .map(|u| u.id))
+            .map_err(|e| e.to_string())
     }
 
-    /// Give an account the generated password whether or not it already exists,
-    /// so the printed credentials are always the ones that will work.
+    // Give an account the generated password whether or not it already exists,
+    // so the printed credentials are always the ones that will work.
 
     // ---- IT administrator (must_change_password = false, like create-user) ----
     for (email, name) in [("admin@college.local", "Site Administrator")] {
@@ -264,6 +387,10 @@ pub async fn seed_demo_users(db: &PgPool) -> Result<Vec<String>, String> {
                 .bind(index == 0)
                 .bind(department_id.unwrap_or(0))
                 .execute(db)
+                .await
+                .map_err(|e| e.to_string())?;
+            // Keep the appointment table in step with the flag we just set.
+            crate::services::appointments::sync_hod_from_flags(db, id)
                 .await
                 .map_err(|e| e.to_string())?;
         } else {

@@ -83,6 +83,11 @@ pub const ADMIN: &[Area] = &[
                 "/admin/people",
                 "Promote a student or a whole programme cohort to the next semester.",
             ),
+            link(
+                "Appointments",
+                "/admin/appointments",
+                "Appoint or end a head of department, and grant or revoke a delegation.",
+            ),
         ],
     ),
     area(
@@ -104,6 +109,11 @@ pub const ADMIN: &[Area] = &[
                 "Course catalogue",
                 "/admin/courses",
                 "The catalogue of courses that course offerings are built from.",
+            ),
+            link(
+                "Study materials",
+                "/admin/materials",
+                "Share notes and reading files with the students of a course.",
             ),
         ],
     ),
@@ -292,6 +302,11 @@ pub const HOD: &[Area] = &[
                 "/admin/courses",
                 "The catalogue of courses that course offerings are built from.",
             ),
+            link(
+                "Study materials",
+                "/admin/materials",
+                "Share notes and reading files with the students of your courses.",
+            ),
         ],
     ),
     area(
@@ -476,8 +491,10 @@ mod tests {
             "/admin/people",
             "/admin/people/new",
             "/admin/people/import",
+            "/admin/appointments",
             "/admin/academics",
             "/admin/courses",
+            "/admin/materials",
             "/admin/courses/offerings",
             "/admin/courses/external",
             "/admin/courses/selections",

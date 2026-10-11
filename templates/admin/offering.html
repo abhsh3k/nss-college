@@ -4,7 +4,7 @@
 <p class="text-sm"><a class="underline underline-offset-4 hover:text-brand" href="/admin/courses/offerings">All offerings</a></p>
 <h1 class="mt-2 font-display text-3xl font-semibold md:text-4xl">{{ offering.code }} — {{ offering.title }}</h1>
 <p class="mt-1 text-ink/80">{{ offering.department }} · {{ offering.year_label }} · Semester {{ offering.semester }} · {{ offering.course_type }} · {{ offering.selection_mode }}{% if offering.choice_group != "" %} ({{ offering.choice_group }}){% endif %}</p>
-<p class="mt-1 text-sm text-ink/70">{{ offering.credits }} credits · {{ offering.enrolled }} enrolled{% if let Some(cap) = offering.capacity %} of {{ cap }} seats{% endif %} ·
+<p class="mt-1 text-sm text-ink/70">{{ offering.credits }} credits (course v{{ offering.version_no }}) · {{ offering.enrolled }} enrolled{% if let Some(cap) = offering.capacity %} of {{ cap }} seats{% endif %} ·
   {% if offering.status == "published" %}<span class="font-semibold text-emerald-700">Published</span>{% else if offering.status == "draft" %}<span class="font-semibold text-amber-700">Draft</span>{% else %}<span class="font-semibold text-ink/50">Archived</span>{% endif %}
 </p>
 

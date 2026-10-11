@@ -20,6 +20,7 @@ use tower_sessions::Session;
 use super::{parse_i32, parse_i64};
 use crate::{
     auth::{csrf, Manager},
+    dates::valid_date,
     error::AppError,
     services::{
         academics::{self, ProgrammeOption},
@@ -126,7 +127,7 @@ async fn render(
 
 /// The selected programme, forced to one this manager may act for (an admin
 /// manages every programme; a head only their department's).
-async fn selected_programme(
+pub(super) async fn selected_programme(
     s: &AppState,
     department: Option<i64>,
     raw: Option<&str>,
@@ -152,33 +153,6 @@ pub async fn page(
         .filter(|v| (1..=12).contains(v))
         .unwrap_or(1);
     render(&s, &session, &manager, programme_id, semester).await
-}
-
-/// A plain `YYYY-MM-DD` calendar date (validated without pulling in a date
-/// parser: month lengths and leap years are all it has to get right).
-fn valid_date(s: &str) -> bool {
-    let b = s.as_bytes();
-    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
-        return false;
-    }
-    let num = |slice: &str| slice.parse::<i32>().ok();
-    let (Some(year), Some(month), Some(day)) = (
-        num(s.get(0..4).unwrap_or("")),
-        num(s.get(5..7).unwrap_or("")),
-        num(s.get(8..10).unwrap_or("")),
-    ) else {
-        return false;
-    };
-    if !(1..=12).contains(&month) || day < 1 {
-        return false;
-    }
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let days = match month {
-        2 => 28 + leap as i32,
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        _ => 30,
-    };
-    day <= days
 }
 
 /// One exam row, still a draft until the whole timetable is pushed.

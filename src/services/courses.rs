@@ -16,6 +16,38 @@ use crate::error::AppError;
 
 type Res<T> = Result<T, sqlx::Error>;
 
+/// One selectable course category: the value stored in the database and the
+/// label shown on the form.
+///
+/// The catalogue's category list lives here, once, so the validator and both
+/// forms (add and edit) cannot drift apart. They used to be three separate
+/// hardcoded copies of the same ten `<option>`s.
+#[derive(Clone, Copy)]
+pub struct Category {
+    pub value: &'static str,
+    pub label: &'static str,
+}
+
+/// The categories a course may be filed under, in the order the form shows
+/// them. An empty category ("uncategorised") is always allowed as well.
+pub const CATEGORIES: [Category; 9] = [
+    Category { value: "MAJOR", label: "Major" },
+    Category { value: "MINOR", label: "Minor" },
+    Category { value: "SPECIALIZATION", label: "Specialization" },
+    Category { value: "DSC", label: "DSC" },
+    Category { value: "DSE", label: "DSE" },
+    Category { value: "MDC", label: "MDC" },
+    Category { value: "SEC", label: "SEC" },
+    Category { value: "VAC", label: "VAC" },
+    Category { value: "AEC", label: "AEC" },
+];
+
+/// True when `value` is a category the catalogue offers, or empty for
+/// "uncategorised".
+pub fn category_is_valid(value: &str) -> bool {
+    value.is_empty() || CATEGORIES.iter().any(|c| c.value == value)
+}
+
 // A selection moves through these states: `draft` on the student's sheet,
 // `confirmed` once accepted, `locked` by the HOD, `change_requested` while a
 // move is pending (`submitted` is reserved for a review step).
@@ -95,6 +127,23 @@ pub struct CatalogueCourse {
     pub programme: Option<String>,
 }
 
+/// One course by id, for the edit form.
+pub async fn catalogue_course(db: &PgPool, id: i64) -> Res<Option<CatalogueCourse>> {
+    sqlx::query_as::<_, CatalogueCourse>(
+        r#"SELECT c.id, c.code, c.title, c.credits, c.category,
+                  c.semester, c.is_active,
+                  COALESCE(d.name, '') AS department,
+                  p.name AS programme
+           FROM courses c
+           LEFT JOIN departments d ON d.id = c.department_id
+           LEFT JOIN programmes p ON p.id = c.programme_id
+           WHERE c.id = $1"#,
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await
+}
+
 pub async fn catalogue_courses(db: &PgPool, department: Option<i64>) -> Res<Vec<CatalogueCourse>> {
     sqlx::query_as::<_, CatalogueCourse>(
         r#"SELECT c.id, c.code, c.title, c.credits, c.category,
@@ -139,12 +188,43 @@ pub struct CourseInput {
     pub semester: i32, // 0 = no fixed semester (catalogue course)
 }
 
+/// One row of a course's append-only version history.
+#[derive(Debug, FromRow)]
+pub struct CourseVersion {
+    pub version_no: i32,
+    pub code: String,
+    pub title: String,
+    pub credits: i32,
+    pub category: String,
+    pub semester: Option<i32>,
+    pub effective_from: String,
+    pub is_current: bool,
+}
+
+/// A course's versions, newest first, for the edit screen's history panel.
+pub async fn course_versions(db: &PgPool, course_id: i64) -> Res<Vec<CourseVersion>> {
+    sqlx::query_as::<_, CourseVersion>(
+        r#"SELECT version_no, code, title, credits, category, semester,
+                  to_char(effective_from, 'YYYY-MM-DD') AS effective_from, is_current
+             FROM course_versions
+            WHERE course_id = $1
+            ORDER BY version_no DESC"#,
+    )
+    .bind(course_id)
+    .fetch_all(db)
+    .await
+}
+
+/// Create a catalogue course and its version 1 in one transaction, so a course
+/// can never exist without a current version (which the offering insert below
+/// relies on).
 pub async fn create_catalogue_course(
     db: &PgPool,
     department_id: i64,
     c: &CourseInput,
 ) -> Res<i64> {
-    sqlx::query_scalar(
+    let mut tx = db.begin().await?;
+    let id: i64 = sqlx::query_scalar(
         r#"INSERT INTO courses (department_id, programme_id, code, title, credits, category, semester, faculty_id)
            VALUES ($1, NULL, $2, $3, $4, $5, NULLIF($6, 0), NULL)
            RETURNING id"#,
@@ -155,15 +235,12 @@ pub async fn create_catalogue_course(
     .bind(c.credits)
     .bind(&c.category)
     .bind(c.semester)
-    .fetch_one(db)
-    .await
-}
-
-pub async fn update_catalogue_course(db: &PgPool, id: i64, c: &CourseInput) -> Res<()> {
+    .fetch_one(&mut *tx)
+    .await?;
     sqlx::query(
-        r#"UPDATE courses
-              SET code = $2, title = $3, credits = $4, category = $5, semester = NULLIF($6, 0)
-            WHERE id = $1 AND department_id IS NOT NULL AND programme_id IS NULL"#,
+        r#"INSERT INTO course_versions
+               (course_id, version_no, code, title, credits, category, semester, is_current)
+           VALUES ($1, 1, $2, $3, $4, $5, NULLIF($6, 0), true)"#,
     )
     .bind(id)
     .bind(&c.code)
@@ -171,9 +248,80 @@ pub async fn update_catalogue_course(db: &PgPool, id: i64, c: &CourseInput) -> R
     .bind(c.credits)
     .bind(&c.category)
     .bind(c.semester)
-    .execute(db)
+    .execute(&mut *tx)
     .await?;
-    Ok(())
+    tx.commit().await?;
+    Ok(id)
+}
+
+/// Save the catalogue course and append a new version when anything actually
+/// changed. Returns the new version number, or `None` when the values were
+/// identical (so re-saving the form does not churn the history).
+pub async fn update_catalogue_course(
+    db: &PgPool,
+    id: i64,
+    c: &CourseInput,
+    actor: Option<i64>,
+) -> Res<Option<i32>> {
+    let mut tx = db.begin().await?;
+    let current: Option<(i32, String, String, i32, String, Option<i32>)> = sqlx::query_as(
+        "SELECT version_no, code, title, credits, category, semester
+           FROM course_versions WHERE course_id = $1 AND is_current FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((version_no, code, title, credits, category, previous_semester)) = current else {
+        // No version row: the course is not a catalogue course, or predates the
+        // backfill. Refuse rather than write a half-updated row.
+        return Err(sqlx::Error::RowNotFound);
+    };
+    let semester = if c.semester == 0 { None } else { Some(c.semester) };
+    let unchanged = code == c.code
+        && title == c.title
+        && credits == c.credits
+        && category == c.category
+        && previous_semester == semester;
+    if unchanged {
+        tx.commit().await?;
+        return Ok(None);
+    }
+
+    sqlx::query(
+        r#"UPDATE courses
+              SET code = $2, title = $3, credits = $4, category = $5, semester = $6
+            WHERE id = $1 AND department_id IS NOT NULL AND programme_id IS NULL"#,
+    )
+    .bind(id)
+    .bind(&c.code)
+    .bind(&c.title)
+    .bind(c.credits)
+    .bind(&c.category)
+    .bind(semester)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("UPDATE course_versions SET is_current = false WHERE course_id = $1 AND is_current")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    let next = version_no + 1;
+    sqlx::query(
+        r#"INSERT INTO course_versions
+               (course_id, version_no, code, title, credits, category, semester, is_current, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8)"#,
+    )
+    .bind(id)
+    .bind(next)
+    .bind(&c.code)
+    .bind(&c.title)
+    .bind(c.credits)
+    .bind(&c.category)
+    .bind(semester)
+    .bind(actor)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Some(next))
 }
 
 pub async fn set_course_active(db: &PgPool, id: i64, is_active: bool) -> Res<()> {
@@ -204,6 +352,8 @@ pub struct Offering {
     pub title: String,
     pub credits: i32,
     pub category: String,
+    /// The course version this offering was created from.
+    pub version_no: i32,
     pub offering_department_id: i64,
     pub department: String,
     pub academic_year_id: i64,
@@ -221,7 +371,7 @@ pub struct Offering {
 
 pub async fn offering(db: &PgPool, id: i64) -> Res<Option<Offering>> {
     sqlx::query_as::<_, Offering>(
-        r#"SELECT o.id, o.course_id, c.code, c.title, c.credits, c.category,
+        r#"SELECT o.id, o.course_id, c.code, c.title, c.credits, c.category, v.version_no,
                   o.offering_department_id, d.name AS department,
                   o.academic_year_id, y.label AS year_label, o.semester,
                   o.course_type, o.selection_mode, o.choice_group, o.capacity,
@@ -232,6 +382,7 @@ pub async fn offering(db: &PgPool, id: i64) -> Res<Option<Offering>> {
                   EXISTS (SELECT 1 FROM course_offering_targets t WHERE t.offering_id = o.id) AS has_target
            FROM course_offerings o
            JOIN courses c ON c.id = o.course_id
+           JOIN course_versions v ON v.id = o.course_version_id
            JOIN departments d ON d.id = o.offering_department_id
            JOIN academic_years y ON y.id = o.academic_year_id
            LEFT JOIN faculty f ON f.id = o.faculty_id
@@ -249,6 +400,8 @@ pub struct OfferingRow {
     pub title: String,
     pub credits: i32,
     pub category: String,
+    /// The course version this offering was created from.
+    pub version_no: i32,
     pub department: String,
     pub year_label: String,
     pub semester: i32,
@@ -262,7 +415,7 @@ pub struct OfferingRow {
 
 pub async fn offerings_for_department(db: &PgPool, department: Option<i64>) -> Res<Vec<OfferingRow>> {
     sqlx::query_as::<_, OfferingRow>(
-        r#"SELECT o.id, c.code, c.title, c.credits, c.category,
+        r#"SELECT o.id, c.code, c.title, c.credits, c.category, v.version_no,
                   d.name AS department, y.label AS year_label, o.semester,
                   o.course_type, o.selection_mode, o.choice_group, o.capacity, o.status,
                   (SELECT count(*) FROM enrollments e
@@ -270,6 +423,7 @@ pub async fn offerings_for_department(db: &PgPool, department: Option<i64>) -> R
                    WHERE e.offering_id = o.id AND e.status = 'active') AS enrolled
            FROM course_offerings o
            JOIN courses c ON c.id = o.course_id
+           JOIN course_versions v ON v.id = o.course_version_id
            JOIN departments d ON d.id = o.offering_department_id
            JOIN academic_years y ON y.id = o.academic_year_id
            WHERE ($1::bigint IS NULL OR o.offering_department_id = $1)
@@ -397,11 +551,15 @@ pub struct NewOffering {
 }
 
 pub async fn create_offering(db: &PgPool, n: &NewOffering) -> Res<i64> {
+    // The offering is pinned to the course's current version, so a later edit to
+    // the course cannot silently rewrite what this offering ran as.
     sqlx::query_scalar(
         r#"INSERT INTO course_offerings
-               (course_id, offering_department_id, academic_year_id, semester,
+               (course_id, course_version_id, offering_department_id, academic_year_id, semester,
                 course_type, selection_mode, choice_group, capacity, faculty_id, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft')
+           VALUES ($1,
+                   (SELECT id FROM course_versions WHERE course_id = $1 AND is_current),
+                   $2, $3, $4, $5, $6, $7, $8, $9, 'draft')
            RETURNING id"#,
     )
     .bind(n.course_id)

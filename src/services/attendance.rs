@@ -59,23 +59,10 @@ pub async fn window_start(db: &PgPool, days: i32) -> Res<String> {
 }
 
 /// A real calendar date in YYYY-MM-DD form.
-pub fn valid_date(s: &str) -> bool {
-    let parts: Vec<&str> = s.split('-').collect();
-    if parts.len() != 3 || parts[0].len() != 4 || parts[1].len() != 2 || parts[2].len() != 2 {
-        return false;
-    }
-    let (Ok(y), Ok(m), Ok(d)) = (parts[0].parse::<i32>(), parts[1].parse::<u32>(), parts[2].parse::<u32>()) else {
-        return false;
-    };
-    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-    let max = match m {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => if leap { 29 } else { 28 },
-        _ => return false,
-    };
-    (2000..=2100).contains(&y) && d >= 1 && d <= max
-}
+///
+/// Re-exported from `crate::dates` so the callers that have always written
+/// `attendance::valid_date` keep working against the single shared rule.
+pub use crate::dates::valid_date;
 
 pub async fn faculty_id_for_user(db: &PgPool, user_id: i64) -> Res<Option<i64>> {
     sqlx::query_scalar("SELECT id FROM faculty WHERE user_id = $1")

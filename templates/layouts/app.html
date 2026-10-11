@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   {% include "partials/styles.html" %}
-  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  <script src="/static/js/htmx.min.js" defer></script>
 </head>
 <body class="bg-chalk font-sans text-ink antialiased">
   <a href="#app-main" class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-accent focus:px-4 focus:py-2 focus:font-semibold focus:text-ink">Skip to main content</a>
@@ -37,11 +37,7 @@
             {% endif %}
             {% for item in nav_group.items %}
             <li>
-              {% if item.soon %}
-              <span class="flex items-center justify-between rounded px-3 py-2 text-chalk/50" aria-disabled="true">{{ item.label }} <span class="rounded bg-chalk/10 px-1.5 py-0.5 text-xs">Soon</span></span>
-              {% else %}
               <a data-nav href="{{ item.href }}" class="block rounded px-3 py-2 font-medium hover:bg-chalk/10 aria-[current=page]:bg-accent aria-[current=page]:text-ink">{{ item.label }}</a>
-              {% endif %}
             </li>
             {% endfor %}
             {% endfor %}

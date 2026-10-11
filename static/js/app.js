@@ -166,4 +166,57 @@
       if (r.value === value) r.checked = true;
     });
   });
+
+  // ---- Behaviour that used to live in inline `on*` attributes ----
+  //
+  // The pages run under a Content-Security-Policy that allows no inline
+  // scripts, so every one of these is a delegated listener over a `data-*`
+  // hook instead. Delegation also means they keep working after an HTMX swap
+  // without anything having to re-bind.
+
+  // Confirm before submitting: <form data-confirm="Are you sure?">.
+  document.addEventListener(
+    "submit",
+    function (e) {
+      var form = e.target;
+      if (!form || typeof form.getAttribute !== "function") return;
+      var msg = form.getAttribute("data-confirm");
+      if (msg && !window.confirm(msg)) e.preventDefault();
+    },
+    true // capture, so it runs before any other submit handling
+  );
+
+  // Submit on change: <select data-autosubmit>.
+  document.addEventListener("change", function (e) {
+    var el = e.target;
+    if (el && el.matches && el.matches("[data-autosubmit]") && el.form) el.form.submit();
+  });
+
+  // A header checkbox that checks every row it names:
+  // <input type="checkbox" data-select-all=".row-checkbox">.
+  document.addEventListener("change", function (e) {
+    var box = e.target;
+    if (!box || !box.matches || !box.matches("[data-select-all]")) return;
+    document.querySelectorAll(box.getAttribute("data-select-all")).forEach(function (cb) {
+      cb.checked = box.checked;
+    });
+  });
+
+  // A button that toggles the boxes it names:
+  // <button type="button" data-select-all-toggle=".row-checkbox">.
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-select-all-toggle]");
+    if (!btn) return;
+    var boxes = document.querySelectorAll(btn.getAttribute("data-select-all-toggle"));
+    var someUnchecked = Array.prototype.some.call(boxes, function (b) { return !b.checked; });
+    boxes.forEach(function (b) { b.checked = someUnchecked; });
+    var header = document.querySelector("[data-select-all]");
+    if (header) header.checked = someUnchecked;
+  });
+
+  // <button data-print> opens the print dialog.
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest("[data-print]")) return;
+    window.print();
+  });
 })();

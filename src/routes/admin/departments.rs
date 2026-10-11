@@ -310,8 +310,10 @@ pub async fn mark_save(
             }
             _ => {
                 shell::flash(&session, "Choose present, absent or leave for every student.").await?;
+                // The route is `/admin/departments/attendance/:entry_id/:date`,
+                // so the date is a path segment, not a query parameter.
                 return Ok(Redirect::to(&format!(
-                    "/admin/departments/attendance/{entry_id}?date={date}"
+                    "/admin/departments/attendance/{entry_id}/{date}"
                 )));
             }
         }

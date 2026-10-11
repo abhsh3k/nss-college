@@ -81,6 +81,75 @@ Rules built in: five wrong passwords lock an account for 15 minutes; sessions la
 every form carries a CSRF token; passwords are stored with Argon2.
 The management listener is hard-bound to loopback by the application and must not be exposed by a reverse proxy. In production set `COOKIE_SECURE=true`, serve the public site over HTTPS, and proxy management access only through a controlled local administration path.
 
+## Tests
+
+    docker compose up -d          # the tests need PostgreSQL
+    DATABASE_URL=postgres://nss:nss@localhost:5432/nss_college cargo test
+
+Three layers run:
+
+- **Unit tests** (`cargo test --lib`): pure rules — appointment expiry, date validation, input limits,
+  the login limiter, CSV parsing, the navigation model. No database needed.
+- **Database integration tests** (`tests/database.rs`): `#[sqlx::test]` creates a fresh database per test
+  and applies every migration, so they check the constraints themselves — one active head per department,
+  the append-only audit log, course versions and offering pinning, the marks/result-import states, and the
+  appointment/delegation services. The role needs `CREATEDB` (the `nss` role has it).
+- **End-to-end tests** (`tests/app.rs`): requests are sent through the real layered router with `tower::oneshot`, so
+  routing, sessions, CSRF, templates and the response headers are all exercised without a socket.
+
+The database tests are the slow ones (each test creates and migrates a database); `cargo test --lib` is instant.
+
+## Backups and housekeeping
+
+The server runs an hourly housekeeping task (`services::maintenance`) that
+
+- deletes expired `tower_sessions` rows (the store never removes them itself),
+- runs the existing student-import purge, and
+- expires staged result imports past their window — dropping the raw uploaded text they hold — then
+  deletes batches older than 90 days.
+
+It also takes a backup when the last one is older than `BACKUP_INTERVAL_HOURS`. Each run writes
+`BACKUP_DIR/backup-<UTC stamp>/` containing `database.dump` (custom format), `uploads.tar.gz` and a
+`manifest.json` with sizes and SHA-256 sums, then keeps the newest `BACKUP_KEEP` sets. A failed dump is
+reported and never leaves a half-set behind; the uploads archive is best-effort and the manifest records
+whether it was produced. Backups may not be written inside `static/` or the upload directory, and the run
+directory is created `0700`.
+
+Manual runs:
+
+    cargo run -- backup            # take one now
+    cargo run -- backup --list     # what a restore could use
+    cargo run -- maintenance       # run the purge once
+
+`pg_dump` on `PATH` is used when present; otherwise set `BACKUP_DOCKER_SERVICE=db` and the dump is taken
+with `docker compose exec`.
+
+Restore (deliberately manual — it overwrites live data):
+
+    # database (custom format; --clean drops and recreates the objects)
+    docker compose exec -T db pg_restore --clean --if-exists --no-owner \
+        -U nss -d nss_college < backups/backup-<stamp>/database.dump
+    # uploads
+    tar -xzf backups/backup-<stamp>/uploads.tar.gz -C .
+
+Verify a dump before relying on it: `docker compose exec -T db pg_restore --list < .../database.dump`
+lists its table of contents.
+
+## Security headers and the Content-Security-Policy
+
+Both listeners send `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+`Referrer-Policy: strict-origin-when-cross-origin`, a `Permissions-Policy` and a CSP from
+`apply_layers` (`src/lib.rs`). HSTS is added only when `COOKIE_SECURE=true`, since pinning a browser to
+https:// on a plain-HTTP development server would break it.
+
+The policy is strict for scripts: `script-src 'self'`. HTMX is therefore served from
+`static/js/htmx.min.js` rather than a CDN, and every inline `on*` handler was replaced by a `data-*` hook
+handled in `static/js/app.js` (`data-confirm`, `data-autosubmit`, `data-select-all`,
+`data-select-all-toggle`, `data-print`, `data-mark-all`). Keep it that way: adding an `onclick=` or an
+inline `<script>` will silently stop working in the browser. `style-src` keeps `'unsafe-inline'` because a
+few templates set a per-row CSS value (the homepage carousel and the attendance bars) that cannot move
+into a class.
+
 ## Building the CSS
 
 Windows (PowerShell, from the project folder):
@@ -94,25 +163,6 @@ Rebuild whenever you add new Tailwind classes to a template. Colours and fonts l
 On Linux or macOS, download the matching `tailwindcss` v3.4.17 binary from the Tailwind releases page and run:
 
     ./tailwindcss -c tailwind.config.js -i assets/input.css -o static/css/tailwind.css --minify
-
-## Sign in and accounts (Phase 4a)
-
-Create the first IT administrator (you will be asked for a password at a hidden prompt):
-
-    cargo run -- create-user admin you@example.com "Your Name"
-
-Create test accounts for the other roles. These must choose a new password at first sign-in:
-
-    cargo run -- create-user staff office@example.com "Office Staff"
-    cargo run -- create-user faculty teacher@example.com "Test Teacher"
-    cargo run -- create-user student 1001@college.local "Test Student"
-
-Then run `cargo run` and open http://127.0.0.1:3000/login. Each role lands on its own dashboard:
-IT admin and office staff on `/admin`, teachers on `/teacher`, students on `/hub`.
-
-Rules built in: five wrong passwords lock an account for 15 minutes; sessions last 8 hours of inactivity;
-every form carries a CSRF token; passwords are stored with Argon2.
-In production set `COOKIE_SECURE=true` and serve the site over HTTPS.
 
 ## Production CSS
 
@@ -135,10 +185,20 @@ Keep the colours and fonts in `tailwind.config.js` and `styles.html` identical.
     templates/      layouts/ partials/ public/  (hub/ and admin/ come later)
     static/         app assets: css, js, img
     uploads/        user content: notices, events, faculty, documents, news
+    src/lib.rs      the application as a library (main.rs is only process setup and the listeners),
+                    including the shared middleware and the security headers
+    src/dates.rs    the one calendar-date validator every form uses
+    src/validate.rs the shared input-length limits
+    tests/          database integration tests and end-to-end router tests
     migrations/     0001 core, 0002 academics, 0003 content, 0004 triggers, 0005 starter content,
                     … 0013 course offerings (courses, offerings, targets, approvals, selections,
                     change requests), 0014 updated_at columns, 0015 studash, 0016 page menu,
-                    0017 enrollments.offering_id
+                    0017 enrollments.offering_id, 0018 import PRN, 0019 exam result kinds,
+                    0020 teaching departments, 0021 authorization lifecycle (role_assignments,
+                    delegations, handover tasks, append-only audit), 0022 result workflow (marks
+                    states and mark_history, staged result imports), 0023 appointment reconciliation,
+                    0024 result-import payload, 0025 guided result import, 0026 course versions
+                    (course_versions, offerings pinned to the version they were built from)
 
 ## Layers
 
@@ -199,26 +259,30 @@ but these gaps remain:
    The course-filter dropdown (`course_options`) also hides catalogue courses when a programme is selected.
 7. **Capacity is enforced only at student confirm**; HOD assignment and cohort finalization can exceed it.
    Decide whether that override is intended, then enforce or document it.
-8. **Catalogue course editing has no UI**: `POST /admin/courses/:id/edit` exists (with audit) but nothing
-   posts to it — the catalogue only offers *Retire*, so typos in code/title/credits need SQL to fix.
-9. **Student actions are not audited**: select/withdraw/confirm/change-request on `/hub/courses` write no
-   `audit_log` rows (all 16 admin/HOD mutations do). Bulk `auto_apply_fixed` rows are only covered by the
-   publish/status audit entry.
-10. **Category taxonomies disagree**: `courses.category` is a fixed CHECK enum, the offering-create select
-    hardcodes a different list, and offering-edit is free text; students only ever see `course_type`.
-    A categories table would make this data-driven as intended.
+8. ~~**Catalogue course editing has no UI**~~ **Fixed**: `GET /admin/courses/:id/edit` renders the form and the
+   page shows the course's append-only version history; saving appends a new version and never rewrites the
+   previous one, and existing offerings stay pinned to the version they ran as.
+9. ~~**Student actions are not audited**~~ **Fixed**: `select`, `withdraw`, `confirm` and `request_change`
+   on `/hub/courses` each write an `audit_log` row. Bulk `auto_apply_fixed` rows are still only covered by
+   the publish/status audit entry.
+10. **Category taxonomies**: the *course* category list now lives once in `services::courses::CATEGORIES` and
+    both the add and edit forms are generated from it (the database CHECK is unchanged and matches it).
+    An *offering's* `course_type` is still free text, deliberately, so a new university category is data
+    rather than a migration; a categories table with labels would be the next step if it needs policing.
 11. Minor: no pending-approval badge in the nav; `student_course_selections.state = 'submitted'` is reserved
     but unused (selections go draft → confirmed directly); ~9 dead-code warnings from struct fields fetched
     but never rendered in `services/courses.rs`.
 
-Pre-existing bugs, present before this branch (flagged during the same review):
+Previously flagged bugs that have since been fixed:
 
-- `/admin/departments/attendance/:entry_id` and `.../save` always return 500 — the route passes one path
-  argument while `mark_form`/`mark_save` take `Path((entry_id, date))`.
-- `src/cli.rs` `create-user`: a duplicated `users::audit` line logs `user_created_cli` twice; `maybe_pw` is
-  bound but unused (the password is read from `args.get(3)`); `prompt_new_password(...).unwrap()` panics
-  instead of returning the error.
-- No study-materials UI either (`study_materials` table exists since 0002).
+- `/admin/departments/attendance` now uses the `/.../:entry_id/:date` routes, matching the
+  `Path((entry_id, date))` the handlers take. (The save handler's error redirect was pointing at a
+  query-string URL that no route matched and has been corrected to a path.)
+- `src/cli.rs` `create-user` no longer double-logs `user_created_cli`, and `prompt_new_password` returns
+  its error instead of panicking.
+- Study materials now have a service, routes and UI: a head of department (or the IT admin) uploads a
+  file for a course at `/admin/materials`, and an enrolled student downloads published material from
+  `/hub/materials` (gated at the upload-serving boundary too).
 
 ## Changes queued for later (student dashboard rework)
 

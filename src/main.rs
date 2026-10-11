@@ -1,32 +1,15 @@
-mod auth;
-mod cli;
-mod config;
-mod error;
-mod layout;
-mod models;
-mod routes;
-mod seo;
-mod sections;
-mod site;
-mod services;
-mod shell;
-mod state;
-mod uploads;
+//! The NSS College server binary.
+//!
+//! This file is deliberately thin: it turns the environment into a pool and a
+//! configuration, runs the migrations, then hands two routers to the listeners.
+//! The application itself lives in the library crate (`src/lib.rs`), which the
+//! integration tests also use.
 
-use std::time::Duration;
+use std::sync::Arc;
 
-use axum::{http::{header, HeaderValue}, Router};
-use sqlx::PgPool;
-use sqlx::postgres::PgPoolOptions;
-use tower_http::{
-    compression::CompressionLayer, services::ServeDir, set_header::SetResponseHeaderLayer,
-    trace::TraceLayer,
-};
-use tower_sessions::{cookie::{time::Duration as CookieDuration, SameSite}, Expiry, SessionManagerLayer};
-use tower_sessions_sqlx_store::PostgresStore;
 use tracing_subscriber::EnvFilter;
 
-use crate::state::AppState;
+use nss_college::{apply_layers, cli, config, init_session_store, migrator, routes, services, site, state};
 
 #[tokio::main]
 async fn main() {
@@ -41,16 +24,11 @@ async fn main() {
 
     let cfg = config::Config::from_env();
 
-    let db = PgPoolOptions::new()
-        .max_connections(10)
-        .acquire_timeout(Duration::from_secs(5))
-        .connect(&cfg.database_url)
+    let db = nss_college::connect(&cfg.database_url)
         .await
         .expect("could not connect to PostgreSQL. Is it running? Try: docker compose up -d");
 
-    let migrator = sqlx::migrate!("./migrations");
-
-    if let Err(e) = migrator.run(&db).await {
+    if let Err(e) = migrator().run(&db).await {
         // A version mismatch is invisible without knowing what the database
         // already has, so print the applied set before giving up.
         tracing::error!("database migrations failed: {e}");
@@ -76,8 +54,27 @@ async fn main() {
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
         .unwrap_or(false)
     {
+        // Credentials are never written to the log: they go to the operator's
+        // file (SEED_CREDENTIALS_FILE) or nowhere at all. Logs get collected,
+        // shipped and retained; a password in them is a leaked password.
         match cli::seed_demo_users(&db).await {
-            Ok(_) => tracing::warn!("demo accounts seeded; retrieve credentials through the operator-only bootstrap output"),
+            Ok(lines) => match std::env::var("SEED_CREDENTIALS_FILE") {
+                Ok(path) if !path.trim().is_empty() => {
+                    let path = std::path::PathBuf::from(path);
+                    match cli::write_credentials(&lines, &path) {
+                        Ok(()) => tracing::warn!(
+                            path = %path.display(),
+                            accounts = lines.len(),
+                            "SEED: demo accounts ready; credentials written to the operator file (move them to a password manager and delete the file)"
+                        ),
+                        Err(msg) => tracing::error!("SEED: could not write the credentials file: {msg}"),
+                    }
+                }
+                _ => tracing::warn!(
+                    accounts = lines.len(),
+                    "SEED: demo accounts ready, but SEED_CREDENTIALS_FILE is unset so the generated passwords were discarded; re-run `cargo run -- seed-demo-users --credentials-file <path>`"
+                ),
+            },
             Err(msg) => tracing::error!("SEED: demo user seeding failed: {msg}"),
         }
     }
@@ -88,16 +85,7 @@ async fn main() {
         return;
     }
 
-    let session_store = PostgresStore::new(db.clone());
-    session_store
-        .migrate()
-        .await
-        .expect("could not create the sessions table");
-    let session_layer = SessionManagerLayer::new(session_store)
-        .with_name("nss_session")
-        .with_secure(cfg.cookie_secure)
-        .with_same_site(SameSite::Lax)
-        .with_expiry(Expiry::OnInactivity(CookieDuration::hours(8)));
+    init_session_store(&db).await;
 
     // The error pages and the dashboard sidebar have no database handle of
     // their own, so they read the cached copy of these settings.
@@ -106,21 +94,34 @@ async fn main() {
     }
     site::spawn_refresher(db.clone());
 
-    let state = AppState {
+    // Housekeeping: expired sessions and staged import batches (and the raw
+    // text they hold), plus the recurring backup. It keeps running even if the
+    // backup cannot (`pg_dump` missing) — those are independent failures.
+    let backup_cfg = services::backup::BackupConfig::from_env();
+    if backup_cfg.enabled {
+        tracing::info!(
+            dir = %backup_cfg.dir.display(),
+            interval_hours = backup_cfg.interval_hours,
+            keep = backup_cfg.keep,
+            "scheduled backups enabled"
+        );
+    } else {
+        tracing::warn!("scheduled backups are disabled (BACKUP_ENABLED is off)");
+    }
+    services::maintenance::spawn(db.clone(), backup_cfg);
+
+    let state = state::AppState {
         db,
         upload_dir: cfg.upload_dir.clone(),
+        login_limiter: Arc::new(state::LoginLimiter::default_policy()),
     };
 
     // App assets live on both listeners. User uploads are served through an
     // authorization-aware route rather than a raw directory mount.
-    let public_app = apply_layers(routes::public_router(), &state.db, cfg.cookie_secure)
-        .with_state(state.clone());
-    let management_app = apply_layers(
-        routes::management_router(),
-        &state.db,
-        cfg.cookie_secure,
-    )
-    .with_state(state);
+    let public_app =
+        apply_layers(routes::public_router(), &state.db, cfg.cookie_secure).with_state(state.clone());
+    let management_app =
+        apply_layers(routes::management_router(), &state.db, cfg.cookie_secure).with_state(state);
 
     let public_listener = tokio::net::TcpListener::bind(cfg.addr)
         .await
@@ -131,40 +132,18 @@ async fn main() {
     tracing::info!(address = %cfg.addr, "public listener ready");
     tracing::info!(address = %cfg.management_addr, "loopback management listener ready");
 
+    // `into_make_service_with_connect_info` exposes the peer address to the
+    // sign-in limiter. The forwarded headers are deliberately not consulted:
+    // a client can set those, but not the socket it connects from.
     tokio::try_join!(
-        axum::serve(public_listener, public_app),
-        axum::serve(management_listener, management_app),
+        axum::serve(
+            public_listener,
+            public_app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        ),
+        axum::serve(
+            management_listener,
+            management_app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        ),
     )
     .expect("server error");
-}
-
-fn apply_layers(
-    router: Router<AppState>,
-    db: &PgPool,
-    cookie_secure: bool,
-) -> Router<AppState> {
-    let session_store = PostgresStore::new(db.clone());
-    let session_layer = SessionManagerLayer::new(session_store)
-        .with_name("nss_session")
-        .with_secure(cookie_secure)
-        .with_same_site(SameSite::Lax)
-        .with_expiry(Expiry::OnInactivity(CookieDuration::hours(8)));
-
-    router
-        .nest_service("/static", ServeDir::new("static"))
-        .layer(session_layer)
-        .layer(SetResponseHeaderLayer::if_not_present(
-            header::X_CONTENT_TYPE_OPTIONS,
-            HeaderValue::from_static("nosniff"),
-        ))
-        .layer(SetResponseHeaderLayer::if_not_present(
-            header::X_FRAME_OPTIONS,
-            HeaderValue::from_static("DENY"),
-        ))
-        .layer(SetResponseHeaderLayer::if_not_present(
-            header::REFERRER_POLICY,
-            HeaderValue::from_static("strict-origin-when-cross-origin"),
-        ))
-        .layer(CompressionLayer::new())
-        .layer(TraceLayer::new_for_http())
 }

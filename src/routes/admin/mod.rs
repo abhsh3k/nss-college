@@ -1,6 +1,7 @@
 //! IT-administrator tools. Every handler here takes `AdminOnly`.
 
 mod academics;
+mod appointments;
 mod attendance;
 mod course_offerings;
 mod departments;
@@ -9,11 +10,13 @@ mod exams;
 mod events;
 mod manage;
 mod marks;
+mod materials;
 mod news;
 mod notices;
 mod pages;
 mod people;
 mod rank_holders;
+mod results_import;
 mod settings;
 mod substitutions;
 mod timetable;
@@ -58,7 +61,10 @@ pub fn routes() -> Router<AppState> {
     let course_offerings = Router::new()
         .route("/admin/courses", get(course_offerings::catalogue))
         .route("/admin/courses/add", post(course_offerings::add_course))
-        .route("/admin/courses/:id/edit", post(course_offerings::edit_course))
+        .route(
+            "/admin/courses/:id/edit",
+            get(course_offerings::edit_form).post(course_offerings::edit_course),
+        )
         .route("/admin/courses/:id/toggle", post(course_offerings::toggle_course))
         .route("/admin/courses/offerings", get(course_offerings::offerings).post(course_offerings::create_offering))
         .route("/admin/courses/offerings/:id", get(course_offerings::offering_page).post(course_offerings::edit_offering))
@@ -217,6 +223,38 @@ pub fn routes() -> Router<AppState> {
     // the other multipart forms.
     let marks_import = Router::new()
         .route("/admin/marks/import", post(marks::import_csv))
+        .route("/admin/marks/import/preview", post(marks::import_preview))
+        .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
+
+    // Staged result import: paste or CSV upload stages a preview, then a
+    // separate confirmation commits it. The CSV upload needs the raised limit.
+    let results_import = Router::new()
+        .route(
+            "/admin/exams/results/preview",
+            get(results_import::preview_page).post(results_import::preview_paste),
+        )
+        .route("/admin/exams/results/upload", post(results_import::upload))
+        .route("/admin/exams/results/commit", post(results_import::commit))
+        .route("/admin/exams/results/discard", post(results_import::discard))
+        .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
+
+    // HOD appointments and delegations: plain urlencoded forms, no uploads.
+    let appointments = Router::new()
+        .route("/admin/appointments", get(appointments::index))
+        .route("/admin/appointments/grant", post(appointments::grant))
+        .route("/admin/appointments/:id/revoke", post(appointments::revoke))
+        .route("/admin/appointments/delegate", post(appointments::delegate))
+        .route(
+            "/admin/appointments/delegations/:id/revoke",
+            post(appointments::revoke_delegation),
+        );
+
+    // Study materials: the file upload makes the whole form multipart, so it
+    // shares the raised body limit.
+    let materials = Router::new()
+        .route("/admin/materials", get(materials::index).post(materials::create))
+        .route("/admin/materials/:id/status", post(materials::set_status))
+        .route("/admin/materials/:id/delete", post(materials::destroy))
         .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
 
     Router::new()
@@ -227,6 +265,9 @@ pub fn routes() -> Router<AppState> {
         .merge(work_queue)
         .merge(areas)
         .merge(marks_import)
+        .merge(results_import)
+        .merge(appointments)
+        .merge(materials)
         .merge(publishing)
         .merge(documents)
         .merge(rank_holders)
@@ -273,33 +314,12 @@ pub(super) fn audiences() -> Vec<String> {
 
 /// True when `s` is a real calendar date written as `YYYY-MM-DD`.
 ///
-/// The `time` crate's own parser is behind a feature this project does not enable,
-/// so the check is done here. Validating before we reach Postgres keeps a
-/// nonsensical day as a form error rather than a 500.
+/// The one implementation lives in `crate::dates`; this is the name the admin
+/// handlers have always used. Kept as a thin alias so the many call sites did
+/// not all have to change, while the rule itself is shared with the exam and
+/// attendance forms (which each carried a subtly different copy).
 pub(super) fn is_valid_date(s: &str) -> bool {
-    let mut parts = s.trim().split('-');
-    let (Some(y), Some(m), Some(d), None) = (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
-        return false;
-    };
-    if y.len() != 4 || m.len() != 2 || d.len() != 2 {
-        return false;
-    }
-    if !y.bytes().chain(m.bytes()).chain(d.bytes()).all(|b| b.is_ascii_digit()) {
-        return false;
-    }
-    let (Ok(y), Ok(m), Ok(d)) = (y.parse::<i32>(), m.parse::<u32>(), d.parse::<u32>()) else {
-        return false;
-    };
-    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-    let max = match m {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if leap => 29,
-        2 => 28,
-        _ => return false,
-    };
-    d >= 1 && d <= max
+    crate::dates::valid_date(s)
 }
 
 /// Turn a `<input type="datetime-local">` value into something Postgres will read as

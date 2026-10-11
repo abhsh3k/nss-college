@@ -14,12 +14,21 @@ tower-sessions = "0.12"
 tower-sessions-sqlx-store = { version = "0.12", features = ["postgres"] }
 argon2 = "0.5"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 rpassword = "7"
 csv = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenvy = "0.15"
 calamine = { version = "0.36", default-features = false }
+
+[dev-dependencies]
+# The integration tests under `tests/` drive the real router against a real
+# database, so they need the same SQLx features the library uses plus a tiny
+# HTTP client to send requests through the router without a socket.
+sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate"] }
+tower = { version = "0.4", features = ["util"] }
+http-body-util = "0.1"
 
 # Argon2 is very slow unoptimised; optimise dependencies even in dev builds.
 [profile.dev.package."*"]

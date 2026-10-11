@@ -12,12 +12,12 @@ impl Config {
     pub fn from_env() -> Self {
         let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".into());
         let port = env::var("PORT").unwrap_or_else(|_| "3000".into());
-        let addr = format!("{host}:{port}")
+        let addr: SocketAddr = format!("{host}:{port}")
             .parse()
             .expect("HOST/PORT must form a valid socket address");
         let management_host = env::var("MANAGEMENT_HOST").unwrap_or_else(|_| "127.0.0.1".into());
         let management_port = env::var("MANAGEMENT_PORT").unwrap_or_else(|_| "3001".into());
-        let management_addr = format!("{management_host}:{management_port}")
+        let management_addr: SocketAddr = format!("{management_host}:{management_port}")
             .parse()
             .expect("MANAGEMENT_HOST/MANAGEMENT_PORT must form a valid socket address");
         if !management_addr.ip().is_loopback() {

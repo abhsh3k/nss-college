@@ -117,6 +117,11 @@ fn check_course(f: &CourseForm) -> Result<CheckedCourse, &'static str> {
     if code.is_empty() || title.is_empty() {
         return Err("Enter both the course code and the title.");
     }
+    if !crate::validate::fits(&code, crate::validate::MAX_CODE)
+        || !crate::validate::fits(&title, crate::validate::MAX_TITLE)
+    {
+        return Err("That course code or title is too long.");
+    }
     let semester = parse_i32(&f.semester).filter(|v| (1..=8).contains(v)).ok_or("Choose a semester from 1 to 8.")?;
     let credits = parse_i32(&f.credits).filter(|v| (0..=40).contains(v)).ok_or("Credits must be a number from 0 to 40.")?;
     Ok(CheckedCourse {

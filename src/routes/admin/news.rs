@@ -156,6 +156,8 @@ async fn read_form(
     let mut values = values;
     if values.title.is_empty() {
         values.error = Some("Give the news item a title.".into());
+    } else if !crate::validate::fits(&values.title, crate::validate::MAX_TITLE) {
+        values.error = Some(crate::validate::too_long_message("The title", crate::validate::MAX_TITLE));
     }
     Ok((values, body))
 }

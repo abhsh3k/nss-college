@@ -48,7 +48,7 @@
   </div>
 </form>
 
-<form method="post" action="/admin/academics/courses/{{ course.id }}/delete" class="mt-12 max-w-xl border-t border-ink/15 pt-6" onsubmit="return confirm('Delete this course? This also removes its timetable periods and enrollments.')">
+<form method="post" action="/admin/academics/courses/{{ course.id }}/delete" class="mt-12 max-w-xl border-t border-ink/15 pt-6" data-confirm="Delete this course? This also removes its timetable periods and enrollments.">
   <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
   <button type="submit" class="rounded border border-brand px-4 py-2 font-semibold text-brand hover:bg-brand hover:text-chalk">Delete course</button>
   <p class="mt-2 text-sm text-ink/70">Courses with attendance records can't be deleted.</p>

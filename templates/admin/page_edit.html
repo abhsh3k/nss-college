@@ -124,7 +124,7 @@
       <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
       <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink" {% if loop.last %}disabled{% endif %}>Move down</button>
     </form>
-    <form method="post" action="/admin/pages/{{ form.id }}/sections/{{ sec.id }}/delete" onsubmit="return confirm('Remove this section?')">
+    <form method="post" action="/admin/pages/{{ form.id }}/sections/{{ sec.id }}/delete" data-confirm="Remove this section?">
       <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
       <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Remove section<span class="sr-only"> {{ sec.heading }}</span></button>
     </form>

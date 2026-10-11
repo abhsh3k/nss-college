@@ -43,7 +43,7 @@
               <input type="hidden" name="status" value="{% if n.status == "published" %}archived{% else %}published{% endif %}">
               <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">{% if n.status == "published" %}Archive{% else %}Publish{% endif %}<span class="sr-only"> {{ n.title }}</span></button>
             </form>
-            <form method="post" action="/admin/news/{{ n.id }}/delete" class="inline" onsubmit="return confirm('Permanently delete &quot;{{ n.title }}&quot;? This cannot be undone.')">
+            <form method="post" action="/admin/news/{{ n.id }}/delete" class="inline" data-confirm="Permanently delete &quot;{{ n.title }}&quot;? This cannot be undone.">
               <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
               <input type="hidden" name="back" value="/admin/news{% if filter != "" %}?status={{ filter }}{% endif %}">
               <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Delete<span class="sr-only"> {{ n.title }} forever</span></button>

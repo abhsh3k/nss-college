@@ -245,6 +245,8 @@ fn read_form(f: &PageFormSubmit, existing_id: i64) -> PageFormValues {
     };
     if form.title.is_empty() {
         form.error = Some("Give the page a title.".into());
+    } else if !crate::validate::fits(&form.title, crate::validate::MAX_TITLE) {
+        form.error = Some(crate::validate::too_long_message("The title", crate::validate::MAX_TITLE));
     } else if form.path.is_empty() {
         form.error = Some("Give the page a path, for example /about.".into());
     } else if !form.path.starts_with('/') || form.path == "/" || form.path.contains(' ') {

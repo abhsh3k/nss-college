@@ -168,6 +168,10 @@ async fn read_form(
         values.error = Some("Give the event a title.".into());
         return Ok((values, body));
     }
+    if !crate::validate::fits(&values.title, crate::validate::MAX_TITLE) {
+        values.error = Some(crate::validate::too_long_message("The title", crate::validate::MAX_TITLE));
+        return Ok((values, body));
+    }
     if normalise_datetime(&values.starts_value).is_none() {
         values.error = Some("Enter a valid start date and time.".into());
         return Ok((values, body));

@@ -9,6 +9,7 @@ mod public;
 mod teacher;
 
 use axum::{
+    extract::DefaultBodyLimit,
     http::{header, HeaderValue},
     routing::{get, post},
     Router,
@@ -39,11 +40,16 @@ fn signed_in_public_routes() -> Router<AppState> {
         )
         .route("/teacher/timetable", get(teacher::timetable))
         .route("/teacher/reports", get(teacher::reports))
+        .route(
+            "/teacher/materials",
+            get(teacher::materials_page).post(teacher::materials_upload),
+        )
         .route("/teacher/sheet", get(dashboards::teacher))
         .route("/hub", get(dashboards::student))
         .route("/hub/timetable", get(hub_pages::timetable))
         .route("/hub/results", get(hub_pages::results))
         .route("/hub/exams", get(hub_pages::exam_timetable))
+        .route("/hub/materials", get(hub_pages::materials))
         .route("/hub/courses", get(hub_courses::my_courses))
         .route("/hub/courses/select", post(hub_courses::select))
         .route("/hub/courses/withdraw", post(hub_courses::withdraw))
@@ -57,6 +63,9 @@ fn signed_in_public_routes() -> Router<AppState> {
             "/dashboard/teacher/session/:session_id/toggle",
             post(teacher::toggle_attendance_status),
         )
+        // The teacher material form uploads a file, so the whole signed-in
+        // tree gets a body limit above axum's 2 MB default.
+        .layer(DefaultBodyLimit::max(crate::uploads::MAX_FILE_BYTES + 2 * 1024 * 1024))
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),
@@ -100,15 +109,13 @@ pub fn public_router() -> Router<AppState> {
 /// checks.
 pub fn management_router() -> Router<AppState> {
     auth_routes()
+        // The role landing page for IT admin and office staff (`Role::home`).
+        // It is `OfficeOrAdmin`, so both roles reach it; the cards it lists are
+        // narrowed to the content area for office staff.
+        .route("/admin", get(dashboards::admin))
         .merge(admin::routes())
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),
         ))
-}
-
-/// Compatibility constructor for test harnesses that still need the complete
-/// route tree. Production uses `public_router` and `management_router`.
-pub fn router() -> Router<AppState> {
-    public_router().merge(admin::routes())
 }

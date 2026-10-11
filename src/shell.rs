@@ -12,8 +12,6 @@ use crate::{
 pub struct NavItem {
     pub label: &'static str,
     pub href: &'static str,
-    /// Planned but not built yet; shown greyed out instead of linking to a 404.
-    pub soon: bool,
 }
 
 /// A run of nav items under one small heading.
@@ -39,8 +37,8 @@ pub struct Shell {
     pub site: SiteInfo,
 }
 
-fn item(label: &'static str, href: &'static str, soon: bool) -> NavItem {
-    NavItem { label, href, soon }
+fn item(label: &'static str, href: &'static str) -> NavItem {
+    NavItem { label, href }
 }
 
 fn group(title: Option<&'static str>, items: Vec<NavItem>) -> NavGroup {
@@ -53,79 +51,81 @@ fn nav_for(user: &AuthUser) -> Vec<NavGroup> {
             group(
                 None,
                 vec![
-                    item("Overview", "/admin", false),
-                    item("Work queue", "/admin/work-queue", false),
+                    item("Overview", "/admin", ),
+                    item("Work queue", "/admin/work-queue", ),
                 ],
             ),
             group(
                 Some("User & accounts"),
                 vec![
-                    item("People", "/admin/people", false),
-                    item("Import students", "/admin/people/import", false),
+                    item("People", "/admin/people", ),
+                    item("Import students", "/admin/people/import", ),
+                    item("Appointments", "/admin/appointments", ),
                 ],
             ),
             group(
                 Some("Academic management"),
                 vec![
-                    item("Departments", "/admin/departments", false),
-                    item("Courses and programmes", "/admin/academics", false),
-                    item("Course catalogue", "/admin/courses", false),
+                    item("Departments", "/admin/departments", ),
+                    item("Courses and programmes", "/admin/academics", ),
+                    item("Course catalogue", "/admin/courses", ),
+                    item("Study materials", "/admin/materials", ),
                 ],
             ),
             group(
                 Some("Course operations"),
                 vec![
-                    item("Course offerings", "/admin/courses/offerings", false),
-                    item("External offerings", "/admin/courses/external", false),
-                    item("Student selections", "/admin/courses/selections", false),
+                    item("Course offerings", "/admin/courses/offerings", ),
+                    item("External offerings", "/admin/courses/external", ),
+                    item("Student selections", "/admin/courses/selections", ),
                 ],
             ),
             group(
                 Some("Timetable & scheduling"),
                 vec![
-                    item("Timetable", "/admin/timetable", false),
-                    item("Substitutions", "/admin/substitutions", false),
+                    item("Timetable", "/admin/timetable", ),
+                    item("Substitutions", "/admin/substitutions", ),
                 ],
             ),
             group(
                 Some("Attendance"),
                 vec![
-                    item("Attendance reports", "/admin/attendance", false),
-                    item("Department attendance", "/admin/departments/attendance", false),
+                    item("Attendance reports", "/admin/attendance", ),
+                    item("Department attendance", "/admin/departments/attendance", ),
                 ],
             ),
             group(
                 Some("Examinations & results"),
                 vec![
-                    item("Exam timetable", "/admin/exams", false),
-                    item("Marks entry", "/admin/marks", false),
+                    item("Exam timetable", "/admin/exams", ),
+                    item("Marks entry", "/admin/marks", ),
                 ],
             ),
             group(
                 Some("Website & content"),
                 vec![
-                    item("Notices", "/admin/notices", false),
-                    item("News", "/admin/news", false),
-                    item("Events", "/admin/events", false),
-                    item("Documents", "/admin/documents", false),
-                    item("Pages", "/admin/pages", false),
-                    item("Rank holders", "/admin/rank-holders", false),
+                    item("Notices", "/admin/notices", ),
+                    item("News", "/admin/news", ),
+                    item("Events", "/admin/events", ),
+                    item("Documents", "/admin/documents", ),
+                    item("Pages", "/admin/pages", ),
+                    item("Rank holders", "/admin/rank-holders", ),
                 ],
             ),
             group(
                 Some("Settings"),
-                vec![item("Site settings", "/admin/settings", false)],
+                vec![item("Site settings", "/admin/settings", )],
             ),
         ],
         Role::Staff => vec![
-            group(None, vec![item("Overview", "/admin", false)]),
+            group(None, vec![item("Overview", "/admin", )]),
             // Office staff are `OfficeOrAdmin`: content and nothing else.
             group(
                 Some("Website & content"),
                 vec![
-                    item("Notices", "/admin/notices", false),
-                    item("News", "/admin/news", false),
-                    item("Events", "/admin/events", false),
+                    item("Notices", "/admin/notices", ),
+                    item("News", "/admin/news", ),
+                    item("Events", "/admin/events", ),
                 ],
             ),
         ],
@@ -133,11 +133,12 @@ fn nav_for(user: &AuthUser) -> Vec<NavGroup> {
             let mut groups = vec![group(
                 None,
                 vec![
-                    item("Today", "/teacher", false),
-                    item("My timetable", "/teacher/timetable", false),
-                    item("Mark attendance", "/teacher/attendance", false),
-                    item("Reports", "/teacher/reports", false),
-                    item("Attendance sheet", "/teacher/sheet", false),
+                    item("Today", "/teacher", ),
+                    item("My timetable", "/teacher/timetable", ),
+                    item("Mark attendance", "/teacher/attendance", ),
+                    item("Study materials", "/teacher/materials", ),
+                    item("Reports", "/teacher/reports", ),
+                    item("Attendance sheet", "/teacher/sheet", ),
                 ],
             )];
             if user.manages_department() {
@@ -145,43 +146,44 @@ fn nav_for(user: &AuthUser) -> Vec<NavGroup> {
                 // which confines the query to the HOD's own department.
                 groups.push(group(
                     Some("Your department"),
-                    vec![item("Work queue", "/admin/work-queue", false)],
+                    vec![item("Work queue", "/admin/work-queue", )],
                 ));
                 groups.push(group(
                     Some("Department & students"),
-                    vec![item("Students", "/admin/departments", false)],
+                    vec![item("Students", "/admin/departments", )],
                 ));
                 groups.push(group(
                     Some("Academic management"),
                     vec![
-                        item("Courses and programmes", "/admin/academics", false),
-                        item("Course catalogue", "/admin/courses", false),
+                        item("Courses and programmes", "/admin/academics", ),
+                        item("Course catalogue", "/admin/courses", ),
+                        item("Study materials", "/admin/materials", ),
                     ],
                 ));
                 groups.push(group(
                     Some("Course operations"),
                     vec![
-                        item("My offerings", "/admin/courses/offerings", false),
-                        item("External offerings", "/admin/courses/external", false),
-                        item("Student selections", "/admin/courses/selections", false),
+                        item("My offerings", "/admin/courses/offerings", ),
+                        item("External offerings", "/admin/courses/external", ),
+                        item("Student selections", "/admin/courses/selections", ),
                     ],
                 ));
                 groups.push(group(
                     Some("Timetable & scheduling"),
                     vec![
-                        item("Timetable", "/admin/timetable", false),
-                        item("Substitutions", "/admin/substitutions", false),
+                        item("Timetable", "/admin/timetable", ),
+                        item("Substitutions", "/admin/substitutions", ),
                     ],
                 ));
                 groups.push(group(
                     Some("Attendance"),
-                    vec![item("Department attendance", "/admin/departments/attendance", false)],
+                    vec![item("Department attendance", "/admin/departments/attendance", )],
                 ));
                 groups.push(group(
                     Some("Examinations & results"),
                     vec![
-                        item("Exam timetable", "/admin/exams", false),
-                        item("Marks entry", "/admin/marks", false),
+                        item("Exam timetable", "/admin/exams", ),
+                        item("Marks entry", "/admin/marks", ),
                     ],
                 ));
             }
@@ -190,11 +192,12 @@ fn nav_for(user: &AuthUser) -> Vec<NavGroup> {
         Role::Student => vec![group(
             None,
             vec![
-                item("Overview", "/hub", false),
-                item("Timetable", "/hub/timetable", false),
-                item("My courses", "/hub/courses", false),
-                item("Results", "/hub/results", false),
-                item("Exam timetable", "/hub/exams", false),
+                item("Overview", "/hub", ),
+                item("Timetable", "/hub/timetable", ),
+                item("My courses", "/hub/courses", ),
+                item("Results", "/hub/results", ),
+                item("Exam timetable", "/hub/exams", ),
+                item("Study materials", "/hub/materials", ),
             ],
         )],
         Role::Alumni => vec![],

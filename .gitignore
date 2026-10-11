@@ -18,3 +18,7 @@
 # Runtime logs from local dev runs - never commit
 /server.log
 /server.err
+
+# Database dumps and upload archives written by the backup task. These are
+# private recovery material, never repository content.
+/backups/

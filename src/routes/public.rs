@@ -35,6 +35,11 @@ pub async fn upload(
     let web_path = format!("/uploads/{path}");
     let is_student = user.as_ref().is_some_and(|u| u.role == Role::Student);
     let is_faculty = user.as_ref().is_some_and(|u| u.role == Role::Faculty);
+    // A study material is readable by the students enrolled in its course, the
+    // teachers of that course, and the IT admin. Anything else is refused here
+    // even though the row exists, so the row's own audience rules decide.
+    let user_id = user.as_ref().map(|u| u.id).unwrap_or(0);
+    let is_admin = user.as_ref().is_some_and(|u| u.role == Role::Admin);
 
     let mime: Option<String> = sqlx::query_scalar(
         r#"SELECT u.mime_type
@@ -70,11 +75,31 @@ pub async fn upload(
                              JOIN pages p ON p.id = ps.page_id
                             WHERE ps.photo_path = u.path
                               AND ps.published AND p.status = 'published')
+                 OR EXISTS (SELECT 1 FROM study_materials sm
+                             WHERE sm.file_path = u.path
+                               AND sm.status = 'published'
+                               AND (
+                                     $5
+                                     OR ($2 AND EXISTS (
+                                             SELECT 1 FROM enrollments e
+                                               JOIN students st ON st.id = e.student_id
+                                              WHERE st.user_id = $4
+                                                AND st.is_active
+                                                AND e.course_id = sm.course_id
+                                                AND e.status = 'active'))
+                                     OR ($3 AND EXISTS (
+                                             SELECT 1 FROM timetable_entries te
+                                               JOIN faculty f ON f.id = te.faculty_id
+                                              WHERE f.user_id = $4
+                                                AND te.course_id = sm.course_id))
+                                   ))
               )"#,
     )
     .bind(&web_path)
     .bind(is_student)
     .bind(is_faculty)
+    .bind(user_id)
+    .bind(is_admin)
     .fetch_optional(&s.db)
     .await?;
     let Some(mime) = mime else {
@@ -85,7 +110,9 @@ pub async fn upload(
     let bytes = tokio::fs::read(disk_path).await.map_err(|_| AppError::NotFound)?;
     Response::builder()
         .header(header::CONTENT_TYPE, mime)
-        .header(header::CACHE_CONTROL, "public, max-age=300")
+        // `private` keeps shared proxies from caching a file that a signed-in
+        // student could read but an anonymous visitor could not.
+        .header(header::CACHE_CONTROL, "private, max-age=300")
         .body(Body::from(bytes))
         .map_err(|e| AppError::Internal(format!("could not build upload response: {e}")))
 }

@@ -193,6 +193,10 @@ async fn read_form(
     }
     if values.title.is_empty() {
         values.error = Some("Give the notice a title.".into());
+    } else if !crate::validate::fits(&values.title, crate::validate::MAX_TITLE) {
+        values.error = Some(crate::validate::too_long_message("The title", crate::validate::MAX_TITLE));
+    } else if !crate::validate::fits(&values.category, crate::validate::MAX_NAME) {
+        values.error = Some(crate::validate::too_long_message("The category", crate::validate::MAX_NAME));
     }
     Ok((values, body))
 }

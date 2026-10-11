@@ -13,7 +13,7 @@
     <form method="get" action="/hub/results" class="flex items-end gap-3">
       <div>
         <label for="sem" class="block text-sm font-semibold text-gray-700">Semester</label>
-        <select id="sem" name="sem" onchange="this.form.submit()" class="mt-1 rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900">
+        <select id="sem" name="sem" data-autosubmit class="mt-1 rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900">
           {% for (n, is_sel, is_cur) in semester_opts %}
           <option value="{{ n }}" {% if is_sel %}selected{% endif %}>Semester {{ n }}{% if is_cur %} — current{% endif %}</option>
           {% endfor %}

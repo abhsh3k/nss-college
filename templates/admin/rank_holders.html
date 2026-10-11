@@ -9,7 +9,7 @@
 
   <form method="get" action="/admin/rank-holders" class="flex items-center gap-2">
     <label for="f-status" class="text-sm font-semibold">Show</label>
-    <select id="f-status" name="status" onchange="this.form.submit()" class="rounded border border-ink/40 bg-white px-3 py-2">
+    <select id="f-status" name="status" data-autosubmit class="rounded border border-ink/40 bg-white px-3 py-2">
       <option value="" {% if filter.is_empty() %}selected{% endif %}>All</option>
       {% for st in statuses %}
       <option value="{{ st }}" {% if filter == st.as_str() %}selected{% endif %}>{{ st }}</option>
@@ -82,7 +82,7 @@
             </form>
             {% endif %}
 
-            <form method="post" action="/admin/rank-holders/{{ r.id }}/delete" onsubmit="return confirm('Delete {{ r.name }} permanently? This cannot be undone.')">
+            <form method="post" action="/admin/rank-holders/{{ r.id }}/delete" data-confirm="Delete {{ r.name }} permanently? This cannot be undone.">
               <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
               <input type="hidden" name="back" value="/admin/rank-holders">
               <button type="submit" class="rounded border border-deep px-3 py-1.5 text-sm text-deep">Delete</button>

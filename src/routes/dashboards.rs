@@ -66,7 +66,6 @@ pub(crate) fn tests_render_shell(nav: Vec<crate::shell::NavGroup>) -> String {
 
 pub struct TeacherClassItem {
     pub timetable_entry_id: i64,
-    pub course_id: i64,
     pub course_code: String,
     pub course_title: String,
     pub start_time: String,
@@ -88,7 +87,6 @@ pub struct TeacherTemplate {
 #[derive(FromRow)]
 struct TodayClassRow {
     timetable_entry_id: i64,
-    course_id: i64,
     course_code: String,
     course_title: String,
     start_time: String,
@@ -146,7 +144,6 @@ pub async fn teacher(
         rows.into_iter()
             .map(|r| TeacherClassItem {
                 timetable_entry_id: r.timetable_entry_id,
-                course_id: r.course_id,
                 course_code: r.course_code,
                 course_title: r.course_title,
                 start_time: r.start_time,

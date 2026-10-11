@@ -1,6 +1,8 @@
+use std::net::SocketAddr;
+
 use askama::Template;
 use axum::{
-    extract::{Query, State},
+    extract::{ConnectInfo, Query, State},
     response::{IntoResponse, Redirect, Response},
     Form,
 };
@@ -62,10 +64,12 @@ pub struct LoginForm {
 
 const BAD_LOGIN: &str = "That email, admission number or password is not right.";
 const LOCKED: &str = "Too many wrong attempts. Try again in 15 minutes, or ask the IT admin to help.";
+const TOO_MANY: &str = "Too many sign-in attempts just now. Wait a few minutes and try again.";
 
 pub async fn login_submit(
     State(s): State<AppState>,
     session: Session,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Form(f): Form<LoginForm>,
 ) -> Result<Response, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
@@ -83,6 +87,26 @@ pub async fn login_submit(
         }
         .into_response()
     };
+
+    // Throttle before any account lookup, so a rapid sequence of attempts is
+    // refused identically whether or not the identifier exists.
+    if !s
+        .login_limiter
+        .allow(&identifier.to_lowercase(), &addr.ip().to_string())
+    {
+        return Ok(again(TOO_MANY, csrf::token(&session).await?));
+    }
+
+    // Bound the work one request can ask for. An identifier or password far
+    // longer than any real one is refused before the account lookup and before
+    // Argon2 runs — but through the same generic reply and the same dummy
+    // verification as a wrong password, so it is not a way to probe accounts.
+    if !crate::validate::fits(&identifier, crate::validate::MAX_NAME)
+        || !crate::validate::fits(&f.password, crate::validate::MAX_PASSWORD)
+    {
+        password::verify_dummy(f.password).await?;
+        return Ok(again(BAD_LOGIN, csrf::token(&session).await?));
+    }
 
     let row = users::find_for_login(&s.db, &identifier).await?;
     let Some(row) = row else {

@@ -29,6 +29,7 @@ use crate::{
         academics::{self, ProgrammeOption},
         exams::{self, ExamCourseOption},
         marks::{self, FiledRow},
+        result_import,
         users,
     },
     shell::{self, Shell},
@@ -478,6 +479,52 @@ pub async fn save(
 }
 
 // ---------- CSV import ----------
+
+/// Stage the CSV import and send the head to the review page, instead of
+/// filing rows straight away. The commit is a separate confirmation.
+pub async fn import_preview(
+    State(s): State<AppState>,
+    session: Session,
+    manager: Manager,
+    multipart: Multipart,
+) -> Result<Response, AppError> {
+    let form = crate::uploads::read(multipart).await?;
+    csrf::verify(&session, form.field("csrf_token")).await?;
+
+    let sel = Sel::from_fields(|k| form.field(k));
+    if sel.programme == 0 || sel.semester == 0 {
+        shell::flash(&session, "Choose a programme and semester first.").await?;
+        return Ok(Redirect::to("/admin/marks").into_response());
+    }
+    if !academics::may_manage_programme(&s.db, sel.programme, manager.department()).await? {
+        return Err(AppError::Forbidden);
+    }
+    let Some(file) = form.file("csv_file") else {
+        shell::flash(&session, "Choose a CSV file to upload.").await?;
+        return Ok(Redirect::to("/admin/marks").into_response());
+    };
+    if file.bytes.len() > 5 * 1024 * 1024 {
+        shell::flash(&session, "That CSV file is larger than 5 MB — split it into smaller batches.").await?;
+        return Ok(Redirect::to("/admin/marks").into_response());
+    }
+    let text = String::from_utf8(file.bytes.clone())
+        .map_err(|_| AppError::BadRequest("CSV file is not valid UTF-8.".into()))?;
+    let (assessment, exam_kind, exam_name) = sel.sheet_key();
+    let id = result_import::stage(
+        &s.db,
+        manager.user.id,
+        manager.department(),
+        sel.programme,
+        sel.semester,
+        exam_kind,
+        assessment,
+        &exam_name,
+        if file.filename.is_empty() { "upload.csv" } else { &file.filename },
+        &text,
+    )
+    .await?;
+    Ok(Redirect::to(&format!("/admin/exams/results/preview?batch={id}")).into_response())
+}
 
 /// One uploaded file of results, shaped
 /// `key, course_code, marks_obtained, maxmarks` — the key is a PRN on a

@@ -241,3 +241,33 @@ pub async fn exam_timetable(
         entries: exams::student_exams(&s.db, p.id).await?,
     })
 }
+
+// ---------- Study materials ----------
+
+#[derive(Template)]
+#[template(path = "hub/materials.html")]
+pub struct MaterialsTemplate {
+    shell: Shell,
+    has_profile: bool,
+    materials: Vec<crate::services::materials::MaterialRow>,
+}
+
+pub async fn materials(
+    State(s): State<AppState>,
+    session: Session,
+    StudentOnly(user): StudentOnly,
+) -> Result<MaterialsTemplate, AppError> {
+    let shell = Shell::build(&user, &session).await?;
+    let Some(_p) = hub::student_profile(&s.db, user.id).await? else {
+        return Ok(MaterialsTemplate {
+            shell,
+            has_profile: false,
+            materials: Vec::new(),
+        });
+    };
+    Ok(MaterialsTemplate {
+        shell,
+        has_profile: true,
+        materials: crate::services::materials::for_student(&s.db, user.id).await?,
+    })
+}

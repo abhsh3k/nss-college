@@ -778,9 +778,9 @@ pub fn parse_push(text: &str, kind: PushKind) -> (Vec<PushRow>, Vec<PushProblem>
 /// file the row. (The type itself crosses into the route, so it is public;
 /// its fields stay private to this module.)
 pub struct Candidate {
-    student_id: i64,
-    programme_id: i64,
-    course_id: i64,
+    pub student_id: i64,
+    pub programme_id: i64,
+    pub course_id: i64,
 }
 
 /// Validate every row against the database: the key must find an active

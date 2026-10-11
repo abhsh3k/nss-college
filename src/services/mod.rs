@@ -1,5 +1,7 @@
 pub mod academics;
+pub mod appointments;
 pub mod attendance;
+pub mod backup;
 pub mod content;
 pub mod content_admin;
 pub mod courses;
@@ -7,6 +9,9 @@ pub mod exams;
 pub mod hub;
 pub mod import_students;
 pub mod marks;
+pub mod maintenance;
+pub mod materials;
+pub mod result_import;
 pub mod people;
 pub mod rank_holders;
 pub mod reports;

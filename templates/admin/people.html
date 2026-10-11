@@ -8,7 +8,7 @@
     <a href="/admin/people/new?kind=teacher" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Add teacher</a>
     <a href="/admin/people/new?kind=staff" class="rounded border border-ink px-4 py-2 font-semibold hover:bg-ink hover:text-chalk">Add office staff</a>
     <a href="/admin/people/import" class="rounded border border-ink px-4 py-2 font-semibold hover:bg-ink hover:text-chalk">Import students</a>
-    <button type="button" onclick="toggleSelectAll()" class="rounded border border-ink px-4 py-2 font-semibold hover:bg-ink hover:text-chalk">Select all</button>
+    <button type="button" data-select-all-toggle=".person-checkbox" class="rounded border border-ink px-4 py-2 font-semibold hover:bg-ink hover:text-chalk">Select all</button>
   </div>
 </div>
 
@@ -27,7 +27,7 @@
   <button type="submit" class="rounded border border-ink px-4 py-2 font-semibold hover:bg-ink hover:text-chalk">Search</button>
 </form>
 
-<form method="post" action="/admin/people/promote" onsubmit="return confirm('Move everyone in that semester up one semester?')" class="mt-6 flex max-w-3xl flex-wrap items-end gap-3 rounded border border-ink/15 bg-mist p-4">
+<form method="post" action="/admin/people/promote" data-confirm="Move everyone in that semester up one semester?" class="mt-6 flex max-w-3xl flex-wrap items-end gap-3 rounded border border-ink/15 bg-mist p-4">
   <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
   <div>
     <label for="promote-programme" class="block text-sm font-semibold">End-of-term promotion</label>
@@ -50,13 +50,13 @@
   <p class="basis-full text-sm text-ink/70">Moves every active student of that programme up one semester. Their results stay filed under the semester they were earned in, so their Results page keeps every past semester.</p>
 </form>
 
-<form method="post" action="/admin/people/delete" class="mt-6 overflow-x-auto" onsubmit="return confirm('Delete the selected accounts? This cannot be undone.')">
+<form method="post" action="/admin/people/delete" class="mt-6 overflow-x-auto" data-confirm="Delete the selected accounts? This cannot be undone.">
   <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
   <div class="overflow-x-auto">
   <table class="w-full min-w-[40rem] text-left">
     <thead>
       <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
-        <th scope="col" class="py-2 pr-4 font-medium"><input type="checkbox" id="select-all" onchange="toggleSelectAll()" class="rounded border-ink/40 bg-white"></th>
+        <th scope="col" class="py-2 pr-4 font-medium"><input type="checkbox" id="select-all" data-select-all=".person-checkbox" class="rounded border-ink/40 bg-white"></th>
         <th scope="col" class="py-2 pr-4 font-medium">Name</th>
         <th scope="col" class="py-2 pr-4 font-medium">Sign-in</th>
         <th scope="col" class="py-2 pr-4 font-medium">Role</th>
@@ -86,11 +86,4 @@
   </div>
 </form>
 
-<script>
-function toggleSelectAll() {
-  const selectAll = document.getElementById('select-all');
-  const checkboxes = document.querySelectorAll('.person-checkbox');
-  checkboxes.forEach(cb => cb.checked = selectAll.checked);
-}
-</script>
 {% endblock %}

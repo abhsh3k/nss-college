@@ -81,7 +81,7 @@
     <tbody>
       {% for o in offerings %}
       <tr class="border-b border-ink/10">
-        <td class="py-2 pr-4"><span class="font-mono font-medium">{{ o.code }}</span> {{ o.title }}</td>
+        <td class="py-2 pr-4"><span class="font-mono font-medium">{{ o.code }}</span> {{ o.title }} <span class="ml-1 rounded bg-ink/5 px-1.5 py-0.5 text-xs text-ink/60" title="Course version this offering was created from">v{{ o.version_no }}</span></td>
         <td class="py-2 pr-4 text-sm">{{ o.year_label }} · S{{ o.semester }}</td>
         <td class="py-2 pr-4 text-sm">{{ o.course_type }}</td>
         <td class="py-2 pr-4 text-sm">{{ o.selection_mode }}{% if o.choice_group != "" %} <span class="text-ink/60">({{ o.choice_group }})</span>{% endif %}</td>

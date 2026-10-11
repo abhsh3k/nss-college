@@ -1,0 +1,59 @@
+{% extends "layouts/app.html" %}
+{% block title %}Study materials{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Study materials</h1>
+<p class="mt-3 max-w-2xl text-ink/80">Files for the courses you teach. What you upload is saved as a draft; your head of department publishes it so students can see it.</p>
+
+{% if error.is_some() %}
+<p class="mt-4 rounded border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">{{ error.as_deref().unwrap_or("") }}</p>
+{% endif %}
+
+<form method="post" action="/teacher/materials" enctype="multipart/form-data" class="mt-8 grid gap-4 rounded border border-ink/15 bg-white p-5 md:grid-cols-2">
+  <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+  <div>
+    <label for="title" class="block text-sm font-semibold">Title</label>
+    <input id="title" name="title" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+  </div>
+  <div>
+    <label for="course_id" class="block text-sm font-semibold">Course</label>
+    <select id="course_id" name="course_id" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+      <option value="">Choose a course</option>
+      {% for c in courses %}<option value="{{ c.id }}">{{ c.code }} — {{ c.title }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="md:col-span-2">
+    <label for="file" class="block text-sm font-semibold">File</label>
+    <input id="file" name="file" type="file" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    <p class="mt-1 text-xs text-ink/70">PDF, Word, JPG, PNG, GIF or WebP, up to 8 MB.</p>
+  </div>
+  <div class="md:col-span-2">
+    <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Save draft</button>
+  </div>
+</form>
+
+<div class="mt-8 overflow-x-auto">
+  <table class="w-full min-w-[40rem] text-left">
+    <thead>
+      <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+        <th scope="col" class="py-2 pr-4 font-medium">Title</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Course</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Added</th>
+        <th scope="col" class="py-2 font-medium">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in materials %}
+      <tr class="border-b border-ink/10 align-top">
+        <td class="py-3 pr-4 font-medium"><a class="text-brand underline underline-offset-4 hover:text-ink" href="{{ m.file_path }}">{{ m.title }}</a></td>
+        <td class="py-3 pr-4 text-sm">{{ m.course_code }} — {{ m.course_title }}</td>
+        <td class="py-3 pr-4 text-sm text-ink/80">{{ m.created_label }}</td>
+        <td class="py-3 text-sm">{{ m.status }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if materials.is_empty() %}
+  <p class="py-8 text-ink/70">You have not shared any material yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

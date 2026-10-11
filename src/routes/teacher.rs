@@ -1,11 +1,10 @@
 use askama::Template;
 use axum::{
-    extract::{Path, Query, State},
-    response::{IntoResponse, Response},
+    extract::{Multipart, Path, Query, State},
+    response::{IntoResponse, Redirect, Response},
     Form,
 };
 use serde::Deserialize;
-use sqlx::FromRow;
 use tower_sessions::Session;
 
 use crate::{
@@ -13,10 +12,11 @@ use crate::{
     error::AppError,
     services::{
         attendance::{self, CoverRow, PeriodRow, RosterRow, Rules, TeacherCourse, TeacherSlot},
-        users,
+        materials, users,
     },
-    shell::Shell,
+    shell::{self, Shell},
     state::AppState,
+    uploads,
 };
 
 pub struct StudentAttendanceItem {
@@ -513,4 +513,81 @@ pub async fn reports(
     };
 
     Ok(ReportsTemplate { shell, courses, selected, course_title, lines, rules }.into_response())
+}
+
+// ---------- Study materials ----------
+
+#[derive(Template)]
+#[template(path = "teacher/materials.html")]
+pub struct MaterialsTemplate {
+    shell: Shell,
+    materials: Vec<materials::MaterialRow>,
+    courses: Vec<materials::CourseChoice>,
+    error: Option<String>,
+}
+
+async fn materials_render(
+    s: &AppState,
+    user: &AuthUser,
+    session: &Session,
+    faculty_id: i64,
+    error: Option<String>,
+) -> Result<Response, AppError> {
+    Ok(MaterialsTemplate {
+        shell: Shell::build(user, session).await?,
+        materials: materials::for_teacher(&s.db, faculty_id).await?,
+        courses: materials::courses_taught(&s.db, faculty_id).await?,
+        error,
+    }
+    .into_response())
+}
+
+pub async fn materials_page(
+    State(s): State<AppState>,
+    session: Session,
+    TeacherOnly(user): TeacherOnly,
+) -> Result<Response, AppError> {
+    let shell = Shell::build(&user, &session).await?;
+    let Some(fid) = teacher_profile(&s, &user).await? else {
+        return Ok(NoProfileTemplate { shell }.into_response());
+    };
+    materials_render(&s, &user, &session, fid, None).await
+}
+
+pub async fn materials_upload(
+    State(s): State<AppState>,
+    session: Session,
+    TeacherOnly(user): TeacherOnly,
+    multipart: Multipart,
+) -> Result<Response, AppError> {
+    let shell = Shell::build(&user, &session).await?;
+    let Some(fid) = teacher_profile(&s, &user).await? else {
+        return Ok(NoProfileTemplate { shell }.into_response());
+    };
+    let body = uploads::read(multipart).await?;
+    csrf::verify(&session, body.field("csrf_token")).await?;
+
+    let title = body.field("title").trim().to_string();
+    let Some(course_id) = body.field("course_id").trim().parse::<i64>().ok() else {
+        return materials_render(&s, &user, &session, fid, Some("Choose a course.".into())).await;
+    };
+    // The course id is re-checked against the teacher's own classes, whatever
+    // the form sent.
+    if !materials::teacher_teaches(&s.db, fid, course_id).await? {
+        return Err(AppError::Forbidden);
+    }
+    if title.is_empty() {
+        return materials_render(&s, &user, &session, fid, Some("Give the material a title.".into())).await;
+    }
+    let Some(file) = body.file("file") else {
+        return materials_render(&s, &user, &session, fid, Some("Choose a file to upload.".into())).await;
+    };
+
+    let path = uploads::save(&s.db, &s.upload_dir, "materials", file, false, Some(user.id)).await?;
+    // A teacher's upload lands as a draft: only the head of department or the
+    // IT admin may publish it, from `/admin/materials`.
+    let id = materials::create(&s.db, course_id, &title, &path, user.id, "draft").await?;
+    users::audit(&s.db, Some(user.id), "material_uploaded", "study_material", Some(id)).await?;
+    shell::flash(&session, "Material saved as a draft. Your head of department publishes it.").await?;
+    Ok(Redirect::to("/teacher/materials").into_response())
 }

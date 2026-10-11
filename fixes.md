@@ -414,3 +414,199 @@ At minimum test:
 6. CMS authority/publication/download hardening and upload compensation.
 7. Role-specific workspaces, notifications, reusable UI states, study materials, and accessibility polish.
 8. Full migration, authorization, workflow, regression, and end-to-end verification; then update README and final report with actual command results.
+
+## 13. Implementation pass 2 (2026-10-10)
+
+Verified against a live PostgreSQL 16 (docker compose) and the running server on both listeners.
+
+### Build and tests
+- Fixed two compile errors: `src/config.rs` needed an explicit `SocketAddr` type for the management
+  bind, and `src/auth/mod.rs` used a `let`-chain that the 2021 edition crate does not allow (rewritten
+  as an explicit `is_some`/mismatch check, which also makes a session that predates the version column
+  fail closed).
+- Removed the warnings the compiler could see: the unused `session_layer` in `main`, an unused import
+  in `teacher.rs`, a doc comment on an expression in `cli.rs`, and an unused handler argument in
+  `people.rs` (now used to audit the credentials export).
+- `cargo check --all-targets` is clean (only the historical `sqlx-postgres 0.7.4` future-incompat note
+  and struct-field dead-code warnings remain). `cargo test --all-targets` passes 41 tests.
+
+### Bugs found and fixed in this pass
+1. **The IT-admin dashboard route was dropped in the listener split.** `Role::Admin::home()` is
+   `/admin`, but after `b0e45e4` split the routers nothing registered `/admin`, so the post-login
+   landing page returned 404. `management_router` now registers `/admin` (`OfficeOrAdmin`).
+2. **`seed-demo-users` was not idempotent.** It looked students up through `find_for_login`, which
+   signs students in by admission number, so the email lookup always missed and the second run failed
+   on the unique email index. It now looks the seed accounts up by email.
+3. **Department attendance save redirected to a nonexistent URL** (`.../{entry_id}?date={date}` when
+   the route is `.../{entry_id}/{date}`).
+
+### Feature implemented: study materials (P1.5)
+The `study_materials` table (migration `0002`) now has a service, routes and UI.
+- `src/services/materials.rs` — manager- and student-scoped queries. `scope_allows` is a pure,
+  unit-tested function.
+- `/admin/materials` (`Manager`): upload a file for a course, publish/archive, delete. The course id
+  in the form is re-checked against the manager's department server-side, so an HOD cannot touch
+  another department's course (verified: own-department upload 303, other department 403).
+- `/hub/materials` (`StudentOnly`): published material for the courses the student is actively
+  enrolled in.
+- `/uploads/...` now authorizes a study-material file for the enrolled students of its course, the
+  teachers of that course, and the IT admin; the rest get 404, and served files are `private` rather
+  than `public` cacheable.
+- Nav links added for IT admin, HOD and students; the section catalogues and their consistency tests
+  were updated. Two new unit tests cover the scope rule.
+
+### Also removed
+- `services::people::delete_users`, the unused destructive cascade-delete superseded by
+  `archive_users`, and the unused `routes::router` compatibility constructor.
+
+### Still not implemented (unchanged from §12)
+The appointment/permission cutover (the `role_assignments`/`delegations` tables exist and are
+backfilled but no handler reads them yet), the result import preview/commit UI, the course-version
+migration, login rate limiting, backup automation, and the full integration/end-to-end suite.
+Teacher (non-HOD) upload of study materials is now wired — see §14.
+
+## 14. Implementation pass 3 (2026-10-10)
+
+Two more items from the brief, both verified against the running server.
+
+### Login rate limiting (P0.6)
+- `src/state.rs` gains a `LoginLimiter`: an in-memory sliding window keyed on **both** the account
+  identifier and the client address, so one IP cannot grind one account and one account cannot be
+  hammered from many. The reply for a throttled attempt is a generic "too many sign-in attempts", the
+  same shape as a wrong password, so it does not reveal whether an identifier exists. It is checked
+  before any account lookup.
+- Policy: 20 attempts / 5 min per account, 60 / 5 min per address.
+- The peer address comes from `ConnectInfo`, via
+  `into_make_service_with_connect_info` on both listeners. Forwarded headers are deliberately ignored.
+- Verified live: the address budget blocks after 60 attempts in the window, and the account budget
+  blocks the 21st attempt with the same identifier. Three unit tests cover the sliding window.
+- This complements, and does not replace, the existing database lockout (5 wrong passwords → 15
+  minutes); the account limit is set above it so the DB lockout is what a genuine user meets first.
+
+### Teacher study-material upload (completes P1.5)
+- `/teacher/materials` (`TeacherOnly`) lets a teacher upload a file for a course they are attached to
+  (course owner, or a timetable period). The course id is re-checked with `materials::teacher_teaches`,
+  so a forged course id is a 403.
+- A teacher's upload is always saved as a **draft**; publishing stays with the head of department or
+  the IT admin at `/admin/materials`. This matches the brief's "teachers create drafts, higher
+  authority publishes".
+- Verified live: `teacher1` (who teaches course 1) sees only course 1, uploads a draft (303), and is
+  refused course 2 (403); the HOD publishes that draft (303); a teacher who teaches nothing is refused
+  for every course (403).
+
+### Finding that blocks the appointment cutover (P0.2)
+The live database shows `role_assignments` is **out of sync** with the `faculty.is_hod` columns: the
+0021 compatibility backfill ran once, but the demo seeder and the people tools change `is_hod`
+afterwards. In the current dev data user 2 (a plain teacher) holds an active `hod` assignment for
+department 1, while the real HOD (user 7) holds none. Cutting `Manager` over to `role_assignments`
+today would therefore both over-grant (user 2) and under-grant (user 7). The cutover must be preceded
+by a reconciliation (a trigger or a backfill plus keeping the writers in step), and is left for a
+focused pass.
+
+## 15. Implementation pass 4 (2026-10-11)
+
+The remaining items from the brief, plus two bugs that live verification found in pass 3's own work.
+Everything below was run; the commands and their real results are in the notes.
+
+### P0.2 — the appointment cutover, unblocked
+`role_assignments`/`delegations` are now what decides departmental authority, not the legacy booleans.
+- `services::appointments` resolves the effective department from an **active, in-date** head assignment
+  or an **active, in-date** delegation whose granting assignment is still live. A user who has
+  appointment rows but none effective is *denied* — an expired appointment must not fall back to
+  `faculty.is_hod`. Only a user with no appointment rows at all (an account predating the model) still
+  reads the boolean.
+- Migration `0023` reconciles the drift pass 3 found: it revokes head assignments whose faculty is no
+  longer a head, and gives every current head an active assignment unless the department already has
+  one. `sync_hod_from_flags` is called by every writer of `faculty.is_hod` (seeder, people tools,
+  grant/revoke), so the two cannot drift again.
+- `one_active_department_head` (a partial unique index) enforces one active head per department; a
+  second appointment in a transaction is refused with `23505`.
+- Ending an appointment revokes it, clears the legacy flag, and opens a handover task. Ending the
+  granting assignment also stops every delegation derived from it.
+- Verified live: grant, one-per-department, revoke, delegation, and handover; and the reconciliation
+  repaired the stale rows (teacher1's bogus `hod` revoked, the real HOD restored).
+
+### P1.1 — staged result imports (preview before commit)
+- `services::result_import` stages an uploaded CSV (or the guided marks sheet) in
+  `result_import_batches`/`result_import_rows`, keeping the raw text in `payload` so the commit
+  re-validates the exact rows that were previewed rather than trusting a second upload.
+- The preview shows every row's outcome and blocks the commit while a conflict with a **finalized**
+  mark exists; the finalized row is never touched.
+- Verified live: preview, commit, and a finalized conflict refusing the commit.
+- Migrations `0024` (payload) and `0025` (guided assessment/exam name).
+
+### P1.4 — course versions
+- `course_versions` (migration `0026`) is an append-only history beside `courses`; every existing course
+  became version 1, and `course_offerings` records the version it was built from.
+- `GET/POST /admin/courses/:id/edit` is the catalogue edit UI the README listed as missing (#8), with a
+  version-history panel. Saving appends a version when anything changed and is a no-op when it did not.
+- Verified live: editing course 1 appended version 2, marked version 1 non-current, and offering 1 stayed
+  pinned to version 1 ("Python") after the rename.
+
+### Backups and housekeeping
+- `services::backup` writes `backup-<UTC>/` with `database.dump`, `uploads.tar.gz` and a manifest of
+  sizes and SHA-256 sums; retention keeps the newest `BACKUP_KEEP`. It refuses a directory inside
+  `static/` or the upload directory and creates the run directory `0700`. It prefers `pg_dump` and falls
+  back to `docker compose exec` via `BACKUP_DOCKER_SERVICE`.
+- `services::maintenance` runs hourly: expired sessions, the student-import purge, result-import expiry
+  (dropping the raw payload) and 90-day batch cleanup, plus the due backup.
+- `cargo run -- backup [--list]` and `cargo run -- maintenance`.
+- Verified live: a backup wrote a 191 690-byte dump and a 56 080-byte uploads archive; `pg_restore
+  --list` read 442 TOC entries back, the manifest parsed as JSON, and the tar listed real files. The
+  scheduler did not re-run it, because the last one was inside the 24-hour window.
+
+### Two bugs live verification found in pass 3
+- **Session cleanup never worked.** `purge_expired_sessions` deleted from `session`, but `tower-sessions`
+  keeps its table in the `tower_sessions` schema, which is not on the connection's `search_path`, so
+  every run failed with `42P01`. The query now names `tower_sessions.session`.
+- **A container backup always wrote an empty dump.** The `docker compose exec` dump used
+  `Command::output()`, which replaces the stdout redirect with a pipe, so `database.dump` stayed empty
+  and the run was correctly rejected as "the dump was empty". It now spawns the child with the file as
+  its stdout, captures only stderr, and waits on it.
+
+### Ops hardening
+- **Input length limits** (`src/validate.rs`): every form field is now bounded before the database
+  (`MAX_TITLE`, `MAX_NAME`, `MAX_CODE`, `MAX_NOTE`, `MAX_BODY`, `MAX_EMAIL`, `MAX_PASSWORD`), counted in
+  characters. Applied to login, the content forms (notices, news, events, documents, pages), materials
+  and both course forms. Verified live: a 250-character course title is refused with a form message and
+  writes no version.
+- **One date validator** (`src/dates.rs`). There were three copies — `routes::admin::is_valid_date`,
+  `routes::admin::exams::valid_date` and `services::attendance::valid_date` — and they disagreed
+  (only one had a year range, only one trimmed). All three now delegate to one function.
+- Confirmed already sound: the post-login redirect is already role-allowlisted (`safe_next_for_role`,
+  same-site relative paths only), and seeded credentials are already kept out of the log — the seeder's
+  output goes to a `0600` file or is discarded, and the start-up path only logs the account count.
+
+### P1.3 — front-end hardening
+- **HTMX is self-hosted** at `static/js/htmx.min.js`; the two CDN `<script>` tags are gone.
+- **Content-Security-Policy** added in `apply_layers`, along with `Permissions-Policy` and (when
+  `COOKIE_SECURE=true`) HSTS. `script-src 'self'` is the strict part, so every inline `on*` handler and
+  the one inline `<script>` block were replaced by `data-*` hooks handled in `app.js`. `style-src` keeps
+  `'unsafe-inline'` for the few per-row CSS values (documented in the README).
+- The dead **"Soon"** nav mechanism was removed: no item used it, so the `soon` field, its parameter and
+  the greyed-out badge are gone.
+- **Course categories are data-driven**: the list lives once in `services::courses::CATEGORIES` and both
+  catalogue forms render from it, instead of three hardcoded `<option>` lists.
+
+### lib split and the test suite
+- `main.rs` is now only process setup and the listeners; the application is `src/lib.rs`, which the tests
+  build against. `apply_layers`, `connect`, `migrator` and `init_session_store` are library functions.
+- **`tests/database.rs`** (16 tests) uses `#[sqlx::test]`, so each test gets a database with every
+  migration applied, and asserts the constraints and the services: tables and successful migration
+  history; one active head per department; an expired appointment denying instead of falling back; the
+  legacy-flag path; a delegation ending with the appointment that granted it; acting appointments;
+  handover on revoke; the append-only audit log; one version per new course; append-on-edit keeping
+  history; offering version pinning; the `NOT NULL` that stops a versionless offering; the category CHECK
+  agreeing with `category_is_valid`; the marks workflow states; and the staged result-import payload,
+  state and cascade.
+- **`tests/app.rs`** (8 tests) drives the real layered router with `tower::oneshot`: the security headers
+  and CSP, HSTS only when secure, `robots.txt`, the login page's CSRF field and local HTMX, the served
+  HTMX bundle, a 404 for an unknown path, an unauthenticated `/hub` redirect, and the management router.
+- Result: `cargo test` — **57 unit + 16 database + 8 end-to-end, all passing**. The only build warning is
+  the pre-existing `sqlx-postgres v0.7.4` future-incompatibility notice from the dependency.
+
+### Still not done
+The remaining known limitations in the README (offering-course results filtering, offering clash
+detection between two offerings of the same programme, attendance-report filters under a programme,
+capacity enforcement outside student confirmation, and student-action auditing). They are unchanged and
+listed there with detail.
