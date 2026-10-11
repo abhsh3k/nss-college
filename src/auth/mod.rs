@@ -59,6 +59,10 @@ pub async fn require_reauth(session: &Session, next: &str) -> Result<(), Redirec
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
+    /// Root authority. It carries every IT-admin power *and* the role/recovery
+    /// powers behind `SuperAdminOnly`, and it is only reachable on the
+    /// loopback-only management listener.
+    SuperAdmin,
     Admin,
     /// Principal / Academic Admin: institution-wide academic authority, but no
     /// technical administration privileges.
@@ -72,6 +76,7 @@ pub enum Role {
 impl Role {
     pub fn parse(s: &str) -> Option<Role> {
         match s {
+            "super_admin" => Some(Role::SuperAdmin),
             "admin" => Some(Role::Admin),
             "principal" => Some(Role::Principal),
             "staff" => Some(Role::Staff),
@@ -84,6 +89,7 @@ impl Role {
 
     pub fn label(&self) -> &'static str {
         match self {
+            Role::SuperAdmin => "Super Admin",
             Role::Admin => "IT administrator",
             Role::Principal => "Principal",
             Role::Staff => "Office staff",
@@ -93,10 +99,15 @@ impl Role {
         }
     }
 
+    /// Whether this role may reach the account-role administration screen.
+    pub fn is_super_admin(&self) -> bool {
+        matches!(self, Role::SuperAdmin)
+    }
+
     /// Where this role lands after signing in.
     pub fn home(&self) -> &'static str {
         match self {
-            Role::Admin | Role::Principal | Role::Staff => "/admin",
+            Role::SuperAdmin | Role::Admin | Role::Principal | Role::Staff => "/admin",
             Role::Faculty => "/teacher",
             Role::Student => "/hub",
             Role::Alumni => "/",
@@ -243,26 +254,31 @@ macro_rules! role_guard {
     };
 }
 
-// IT administrator only (users, academics, timetable, settings).
+// IT administrator only (users, academics, timetable, settings). The Super
+// Admin is a superset of the IT admin, so it is allowed wherever the IT admin
+// is — the difference is the extra `SuperAdminOnly` powers below, not fewer.
 #[allow(dead_code)]
 mod guards {
     use super::*;
-    role_guard!(AdminOnly, &[Role::Admin]);
+    role_guard!(AdminOnly, &[Role::Admin, Role::SuperAdmin]);
     // The Principal signs off academic appointments, so they share the
     // appointments screen with the IT admin.
-    role_guard!(AdminOrPrincipal, &[Role::Admin, Role::Principal]);
+    role_guard!(AdminOrPrincipal, &[Role::Admin, Role::SuperAdmin, Role::Principal]);
     // The landing page at `/admin`: everyone who works in the management area,
     // including the Principal (whose home it is). Content authoring stays on
     // `OfficeOrAdmin`, so the Principal gets no publishing powers here.
-    role_guard!(AdminDashboard, &[Role::Admin, Role::Principal, Role::Staff]);
+    role_guard!(AdminDashboard, &[Role::Admin, Role::SuperAdmin, Role::Principal, Role::Staff]);
     role_guard!(PrincipalOnly, &[Role::Principal]);
-    role_guard!(OfficeOrAdmin, &[Role::Admin, Role::Staff]);
+    role_guard!(OfficeOrAdmin, &[Role::Admin, Role::SuperAdmin, Role::Staff]);
     role_guard!(TeacherOnly, &[Role::Faculty]);
     role_guard!(StudentOnly, &[Role::Student]);
+    // Root authority: account roles, emergency recovery, and the audited
+    // reopening of finalized academic records. No other role passes this.
+    role_guard!(SuperAdminOnly, &[Role::SuperAdmin]);
 }
 pub use guards::{
     AdminDashboard, AdminOnly, AdminOrPrincipal, OfficeOrAdmin, PrincipalOnly, StudentOnly,
-    TeacherOnly,
+    SuperAdminOnly, TeacherOnly,
 };
 
 /// How far across the college a manager may reach.
@@ -312,11 +328,11 @@ impl FromRequestParts<AppState> for Manager {
     ) -> Result<Self, Self::Rejection> {
         let Ready(user) = Ready::from_request_parts(parts, state).await?;
 
-        // The IT admin keeps every power and is not confined to a department.
-        // The Principal has institution-wide *academic* authority — the same
-        // cross-department scope — but not the technical powers, which stay
-        // behind `AdminOnly`.
-        if matches!(user.role, Role::Admin | Role::Principal) {
+        // The IT admin keeps every power and is not confined to a department;
+        // the Super Admin, being a superset, likewise. The Principal has
+        // institution-wide *academic* authority — the same cross-department
+        // scope — but not the technical powers, which stay behind `AdminOnly`.
+        if matches!(user.role, Role::Admin | Role::SuperAdmin | Role::Principal) {
             return Ok(Manager {
                 user,
                 scope: Scope::All,
@@ -360,7 +376,7 @@ pub fn safe_next(next: &str) -> Option<&str> {
 pub fn safe_next_for_role(next: &str, role: Role) -> Option<&str> {
     let next = safe_next(next)?;
     let allowed = match role {
-        Role::Admin | Role::Principal | Role::Staff => {
+        Role::SuperAdmin | Role::Admin | Role::Principal | Role::Staff => {
             next.starts_with("/admin") || next.starts_with("/account/")
         }
         Role::Faculty => next.starts_with("/teacher") || next.starts_with("/admin/") || next.starts_with("/account/"),
@@ -391,6 +407,20 @@ mod tests {
         assert!(!reauth_valid(None, now));
         // A timestamp in the future is not a fresh check.
         assert!(!reauth_valid(Some(now + 10), now));
+    }
+
+    #[test]
+    fn the_super_admin_is_the_root_role_on_the_management_listener() {
+        assert_eq!(Role::parse("super_admin"), Some(Role::SuperAdmin));
+        assert_eq!(Role::SuperAdmin.label(), "Super Admin");
+        // Its home is the management area, which is only served on loopback.
+        assert_eq!(Role::SuperAdmin.home(), "/admin");
+        assert!(Role::SuperAdmin.is_super_admin());
+        assert!(!Role::Admin.is_super_admin());
+        assert_eq!(
+            safe_next_for_role("/admin/roles", Role::SuperAdmin),
+            Some("/admin/roles")
+        );
     }
 
     #[test]

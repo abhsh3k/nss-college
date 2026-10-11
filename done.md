@@ -10,7 +10,7 @@ Test commands referenced throughout:
 
     docker compose up -d
     DATABASE_URL=postgres://nss:nss@localhost:5432/nss_college cargo test
-    # 61 unit + 32 database + 13 end-to-end, currently all passing
+    # 65 unit + 37 database + 14 end-to-end, currently all passing
 
 ---
 
@@ -19,9 +19,9 @@ Test commands referenced throughout:
 | `redesign.md` section | Status |
 |---|---|
 | §3 Stack constraints (Rust/Axum/Askama/HTMX/Tailwind/SQLx/PostgreSQL) | Done — unchanged |
-| §5 Super Admin (loopback-only listener) | Done |
+| §5 Super Admin (loopback-only listener, root authority) | Done |
 | §5 IT Admin | Done |
-| §5 Principal / Academic Admin | Done / Partial (Super Admin appoints it — see §3.A.2) |
+| §5 Principal / Academic Admin | Done |
 | §5 HOD, one per department, effective dates | Done |
 | §5 Acting HOD | Done |
 | §5 Delegation + non-carryover handover | Done |
@@ -90,6 +90,9 @@ Test commands referenced throughout:
   and a CSP with **`script-src 'self'`**; HSTS only when `COOKIE_SECURE=true`. HTMX is self-hosted and no
   inline scripts or `on*` handlers remain.
 - Input length limits on every form field (`src/validate.rs`), applied before the database.
+- **Root authority** is a distinct account role (`super_admin`), not a navigation trick: it is only
+  served on the loopback management listener, it is the only role that reaches `/admin/roles`, and the
+  last active Super Admin can be neither demoted nor deactivated. See §3.A.2.
 - `safe_next_for_role` allowlists the post-login redirect per role.
 
 ### 2.3 Academic integrity (P0.8–P0.12, P1.1–P1.5)
@@ -146,8 +149,11 @@ Test commands referenced throughout:
 - **Housekeeping** (`services::maintenance`, hourly): expired `tower_sessions` rows (they are never removed
   by the store itself), the student-import purge, result-import expiry — dropping the raw uploaded text —
   and 90-day batch cleanup.
-- **CLI**: `create-user`, `set-password`, `seed-demo-users [--credentials-file]`, `backup [--list]`,
-  `maintenance`.
+- **CLI**: `create-user` (any role, including `super_admin` and `principal`), `set-role
+  <super_admin|admin> <email>` (the break-glass path to root authority: it calls the same
+  `super_admin::set_role`, so the last active Super Admin can be promoted but never demoted, and the
+  change is audited), `set-password`, `seed-demo-users [--credentials-file]` (which seeds
+  `owner@college.local` as the Super Admin), `backup [--list]`, `maintenance`.
 - Demo passwords never reach the log: the seeder returns them and they go to a `0600` file or are
   discarded; the start-up path logs only the account count.
 - `/healthz` returns a plain 200 liveness response without touching the database or exposing details;
@@ -158,7 +164,7 @@ Test commands referenced throughout:
 - `main.rs` is only process setup and the listeners; the application is `src/lib.rs`, which is what the
   tests build against. `apply_layers`, `connect`, `migrator` and `init_session_store` are library
   functions.
-- **Suite**: 57 unit, 16 database (`#[sqlx::test]`, a freshly migrated database per test), 8 end-to-end
+- **Suite**: 65 unit, 37 database (`#[sqlx::test]`, a freshly migrated database per test), 14 end-to-end
   (`tower::oneshot` through the real layered router). Currently all passing; the only build warning is the
   pre-existing `sqlx-postgres v0.7.4` future-incompatibility notice.
 - README documents the two listeners, roles, backups/restore, security headers, test commands, the layout
@@ -177,10 +183,40 @@ Test commands referenced throughout:
    Principal **approves** it (`appointments::approve_head`), with self-approval refused. Evidence:
    `tests/database.rs` — `a_head_appointment_is_pending_until_the_principal_approves`,
    `a_rejected_head_appointment_never_activates`; unit test `the_principal_is_a_distinct_role_with_an_academic_workspace`.
-   Remaining: the Super Admin appointing/activating the Principal appointment is part of §3.A.2.
-2. **Super Admin as a distinct authority from IT Admin.** The listener boundary exists, but there is no
-   `super_admin` handling in code — no role-management screen, no emergency-recovery or
-   emergency-intervention flow, and no "last recovery account cannot be deactivated" guard.
+   The Super Admin's side of it — appointing and ending the Principal appointment — is in §3.A.2.
+2. ~~**Super Admin as a distinct authority from IT Admin.**~~ **Done.** The listener boundary existed;
+   the authority now does too. Migration `0031` widens the `users.role` CHECK to the `super_admin`
+   account role (and adds the one-live / one-pending Principal appointment indexes). `Role::SuperAdmin`
+   parses, homes to `/admin` and carries every IT-admin power (`AdminOnly`, `AdminOrPrincipal`,
+   `AdminDashboard`, `OfficeOrAdmin`, `Manager` scope `All`); only `SuperAdminOnly` is exclusive to it.
+   `services::super_admin` + `/admin/roles` (on the loopback listener) make the root powers real:
+   * **Roles/permissions** — `set_role` gives or removes `admin`/`super_admin` only, refuses a
+     Principal account (its authority is the appointment), and bumps `session_version` so a role change
+     revokes live sessions. The IT admin cannot reach any of it and the people form never writes a
+     `super_admin` role.
+   * **Emergency recovery** — `unlock_account` clears a failed-sign-in lockout without touching the
+     password; if the only root account is itself locked out or its password is lost, the CLI is the way
+     back in: `set-role super_admin <email>` (new — the same rule as the screen, so it can promote the
+     last root account but never demote it) and `set-password <email>` (which also clears the lockout).
+   * **Emergency intervention in academic records** — `reopen_finalized` copies every locked mark into
+     `mark_history` as `superseded` with a mandatory reason and only then returns the row to
+     `reviewed`, from a list of the courses currently locked (`list_finalized_courses`).
+   * **The last recovery account** — `set_role` and `deactivation_allowed` (called by
+     `/admin/people/:id/active`) refuse to demote or deactivate the last active Super Admin.
+   * **The Principal appointment** — `appoint_principal`/`revoke_principal` give the account the
+     `principal` role and record an effective-dated `role_assignments` row in one transaction; the
+     unique indexes allow one live appointment, a Super Admin cannot appoint itself, and ending the
+     appointment returns the account to office staff. `create-user super_admin ...` and
+     `seed-demo-users` (as `owner@college.local`) bootstrap the first root account.
+   Evidence: `tests/database.rs` — `the_last_super_admin_cannot_be_demoted_or_deactivated`,
+   `a_role_change_revokes_the_accounts_live_sessions`,
+   `a_super_admin_appoints_and_revokes_the_principal`,
+   `an_emergency_reopen_returns_a_finalized_course_to_review`,
+   `a_locked_out_account_can_be_unlocked_without_touching_its_password`; e2e
+   `root_authority_belongs_to_the_super_admin_alone` (the IT admin is 403 on the screen and on a
+   self-promotion, the Super Admin's promotion applies); unit tests
+   `the_super_admin_is_the_root_role_on_the_management_listener`,
+   `the_super_admin_gets_the_admin_areas_plus_root_authority`.
 3. ~~**Result correction workflow** (brief §7, P1.1).~~ **Done.** Migration `0027_result_corrections.sql`
    adds the proposed-value/decision columns (with a constraint that `correction_pending` is present iff a
    proposed value is). `services::marks` gains `finalize_course`, `request_correction` and
@@ -276,11 +312,13 @@ Test commands referenced throughout:
 17. **Reusable UI components** (brief §8). Tables, empty states and form errors are consistent by
     convention, not by shared components; there is no pending-approval badge in the navigation.
 18. **Authentication test depth** (brief §9) — **started, partial.** `tests/app.rs` now has a real sign-in
-    helper (login through the router, session cookie reused) and three through-the-router authorization
+    helper (login through the router, session cookie reused) and four through-the-router authorization
     tests: `an_hod_cannot_touch_another_departments_programme` (cross-department mutation is 403),
-    `a_teacher_with_no_appointment_cannot_reach_the_academic_tools` (403), and
-    `the_it_admin_may_act_for_any_programme` (positive control). Remaining: the same matrix for the other
-    roles and resource kinds (student-vs-student, teacher-vs-assigned-course, CMS ownership).
+    `a_teacher_with_no_appointment_cannot_reach_the_academic_tools` (403),
+    `the_it_admin_may_act_for_any_programme` (positive control) and
+    `root_authority_belongs_to_the_super_admin_alone` (403 for the IT admin, and the Super Admin's
+    re-authenticated role change takes effect). Remaining: the same matrix for the other roles and
+    resource kinds (student-vs-student, teacher-vs-assigned-course, CMS ownership).
 19. **JS behaviour coverage.** The `data-*` hooks in `app.js` are not covered by automated tests (no
     browser in this environment); they were verified by inspecting rendered markup and reading the script.
 
@@ -300,7 +338,8 @@ Dependency-aware, highest value first:
 1. ~~**Result correction workflow**~~ **Done** (migration `0027`, `services::marks`, marks page).
 2. ~~**Offerings in the student results view** (§3.B.12)~~ **Done** — verified fixed with a regression test.
 3. ~~**Principal role and the HOD appointment approval**~~ **Done** — pending request by the IT admin,
-   Principal approval with self-approval refused; the Super Admin half remains in §3.A.2.
+   Principal approval with self-approval refused, and the Super Admin appointing the Principal itself
+   (§3.A.2).
 4. ~~**Scheduled CMS publishing and reserved-path validation**~~ **Done** — reserved paths (§3.A.8,
    `site_admin::reserved_path`) and scheduled/time-limited publishing (migration `0030` plus the shared
    `content::visible` predicate).
@@ -311,6 +350,8 @@ Dependency-aware, highest value first:
 7. ~~**Remaining P1.4 defects** (substitutions, offering-vs-offering clashes, report filters).~~ **Addressed**
    — substitutions (§3.B.13) and offering-vs-offering clashes (§3.B.14) were already handled in code;
    the attendance course filter (§3.B.15) is fixed with a regression test.
-8. **Super Admin distinct powers.** — audit detail (§3.B.16), re-authentication (§3.A.7), the `.xlsx`
-   result import and the through-the-router authorization matrix (§3.B.18) are now done. The one item left
-   is what authority the Super Admin holds beyond the IT admin, which needs a product decision.
+8. ~~**Super Admin distinct powers.**~~ **Done** — the `super_admin` account role, `/admin/roles`,
+   the last-recovery-account guard, the Principal appointment and the audited reopening of a finalized
+   course (§3.A.2). With audit detail (§3.B.16), re-authentication (§3.A.7) and the through-the-router
+   authorization tests (§3.B.18) done, the remaining work is the UI-consistency items (§3.B.17, §3.B.19)
+   and the rest of the authorization matrix, all of which are recorded above rather than hidden.

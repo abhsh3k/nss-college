@@ -17,7 +17,7 @@ use crate::{
         academics::{self, ProgrammeOption},
         import_students::{self, Batch, CredentialRow, RowEdit, StagedRow},
         people::{self, NewStudent, NewTeacher, PersonDetail, PersonRow},
-        users,
+        super_admin, users,
     },
     shell::{self, Shell},
     state::AppState,
@@ -543,6 +543,16 @@ pub async fn set_active(
     if active {
         people::set_active(&s.db, id, true).await?;
     } else {
+        // The last active Super Admin keeps its access: disabling it would
+        // leave nobody able to manage roles or recover an account.
+        if !super_admin::deactivation_allowed(&s.db, id).await? {
+            shell::flash(
+                &session,
+                "The last active Super Admin cannot be deactivated. Promote another account first.",
+            )
+            .await?;
+            return Ok(Redirect::to("/admin/people"));
+        }
         people::archive_user(&s.db, id).await?;
     }
     users::audit(

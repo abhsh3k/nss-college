@@ -20,6 +20,7 @@ mod rank_holders;
 mod results_import;
 mod settings;
 mod substitutions;
+mod super_admin;
 mod timetable;
 mod work_queue;
 
@@ -274,7 +275,23 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/materials/:id/delete", post(materials::destroy))
         .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
 
+    // Root authority: account roles, emergency recovery, the Principal
+    // appointment, and the audited reopening of a finalized academic record.
+    // Every handler takes `SuperAdminOnly`, and the management listener already
+    // keeps this area off the network.
+    let root = Router::new()
+        .route("/admin/roles", get(super_admin::page))
+        .route("/admin/roles/:id/role", post(super_admin::set_role))
+        .route("/admin/roles/:id/unlock", post(super_admin::unlock))
+        .route("/admin/root/principal", post(super_admin::appoint_principal))
+        .route(
+            "/admin/root/principal/:id/revoke",
+            post(super_admin::revoke_principal),
+        )
+        .route("/admin/root/reopen", post(super_admin::reopen_finalized));
+
     Router::new()
+        .merge(root)
         .merge(people)
         .merge(imports)
         .merge(academics_and_timetable)

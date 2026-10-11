@@ -17,5 +17,6 @@ pub mod people;
 pub mod rank_holders;
 pub mod reports;
 pub mod site_admin;
+pub mod super_admin;
 pub mod users;
 pub mod faculty;

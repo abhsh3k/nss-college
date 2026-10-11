@@ -68,8 +68,9 @@ After pulling this update, rebuild the CSS (new classes were added) and restart:
 
 ## Sign in and accounts (Phase 4a)
 
-Create the first IT administrator (you will be asked for a password at a hidden prompt):
+Create the first Super Admin and the first IT administrator (you will be asked for a password at a hidden prompt):
 
+    cargo run -- create-user super_admin owner@example.com "Site Owner"
     cargo run -- create-user admin you@example.com "Your Name"
 
 Create test accounts for the other roles. These must choose a new password at first sign-in:
@@ -85,6 +86,24 @@ The **Principal** (`create-user principal ...`) holds institution-wide *academic
 cross-department reach as the IT admin on the academic tools, but no technical powers. The IT admin
 creates each account and **requests** an HOD appointment at `/admin/appointments`; the Principal
 **approves** it before it takes effect, and a person cannot approve their own appointment.
+
+The **Super Admin** is the root account role and is only reachable on the loopback management listener.
+It holds every IT-admin power plus `/admin/roles`, where it gives or removes the `admin` and
+`super_admin` roles, clears a locked-out account, appoints and ends the **Principal** appointment
+(with effective dates), and can reopen an already-finalized course as an audited emergency
+intervention. An IT admin cannot reach that screen, cannot promote itself, and cannot demote or
+deactivate the last active Super Admin — so the college cannot be locked out of role management.
+Bootstrap the first root account with `create-user super_admin ...` (or `seed-demo-users`, which adds
+`owner@college.local`).
+
+If no account can reach `/admin/roles` — the only root account was locked out, or its password is lost —
+the CLI is the way back in:
+
+    cargo run -- set-role super_admin someone@example.com   # give an existing account root authority
+    cargo run -- set-password someone@example.com           # replace the password and clear any lockout
+
+`set-role` accepts only `super_admin` and `admin` and runs the same rule as the screen, so it can promote
+the last root account but never demote it, and it records the change in the audit log.
 
 Rules built in: five wrong passwords lock an account for 15 minutes; sessions last 8 hours of inactivity;
 every form carries a CSRF token; passwords are stored with Argon2.
@@ -210,7 +229,10 @@ Keep the colours and fonts in `tailwind.config.js` and `styles.html` identical.
                     (course_versions, offerings pinned to the version they were built from),
                     0027 result corrections (reasoned, separately-approved correction of finalized
                     marks), 0028 principal role (a distinct 'principal' account role),
-                    0029 notifications (a per-user actionable feed)
+                    0029 notifications (a per-user actionable feed), 0030 content scheduling
+                    (`unpublish_at` on notices/news/events/documents/pages, `pages.published_at`),
+                    0031 super admin (the `super_admin` account role, one live and one pending
+                    Principal appointment)
 
 ## Layers
 
@@ -220,7 +242,7 @@ Keep the colours and fonts in `tailwind.config.js` and `styles.html` identical.
 4. Authentication, Student Hub, teacher tools, admin
    - 4a (done): sign-in, sessions, CSRF, roles, dashboard shells, `create-user` command
    - 4b-1 (done): admin tools for people, programmes/courses, enrollment and the timetable builder
-   - 4b-2: publishing tools (notices, news, events, documents, pages, settings) for IT admin and office staff
+   - 4b-2 (done): publishing tools (notices, news, events, documents, pages, settings) for IT admin and office staff
    - 4c (done): teacher dashboard, per-period attendance, substitutions, attendance reports
    - 4d (done): student views — the Student Hub at `/hub` shows the announcements feed, today's
      timeline, weekly timetable matrix, enrolled courses with live attendance percentages, and the
@@ -236,41 +258,50 @@ Keep the colours and fonts in `tailwind.config.js` and `styles.html` identical.
   a confirmed or locked selection for that offering, never every student ever enrolled in the course.
 - Informational pages (about, IQAC, fees, ...) live in the `pages` and `page_sections` tables and are served by path, so a page added to the database works without a restart. Pages with no sections show a short "still preparing" message.
 - Queries use `sqlx::query_as` at runtime rather than the compile-time macros, so the project builds without a database.
-- Students, the timetable and attendance now have models and queries in `services/hub.rs` (Student Hub).
-  The marks and exam tables still have no Rust models yet; they arrive with the Student Hub's exam views.
+- Students, the timetable and attendance have models and queries in `services/hub.rs` (Student Hub); the
+  marks, exam and result-import tables have their own services (`services/marks.rs`, `services/exams.rs`,
+  `services/result_import.rs`).
 - The header and footer still carry the college phone number as fixed text. Contact details on the home and contact pages come from `site_settings`.
 - Set `SITE_URL` in `.env` so `sitemap.xml` and `robots.txt` use your real domain.
 - Images on the home page currently hotlink the live site and move to `uploads/` when the content is migrated.
 
 ## Known limitations (to do later)
 
-Review of the course management & selection feature (branch `feature/curriculamv2`, verified 6 Oct 2026).
-The feature works end to end — catalogue → offering → publish → cross-department approval → selection
-(FIXED / HOD-assigned / individual choice / cohort choice) → enrollment → timetable and attendance —
-but these gaps remain:
+Review of the course management & selection feature (branch `feature/curriculamv2`, first verified
+6 Oct 2026 and re-checked against the current code). The feature works end to end — catalogue → offering →
+publish → cross-department approval → selection (FIXED / HOD-assigned / individual choice / cohort
+choice) → enrollment → timetable and attendance. The items struck through below have since been fixed;
+the evidence (a test name, or "by inspection" where the code already handled it) is named with each one.
 
-1. **Results section never shows offering courses.** `hub::internal_results` filters on `courses.semester`,
-   which is `NULL` for catalogue courses, so a confirmed offering appears in *Enrolled courses* but not in
-   `/hub` Results ("not enrolled in any courses this semester"). Take the semester from the student's
-   offering/selection instead of the catalogue row.
-2. **No marks/exams entry UI exists at all** (tables exist since migration 0002), and `exams.programme_id`
-   is `NOT NULL`, so an exam can never attach to an offering course. Marks themselves are course-based and
-   would work once a UI and the Results query exist.
-3. **Substitutions skip offering periods**: `attendance::teacher_day` joins `programme_id`, so an offering
-   period never appears in the substitute-teacher candidate list.
-4. **Clash detection still misses offering-vs-offering overlap**: a programme slot and an offering slot now
-   see each other (`academics::clashes` and `academics::offering_clashes` share the same teacher/room/class
-   rules, and the offering page's "add period" clash-checks too), but two *different* offerings that target
-   the same programme can still be scheduled on top of one another — "same class" covers programme periods
-   and the offering's own periods only.
-5. **Programme timetable grid**: offering periods that target the programme now appear in the grid
-   rows, marked read-only (added and removed from the offering panel on the same `/admin/timetable`
-   page, offering picker), and are also visible on the offering page, `/hub` and teacher pages.
-6. **Attendance reports disagree under a programme filter**: `by_session` filters `c.programme_id` while
-   `totals`/`by_student` filter `st.programme_id` — the session table can be empty while the totals are not.
-   The course-filter dropdown (`course_options`) also hides catalogue courses when a programme is selected.
-7. **Capacity is enforced only at student confirm**; HOD assignment and cohort finalization can exceed it.
-   Decide whether that override is intended, then enforce or document it.
+1. ~~**Results section never shows offering courses.**~~ **Fixed**: `exams::results_for` and
+   `exams::result_semesters` read the semester through `COALESCE(e.semester, c.semester)`, so a catalogue
+   course carried by an offering appears in `/hub` Results. Regression test:
+   `a_catalogue_course_offering_shows_in_the_student_results`.
+2. **Marks and exams** — **the "no UI" half is fixed**: `/admin/marks` is the entry grid, `/admin/exams`
+   the timetable, and results arrive through the guided sheet, the staged import
+   (`/admin/exams/results/*`) or the CSV/Excel push, with the pickers resolving an offering course through
+   `academics::applicable_course`. What remains is structural: `exams.programme_id` is still `NOT NULL`
+   (migration 0002), so an exam row belongs to a programme and semester rather than to the course version
+   an offering ran as.
+3. ~~**Substitutions skip offering periods**~~ **Fixed** (by inspection): `attendance::teacher_day`, which
+   the substitutions page uses for candidates, resolves an offering period's programme from
+   `course_offering_targets`.
+4. ~~**Clash detection misses offering-vs-offering overlap**~~ **Fixed** (by inspection):
+   `academics::offering_clashes` compares two offerings that target the same programme in the same
+   semester, so they clash.
+5. ~~**Programme timetable grid missing offering periods**~~ **Fixed**: offering periods that target the
+   programme appear in the grid rows, marked read-only (added and removed from the offering panel on the
+   same `/admin/timetable` page, offering picker), and are also visible on the offering page, `/hub` and
+   the teacher pages.
+6. ~~**Attendance reports disagree under a programme filter**~~ **Fixed**: `by_session`, `totals` and
+   `by_student` all scope by the *student's* programme, and `reports::course_options` lists a course when
+   it belongs to the programme *or* an active student of the programme is enrolled in it (catalogue
+   courses have `programme_id IS NULL`). Regression test:
+   `the_attendance_course_filter_includes_catalogue_courses_taught_to_the_programme`.
+7. ~~**Capacity is enforced only at student confirm**~~ **Fixed**: confirmation is race-safe
+   (`SELECT … FOR UPDATE` plus a fresh enrolment count), HOD assignment goes through
+   `offering_for_confirm`, and cohort finalization refuses when the cohort does not fit. Regression test:
+   `cohort_finalization_refuses_when_the_offering_cannot_hold_the_cohort`.
 8. ~~**Catalogue course editing has no UI**~~ **Fixed**: `GET /admin/courses/:id/edit` renders the form and the
    page shows the course's append-only version history; saving appends a new version and never rewrites the
    previous one, and existing offerings stay pinned to the version they ran as.
@@ -281,9 +312,34 @@ but these gaps remain:
     both the add and edit forms are generated from it (the database CHECK is unchanged and matches it).
     An *offering's* `course_type` is still free text, deliberately, so a new university category is data
     rather than a migration; a categories table with labels would be the next step if it needs policing.
-11. Minor: no pending-approval badge in the nav; `student_course_selections.state = 'submitted'` is reserved
-    but unused (selections go draft → confirmed directly); ~9 dead-code warnings from struct fields fetched
-    but never rendered in `services/courses.rs`.
+11. Minor: no pending-approval badge in the nav (a count of pending appointments, selections and
+    corrections); `student_course_selections.state = 'submitted'` is reserved but unused (selections go
+    draft → confirmed directly).
+
+### Still open on the redesign brief
+
+`done.md` tracks the brief section by section; these are the items it lists as unfinished, so this file is
+not read as "nothing left".
+
+12. **Timetable integrity (brief §7, P0.10).** Forms no longer treat a bad id as "unassigned", but a
+    published period does not yet *require* a validated teacher, and there is no explicit `teacher_tbd`
+    state with a work-queue item.
+13. **Internals contributing to an official result (brief §7).** Internal assessments and university
+    results are kept as separate rows keyed by `exam_kind`, and the semester lives on the row, but
+    "whether an internal assessment contributes to the official result" is not modelled as a flag —
+    today it is a matter of which rows are published.
+14. **Audit detail (brief §6).** Rows carry actor/action/entity/entity_id, the log is append-only by
+    trigger, and the newer calls write a structured `details` payload (result corrections, HOD
+    appointments, role changes); many older calls still pass none, a few still discard their error with
+    `let _ =`, and there is no correlation id.
+15. **Reusable UI components (brief §8).** Tables, empty states and form errors are consistent by
+    convention, not by shared components.
+16. **Authorization test depth (brief §9).** `tests/app.rs` covers HOD-vs-other-department,
+    teacher-with-no-appointment, IT-admin-vs-any-programme and Super-Admin-vs-IT-admin through the real
+    router; the same matrix for student-vs-student, teacher-vs-assigned-course and CMS ownership is still
+    missing.
+17. **JS behaviour coverage (brief §9).** The `data-*` hooks in `app.js` have no automated test (there is no
+    browser in this environment); they were verified by reading the script and the rendered markup.
 
 Previously flagged bugs that have since been fixed:
 

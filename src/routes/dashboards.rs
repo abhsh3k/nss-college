@@ -38,10 +38,12 @@ pub async fn admin(
 ) -> Result<AdminTemplate, AppError> {
     Ok(AdminTemplate {
         shell: Shell::build(&user, &session).await?,
-        is_admin: user.role == Role::Admin,
+        // The Super Admin holds every IT-admin power, so it gets the same
+        // overview cards and the same extra panels.
+        is_admin: matches!(user.role, Role::Admin | Role::SuperAdmin),
         counts: users::overview_counts(&s.db).await?,
         areas: match user.role {
-            Role::Admin => sections::ADMIN,
+            Role::Admin | Role::SuperAdmin => sections::ADMIN,
             // The Principal oversees the academic areas; the content cards stay
             // with the roles that may actually publish.
             Role::Principal => sections::HOD,

@@ -45,9 +45,13 @@ fn group(title: Option<&'static str>, items: Vec<NavItem>) -> NavGroup {
     NavGroup { title, items }
 }
 
-fn nav_for(user: &AuthUser) -> Vec<NavGroup> {
-    let nav = match user.role {
-        Role::Admin => vec![
+/// The IT administrator's navigation: every management area it may reach.
+///
+/// The Super Admin is a superset of the IT admin, so it sees this list too (see
+/// [`nav_for`]); the difference between the two is the extra root-authority
+/// powers, not a narrower area.
+fn admin_groups() -> Vec<NavGroup> {
+    vec![
             group(
                 None,
                 vec![
@@ -117,7 +121,24 @@ fn nav_for(user: &AuthUser) -> Vec<NavGroup> {
                 Some("Settings"),
                 vec![item("Site settings", "/admin/settings", )],
             ),
-        ],
+    ]
+}
+
+fn nav_for(user: &AuthUser) -> Vec<NavGroup> {
+    // Root authority: the management areas above, plus the screen where roles,
+    // recovery and the emergency reopening of results live.
+    if user.role == Role::SuperAdmin {
+        let mut nav = admin_groups();
+        nav.push(group(
+            Some("Root authority"),
+            vec![item("Roles and recovery", "/admin/roles", )],
+        ));
+        return nav;
+    }
+    let nav = match user.role {
+        Role::Admin => admin_groups(),
+        // Returned above; listed so the match stays exhaustive.
+        Role::SuperAdmin => admin_groups(),
         Role::Principal => vec![
             group(
                 None,
@@ -339,6 +360,18 @@ mod tests {
         ] {
             assert!(links.contains(&old), "the admin nav lost {old}");
         }
+    }
+
+    #[test]
+    fn the_super_admin_gets_the_admin_areas_plus_root_authority() {
+        let links = hrefs(&nav_for(&user(Role::SuperAdmin, false)));
+        // Root authority is a superset of the IT admin, not a narrower area.
+        for area in ["/admin/people", "/admin/academics", "/admin/settings"] {
+            assert!(links.contains(&area), "the Super Admin nav lost {area}");
+        }
+        assert!(links.contains(&"/admin/roles"));
+        // The root-only screen is never offered to anyone else.
+        assert!(!hrefs(&nav_for(&user(Role::Admin, false))).contains(&"/admin/roles"));
     }
 
     #[test]

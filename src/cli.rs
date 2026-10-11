@@ -1,6 +1,7 @@
 //! Command-line helpers, run instead of starting the server (normally):
 //!
-//!   cargo run -- create-user <admin|staff|faculty|student> <email> "<Full name>" [password]
+//!   cargo run -- create-user <super_admin|admin|principal|staff|faculty|student> <email> "<Full name>" [password]
+//!   cargo run -- set-role <super_admin|admin> <email>
 //!   cargo run -- set-password <email>
 //!   cargo run -- seed-demo-users
 //!   cargo run -- backup [--list]
@@ -17,7 +18,7 @@ use sqlx::PgPool;
 
 use crate::{
     auth::{password, Role},
-    services::{backup, maintenance, people, users},
+    services::{backup, maintenance, people, super_admin, users},
 };
 
 /// Returns true when a command was handled and the server should not start.
@@ -25,6 +26,13 @@ pub async fn run(args: &[String], db: &PgPool) -> bool {
     match args.first().map(String::as_str) {
         Some("create-user") => {
             if let Err(msg) = create_user(&args[1..], db).await {
+                eprintln!("error: {msg}");
+                std::process::exit(1);
+            }
+            true
+        }
+        Some("set-role") => {
+            if let Err(msg) = set_role(&args[1..], db).await {
                 eprintln!("error: {msg}");
                 std::process::exit(1);
             }
@@ -98,7 +106,8 @@ pub async fn run(args: &[String], db: &PgPool) -> bool {
         Some(other) => {
             eprintln!(
                 "unknown command: {other}\n\
-                 usage: cargo run -- create-user <admin|staff|faculty|student> <email> \"<Full name>\"\n\
+                 usage: cargo run -- create-user <super_admin|admin|principal|staff|faculty|student> <email> \"<Full name>\"\n\
+                 \x20      cargo run -- set-role <super_admin|admin> <email>\n\
                  \x20      cargo run -- set-password <email>\n\
                  \x20      cargo run -- seed-demo-users\n\
                  \x20      cargo run -- backup [--list]\n\
@@ -181,13 +190,14 @@ async fn backup_command(args: &[String], db: &PgPool) -> Result<(), String> {
 
 async fn create_user(args: &[String], db: &PgPool) -> Result<(), String> {
     if !(3..=4).contains(&args.len()) {
-        return Err("usage: cargo run -- create-user <admin|staff|faculty|student> <email> \"<Full name>\"".into());
+        return Err("usage: cargo run -- create-user <super_admin|admin|principal|staff|faculty|student> <email> \"<Full name>\"".into());
     }
     let role_arg = &args[0];
     let email = &args[1];
     let full_name = &args[2];
     let maybe_pw = args.get(3).map(String::as_str);
-    let role = Role::parse(role_arg).ok_or("role must be admin, staff, faculty, student or alumni")?;
+    let role = Role::parse(role_arg)
+        .ok_or("role must be super_admin, admin, principal, staff, faculty, student or alumni")?;
     if !email.contains('@') {
         return Err("email must contain @ (students without email can use admission-number@college.local)".into());
     }
@@ -198,8 +208,9 @@ async fn create_user(args: &[String], db: &PgPool) -> Result<(), String> {
     };
 
     let hash = password::hash_blocking(pw).await.map_err(|_| "could not hash password".to_string())?;
-    // Everyone except the first administrator must replace the password they were given.
-    let must_change = role != Role::Admin;
+    // The operator roles — the Super Admin and the IT admin — set their own
+    // password here; everyone else must replace the one they were given.
+    let must_change = !matches!(role, Role::SuperAdmin | Role::Admin);
     let id = users::create(db, email.trim(), full_name.trim(), role_arg, &hash, must_change)
         .await
         .map_err(|e| match e.as_database_error().and_then(|d| d.code()).as_deref() {
@@ -259,6 +270,69 @@ async fn set_password(args: &[String], db: &PgPool) -> Result<(), String> {
     Ok(())
 }
 
+/// The roles `set-role` may set: the two technical roles the Super Admin
+/// screen also manages. `principal` is deliberately not one of them — academic
+/// authority is recorded as an effective-dated appointment, not as an account
+/// role — and the departmental roles belong on the appointments screen.
+fn technical_role_arg(arg: &str) -> Result<&'static str, String> {
+    let role = arg.trim();
+    super_admin::TECHNICAL_ROLES
+        .iter()
+        .copied()
+        .find(|r| *r == role)
+        .ok_or_else(|| "role must be super_admin or admin".to_string())
+}
+
+/// Give an existing account one of the technical roles.
+///
+/// This is the operator's break-glass path for root authority: the screen that
+/// manages roles needs an account that already holds it, so when no root
+/// account can be reached the CLI is the only way back in. The rule itself is
+/// the same one the screen uses (`services::super_admin::set_role`), so the
+/// last active Super Admin can be promoted from here but never demoted here
+/// either, and the change revokes any session the account holds.
+async fn set_role(args: &[String], db: &PgPool) -> Result<(), String> {
+    let [role_arg, email] = args else {
+        return Err("usage: cargo run -- set-role <super_admin|admin> <email>".into());
+    };
+    let role = technical_role_arg(role_arg)?;
+    let email = email.trim();
+    let id: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE lower(email) = lower($1)")
+        .bind(email)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(id) = id else {
+        return Err(format!("no account with email {email}"));
+    };
+
+    match super_admin::set_role(db, id, role).await.map_err(|e| e.to_string())? {
+        super_admin::RoleChange::Done => {
+            let _ = users::audit_detail(
+                db,
+                None,
+                "user_role_changed_cli",
+                "user",
+                Some(id),
+                serde_json::json!({ "role": role }),
+            )
+            .await;
+            println!("{email} is now {role}.");
+            Ok(())
+        }
+        super_admin::RoleChange::NotFound => Err("that account no longer exists".into()),
+        super_admin::RoleChange::UnknownRole => {
+            Err("role must be super_admin or admin".into())
+        }
+        super_admin::RoleChange::LastSuperAdmin => Err(
+            "that is the last active Super Admin; promote another account first".into(),
+        ),
+        super_admin::RoleChange::StillPrincipal => Err(
+            "that account is the Principal; end the Principal appointment instead".into(),
+        ),
+    }
+}
+
 /// One seeded account, ready to be printed.
 struct Seeded {
     role: &'static str,
@@ -314,6 +388,29 @@ pub async fn seed_demo_users(db: &PgPool) -> Result<Vec<String>, String> {
 
     // Give an account the generated password whether or not it already exists,
     // so the printed credentials are always the ones that will work.
+
+    // ---- Super Admin: root authority on the loopback management listener ----
+    for (email, name) in [("owner@college.local", "System Owner")] {
+        let plain = password::temporary();
+        let hash = hash_for(&plain).await?;
+        if let Some(id) = existing_id(db, email).await? {
+            users::set_password(db, id, &hash)
+                .await
+                .map_err(|e| e.to_string())?;
+        } else {
+            let id = users::create(db, email, name, "super_admin", &hash, false)
+                .await
+                .map_err(|e| e.to_string())?;
+            let _ = users::audit(db, None, "user_created_seed", "user", Some(id)).await;
+        }
+        out.push(Seeded {
+            role: "super_admin",
+            name: name.to_string(),
+            login: email.to_string(),
+            password: plain,
+            admission_no: None,
+        });
+    }
 
     // ---- IT administrator (must_change_password = false, like create-user) ----
     for (email, name) in [("admin@college.local", "Site Administrator")] {
@@ -480,10 +577,12 @@ pub async fn seed_demo_users(db: &PgPool) -> Result<Vec<String>, String> {
 
     let mut lines = Vec::new();
     lines.push("SEED: demo accounts ready. Sign in at /login with these:".to_string());
-    lines.push(format!("{:<9} {:<22} {:<26} {}", "ROLE", "NAME", "LOGIN", "PASSWORD"));
+    // The role column fits `super_admin` (11 characters) without colliding
+    // with the name beside it.
+    lines.push(format!("{:<12} {:<22} {:<26} {}", "ROLE", "NAME", "LOGIN", "PASSWORD"));
     lines.push("-".repeat(88));
     for s in &out {
-        lines.push(format!("{:<9} {:<22} {:<26} {}", s.role, s.name, s.login, s.password));
+        lines.push(format!("{:<12} {:<22} {:<26} {}", s.role, s.name, s.login, s.password));
     }
     lines.push(format!(
         "SEED: student admission numbers: {}",
@@ -494,4 +593,41 @@ pub async fn seed_demo_users(db: &PgPool) -> Result<Vec<String>, String> {
             .join(", ")
     ));
     Ok(lines)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_role_only_accepts_the_two_technical_roles() {
+        assert_eq!(technical_role_arg("super_admin"), Ok("super_admin"));
+        assert_eq!(technical_role_arg(" admin "), Ok("admin"));
+        // Academic authority is an appointment, not an account role, and the
+        // departmental roles belong on the appointments screen.
+        for refused in ["principal", "staff", "faculty", "student", "alumni", ""] {
+            assert!(
+                technical_role_arg(refused).is_err(),
+                "{refused} must be refused by set-role"
+            );
+        }
+    }
+
+    #[test]
+    fn create_user_accepts_every_role_its_usage_line_documents() {
+        for name in [
+            "super_admin",
+            "admin",
+            "principal",
+            "staff",
+            "faculty",
+            "student",
+            "alumni",
+        ] {
+            assert!(
+                Role::parse(name).is_some(),
+                "{name} is documented but not accepted"
+            );
+        }
+    }
 }

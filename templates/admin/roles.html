@@ -1,0 +1,121 @@
+{% extends "layouts/app.html" %}
+{% block title %}Roles and recovery{% endblock %}
+{% block content %}
+<h1 class="font-display text-3xl font-semibold md:text-4xl">Roles and recovery</h1>
+<p class="mt-3 max-w-2xl text-ink/80">Root authority. This screen is only reachable on the management listener bound to <code>127.0.0.1</code>: it manages who holds college-wide roles, recovers a locked-out account, appoints the Principal, and can reopen an already-finalized academic record with a recorded reason.</p>
+
+{% if error.is_some() %}
+<p class="mt-4 rounded border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">{{ error.as_deref().unwrap_or("") }}</p>
+{% endif %}
+
+<h2 class="mt-8 font-display text-2xl font-semibold">College-wide accounts</h2>
+<p class="mt-2 max-w-2xl text-sm text-ink/70">The IT administrator cannot create a Super Admin, cannot promote anyone into these roles, and cannot demote the last active Super Admin. Demoting or promoting an account revokes its live sessions at once.</p>
+<div class="mt-4 overflow-x-auto">
+  <table class="w-full min-w-[46rem] text-left">
+    <thead>
+      <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+        <th scope="col" class="py-2 pr-4 font-medium">Account</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Role</th>
+        <th scope="col" class="py-2 pr-4 font-medium">State</th>
+        <th scope="col" class="py-2 font-medium">Set role</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in accounts %}
+      <tr class="border-b border-ink/10">
+        <td class="py-3 pr-4">
+          <span class="font-medium">{{ a.full_name }}</span>
+          <span class="block text-sm text-ink/70">{{ a.email }}</span>
+        </td>
+        <td class="py-3 pr-4">{{ a.role_label }}</td>
+        <td class="py-3 pr-4 text-sm">
+          {% if !a.is_active %}<span class="text-rose-700">Deactivated</span>
+          {% else if a.locked %}<span class="text-amber-700">Locked out</span>
+          {% else %}<span class="text-emerald-700">Active</span>{% endif %}
+        </td>
+        <td class="py-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <form method="post" action="/admin/roles/{{ a.id }}/role" class="flex items-center gap-2">
+              <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+              <label for="role_{{ a.id }}" class="sr-only">Role for {{ a.full_name }}</label>
+              <select id="role_{{ a.id }}" name="role" class="rounded border border-ink/40 bg-white px-3 py-2">
+                {% for r in roles %}<option value="{{ r.value }}" {% if a.role == r.value %}selected{% endif %}>{{ r.label }}</option>{% endfor %}
+              </select>
+              <button type="submit" class="rounded border border-ink/40 px-3 py-2 font-semibold hover:bg-mist">Set</button>
+            </form>
+            {% if a.locked %}
+            <form method="post" action="/admin/roles/{{ a.id }}/unlock" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+              <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Clear lockout<span class="sr-only"> for {{ a.full_name }}</span></button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if accounts.is_empty() %}<p class="py-6 text-ink/70">No accounts hold a college-wide role.</p>{% endif %}
+</div>
+
+<h2 class="mt-10 font-display text-2xl font-semibold">Principal appointment</h2>
+<p class="mt-2 max-w-2xl text-sm text-ink/70">The Super Admin appoints and activates the Principal, with effective dates and an audit trail. Root authority cannot also hold the office.</p>
+{% if principal.is_some() %}
+{% let p = principal.as_ref().unwrap() %}
+<div class="mt-4 flex flex-wrap items-center justify-between gap-4 rounded border border-ink/15 bg-white p-5">
+  <div>
+    <p class="font-medium">{{ p.name }}</p>
+    <p class="text-sm text-ink/70">In office since {{ p.started_label }} · ends {{ p.ends_label }}</p>
+  </div>
+  <form method="post" action="/admin/root/principal/{{ p.assignment_id }}/revoke" data-confirm="End this Principal appointment?">
+    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+    <button type="submit" class="rounded border border-ink/40 px-4 py-2 font-semibold hover:bg-mist">End appointment</button>
+  </form>
+</div>
+{% else %}
+<form method="post" action="/admin/root/principal" class="mt-4 grid gap-3 rounded border border-ink/15 bg-white p-5">
+  <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+  <div>
+    <label for="principal_user" class="block text-sm font-semibold">Account</label>
+    <select id="principal_user" name="user_id" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+      <option value="">Choose an account</option>
+      {% for c in candidates %}<option value="{{ c.user_id }}">{{ c.name }} — {{ c.role }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="principal_ends" class="block text-sm font-semibold">End date (optional)</label>
+    <input id="principal_ends" name="ends_at" type="date" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+    <p class="mt-1 text-sm text-ink/70">Leave blank for an open-ended appointment.</p>
+  </div>
+  <div>
+    <label for="principal_reason" class="block text-sm font-semibold">Reason</label>
+    <input id="principal_reason" name="reason" maxlength="300" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+  </div>
+  <button type="submit" class="justify-self-start rounded bg-brand px-5 py-2 font-semibold text-chalk hover:bg-ink">Appoint Principal</button>
+</form>
+{% endif %}
+
+<h2 class="mt-10 font-display text-2xl font-semibold">Emergency intervention in results</h2>
+<p class="mt-2 max-w-2xl text-sm text-ink/70">Reopening a finalized course returns it to <em>reviewed</em> so the ordinary correction and finalize flow applies again. Every locked mark is copied into the mark history first, so the value that was in force is preserved; the reason is recorded against your account.</p>
+{% if finalized.is_empty() %}
+<p class="mt-4 rounded border border-ink/15 bg-white p-5 text-ink/70">No course is currently finalized.</p>
+{% else %}
+<form method="post" action="/admin/root/reopen" class="mt-4 grid gap-3 rounded border border-ink/15 bg-white p-5">
+  <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+  <div>
+    <label for="reopen_course" class="block text-sm font-semibold">Finalized course</label>
+    <select id="reopen_course" name="course" required class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+      <option value="">Choose a course</option>
+      {% for f in finalized %}
+      <option value="{{ f.programme_id }}:{{ f.semester }}:{{ f.course_id }}">{{ f.programme }} · semester {{ f.semester }} · {{ f.code }} {{ f.title }} ({{ f.marks }} mark(s))</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="reopen_reason" class="block text-sm font-semibold">Reason (recorded in the audit log)</label>
+    <input id="reopen_reason" name="reason" required maxlength="300" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+  </div>
+  <button type="submit" class="justify-self-start rounded border border-rose-700 px-5 py-2 font-semibold text-rose-700 hover:bg-rose-50" data-confirm="Reopen this finalized course?">Reopen finalized course</button>
+</form>
+{% endif %}
+{% endblock %}

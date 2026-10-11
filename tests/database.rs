@@ -13,7 +13,7 @@ use sqlx::PgPool;
 
 use nss_college::services::{
     academics, appointments, content, content_admin, courses, exams, notifications, reports,
-    site_admin, users,
+    site_admin, super_admin, users,
     marks::{self, CorrectionOutcome},
 };
 
@@ -1247,4 +1247,231 @@ async fn a_published_update_keeps_its_stored_publish_time(pool: PgPool) {
     let after = content_admin::notice_for_edit(&pool, id).await.unwrap().unwrap();
     assert_eq!(after.publish_at, "2020-05-05T09:30", "the publish time is kept");
     assert_eq!(after.title, "Renamed");
+}
+
+// ---------- Super Admin: root authority ----------
+
+async fn role_of(pool: &PgPool, user_id: i64) -> String {
+    sqlx::query_scalar("SELECT role FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .expect("read role")
+}
+
+#[sqlx::test]
+async fn the_last_super_admin_cannot_be_demoted_or_deactivated(pool: PgPool) {
+    let root = user(&pool, "root@example.com", "super_admin").await;
+    let it = user(&pool, "it@example.com", "admin").await;
+
+    assert_eq!(super_admin::active_super_admins(&pool).await.unwrap(), 1);
+
+    // The only root account keeps root authority, however it is asked to lose it.
+    assert_eq!(
+        super_admin::set_role(&pool, root, "admin").await.unwrap(),
+        super_admin::RoleChange::LastSuperAdmin
+    );
+    assert!(
+        !super_admin::deactivation_allowed(&pool, root).await.unwrap(),
+        "the last recovery account must not be deactivatable"
+    );
+    assert_eq!(role_of(&pool, root).await, "super_admin");
+
+    // A second root account lifts the guard, and then it applies to neither.
+    assert_eq!(
+        super_admin::set_role(&pool, it, "super_admin").await.unwrap(),
+        super_admin::RoleChange::Done
+    );
+    assert_eq!(super_admin::active_super_admins(&pool).await.unwrap(), 2);
+    assert!(super_admin::deactivation_allowed(&pool, root).await.unwrap());
+    assert_eq!(
+        super_admin::set_role(&pool, root, "admin").await.unwrap(),
+        super_admin::RoleChange::Done
+    );
+    assert_eq!(role_of(&pool, root).await, "admin");
+
+    // A deactivated root account is not a recovery account either.
+    sqlx::query("UPDATE users SET is_active = false WHERE id = $1")
+        .bind(it)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        !super_admin::deactivation_allowed(&pool, it).await.unwrap(),
+        "an inactive account cannot be the last root account"
+    );
+}
+
+#[sqlx::test]
+async fn a_role_change_revokes_the_accounts_live_sessions(pool: PgPool) {
+    let root = user(&pool, "root@example.com", "super_admin").await;
+    let it = user(&pool, "it@example.com", "admin").await;
+    let before = super_admin::set_role(&pool, it, "super_admin").await.unwrap();
+    assert_eq!(before, super_admin::RoleChange::Done);
+
+    let version: i64 = sqlx::query_scalar("SELECT session_version FROM users WHERE id = $1")
+        .bind(it)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(version, 1, "a promotion revokes the session the account held");
+
+    // Setting the role it already has is a no-op, not a revocation.
+    assert_eq!(
+        super_admin::set_role(&pool, it, "super_admin").await.unwrap(),
+        super_admin::RoleChange::Done
+    );
+    let unchanged: i64 = sqlx::query_scalar("SELECT session_version FROM users WHERE id = $1")
+        .bind(it)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(unchanged, 1);
+
+    // Roles this screen does not own are refused outright.
+    assert_eq!(
+        super_admin::set_role(&pool, it, "student").await.unwrap(),
+        super_admin::RoleChange::UnknownRole
+    );
+    assert_eq!(
+        super_admin::set_role(&pool, 999_999, "admin").await.unwrap(),
+        super_admin::RoleChange::NotFound
+    );
+    let _ = root;
+}
+
+#[sqlx::test]
+async fn a_super_admin_appoints_and_revokes_the_principal(pool: PgPool) {
+    let root = user(&pool, "root@example.com", "super_admin").await;
+    let staff = user(&pool, "staff@example.com", "staff").await;
+
+    // Root authority and the Principal office are separate: no self-appointment.
+    assert!(super_admin::appoint_principal(&pool, root, None, root, "myself")
+        .await
+        .is_err());
+
+    let assignment = super_admin::appoint_principal(&pool, staff, Some("2099-01-01"), root, "vacancy")
+        .await
+        .unwrap();
+    assert_eq!(role_of(&pool, staff).await, "principal");
+    let principal = super_admin::current_principal(&pool).await.unwrap();
+    assert!(principal.is_some(), "the appointment is in office");
+    assert_eq!(super_admin::active_super_admins(&pool).await.unwrap(), 1);
+
+    // One Principal at a time: the second appointment is refused and rolled back.
+    let other = user(&pool, "other@example.com", "staff").await;
+    assert!(super_admin::appoint_principal(&pool, other, None, root, "second")
+        .await
+        .is_err());
+    assert_eq!(
+        role_of(&pool, other).await,
+        "staff",
+        "a refused appointment must leave the account untouched"
+    );
+
+    // The role table cannot demote a Principal behind the appointment's back.
+    assert_eq!(
+        super_admin::set_role(&pool, staff, "admin").await.unwrap(),
+        super_admin::RoleChange::StillPrincipal
+    );
+
+    // Ending the appointment returns the account to office staff.
+    let ended = super_admin::revoke_principal(&pool, assignment, root).await.unwrap();
+    assert_eq!(ended, Some(staff));
+    assert_eq!(role_of(&pool, staff).await, "staff");
+    assert!(super_admin::current_principal(&pool).await.unwrap().is_none());
+}
+
+#[sqlx::test]
+async fn an_emergency_reopen_returns_a_finalized_course_to_review(pool: PgPool) {
+    let (programme, course_id, mark) = a_filed_mark(&pool).await;
+    let root = user(&pool, "root@example.com", "super_admin").await;
+    marks::finalize_course(&pool, programme, 3, course_id, root)
+        .await
+        .unwrap();
+
+    let locked = super_admin::list_finalized_courses(&pool).await.unwrap();
+    assert_eq!(locked.len(), 1, "the locked course is offered for reopening");
+    assert_eq!(locked[0].course_id, course_id);
+    assert_eq!(locked[0].marks, 1);
+
+    let reopened = super_admin::reopen_finalized(
+        &pool,
+        programme,
+        3,
+        course_id,
+        root,
+        "registrar corrected a wrong batch",
+    )
+    .await
+    .unwrap();
+    assert_eq!(reopened, 1);
+
+    let state: String = sqlx::query_scalar("SELECT workflow_state FROM marks WHERE id = $1")
+        .bind(mark)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(state, "reviewed");
+
+    // The value that was in force is preserved, with the reason and the actor.
+    let (kept, reason, by): (f64, String, i64) = sqlx::query_as(
+        r#"SELECT marks_obtained::float8, change_reason, changed_by
+             FROM mark_history
+            WHERE mark_id = $1 AND workflow_state = 'superseded'"#,
+    )
+    .bind(mark)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, 42.0);
+    assert_eq!(reason, "registrar corrected a wrong batch");
+    assert_eq!(by, root);
+
+    // It is no longer locked, so nothing is left to reopen.
+    assert!(super_admin::list_finalized_courses(&pool).await.unwrap().is_empty());
+    assert_eq!(
+        super_admin::reopen_finalized(&pool, programme, 3, course_id, root, "again")
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[sqlx::test]
+async fn a_locked_out_account_can_be_unlocked_without_touching_its_password(pool: PgPool) {
+    let root = user(&pool, "root@example.com", "super_admin").await;
+    let target = user(&pool, "it@example.com", "admin").await;
+    let before = users::password_hash(&pool, target).await.unwrap();
+
+    // Not locked: the screen says so rather than claiming to have recovered it.
+    assert!(!super_admin::unlock_account(&pool, target).await.unwrap());
+
+    for _ in 0..5 {
+        users::record_failed_login(&pool, target).await.unwrap();
+    }
+    let locked: bool = sqlx::query_scalar(
+        "SELECT locked_until IS NOT NULL AND locked_until > now() FROM users WHERE id = $1",
+    )
+    .bind(target)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(locked, "five wrong passwords lock the account");
+
+    assert!(super_admin::unlock_account(&pool, target).await.unwrap());
+    let (still_locked, failed): (bool, i32) = sqlx::query_as(
+        "SELECT COALESCE(locked_until > now(), false), failed_logins FROM users WHERE id = $1",
+    )
+    .bind(target)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!still_locked);
+    assert_eq!(failed, 0);
+    assert_eq!(
+        users::password_hash(&pool, target).await.unwrap(),
+        before
+    );
+    let _ = root;
 }

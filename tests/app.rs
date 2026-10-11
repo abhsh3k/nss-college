@@ -399,6 +399,78 @@ async fn the_it_admin_may_act_for_any_programme(pool: PgPool) {
     assert_ne!(status, StatusCode::FORBIDDEN);
 }
 
+#[sqlx::test]
+async fn root_authority_belongs_to_the_super_admin_alone(pool: PgPool) {
+    init_session_store(&pool).await;
+    let it = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+    make_user(&pool, "root@example.com", "super_admin", "Password123!").await;
+    let app = management_app(&pool);
+
+    // The IT administrator works in the management area, but does not hold root
+    // authority: it can neither open the screen nor promote itself through it.
+    let it_cookie = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+    let (status, _) = get_with(app.clone(), "/admin/roles", &it_cookie).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "root authority is not the IT admin's");
+    let (status, _) = post_form(
+        app.clone(),
+        &format!("/admin/roles/{it}/role"),
+        &it_cookie,
+        "csrf_token=x&role=super_admin".to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "an IT admin must not promote itself");
+
+    // The Super Admin reaches the screen, and a change made there is real.
+    let root_cookie = sign_in(app.clone(), "root@example.com", "Password123!").await;
+    let (status, body) = get_with(app.clone(), "/admin/roles", &root_cookie).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Roles and recovery"));
+    assert!(body.contains("admin@example.com"), "the account table lists the IT admin");
+    let csrf = extract_csrf(&body);
+
+    // These writes need a fresh password check, exactly like the other
+    // critical operations.
+    let (status, _) = post_form(
+        app.clone(),
+        "/account/reauth",
+        &root_cookie,
+        format!("csrf_token={csrf}&password=Password123!&next=%2Fadmin%2Froles"),
+    )
+    .await;
+    assert!(status.is_redirection(), "re-entry should redirect, got {status}");
+
+    let (status, _) = post_form(
+        app.clone(),
+        &format!("/admin/roles/{it}/role"),
+        &root_cookie,
+        format!("csrf_token={csrf}&role=super_admin"),
+    )
+    .await;
+    assert!(status.is_redirection(), "a role change redirects, got {status}");
+    let role: String = sqlx::query_scalar("SELECT role FROM users WHERE id = $1")
+        .bind(it)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(role, "super_admin", "the promotion took effect");
+
+    // The account is demoted again: with two root accounts, the guard allows it.
+    let (status, _) = post_form(
+        app,
+        &format!("/admin/roles/{it}/role"),
+        &root_cookie,
+        format!("csrf_token={csrf}&role=admin"),
+    )
+    .await;
+    assert!(status.is_redirection(), "a role change redirects, got {status}");
+    let role: String = sqlx::query_scalar("SELECT role FROM users WHERE id = $1")
+        .bind(it)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(role, "admin");
+}
+
 /// Post a `multipart/form-data` body, the shape the content forms use.
 async fn post_multipart(
     app: axum::Router,
