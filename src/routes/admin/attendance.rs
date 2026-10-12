@@ -109,7 +109,7 @@ pub async fn report(
     let (rows, sessions, totals, low_percent, leave_counts) = gather(&s, &filter).await?;
 
     Ok(ReportPage {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
         from_value: filter.from.clone(),
         to_value: filter.to.clone(),
         programme_id: filter.programme_id,

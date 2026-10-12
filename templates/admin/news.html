@@ -32,7 +32,7 @@
       {% for n in news %}
       <tr class="border-b border-ink/10 align-top">
         <td class="py-3 pr-4 font-medium">{{ n.title }}{% if n.has_image %} <span class="ml-1 rounded bg-mist px-1.5 py-0.5 text-xs">Photo</span>{% endif %}</td>
-        <td class="py-3 pr-4 text-sm">{{ n.status }}</td>
+        <td class="py-3 pr-4 text-sm">{{ n.status_badge()|safe }}</td>
         <td class="py-3 pr-4 text-sm text-ink/80">{{ n.published_label }}</td>
         <td class="py-3 text-right">
           <div class="flex flex-wrap items-center justify-end gap-3">
@@ -55,7 +55,7 @@
     </tbody>
   </table>
   {% if news.is_empty() %}
-  <p class="py-8 text-ink/70">No news items match. Add one with the button above.</p>
+  {% include "partials/empty_state.html" %}
   {% endif %}
 </div>
 {% endblock %}

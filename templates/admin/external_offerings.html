@@ -34,12 +34,12 @@
         </td>
         <td class="py-2 text-right whitespace-nowrap">
           {% if a.status == "pending" %}
-          <form method="post" action="/admin/courses/external/{{ a.id }}/decide" class="inline">
+          <form method="post" action="{{ shell.base }}/courses/external/{{ a.id }}/decide" class="inline">
             <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
             <input type="hidden" name="decision" value="approve">
             <button type="submit" class="rounded bg-brand px-3 py-1.5 text-sm font-semibold text-chalk hover:bg-ink">Approve</button>
           </form>
-          <form method="post" action="/admin/courses/external/{{ a.id }}/decide" class="inline ml-2">
+          <form method="post" action="{{ shell.base }}/courses/external/{{ a.id }}/decide" class="inline ml-2">
             <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
             <input type="hidden" name="decision" value="reject">
             <input type="hidden" name="note" value="Not offered to our students this year.">

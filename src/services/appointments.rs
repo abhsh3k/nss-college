@@ -393,6 +393,15 @@ pub struct PendingHeadRow {
     pub requested_label: String,
 }
 
+/// How many head appointments are waiting for a decision. Used for the
+/// pending-approval badge, so it stays a single indexed count rather than a
+/// full list shipped to every page.
+pub async fn count_pending_heads(db: &PgPool) -> Res<i64> {
+    sqlx::query_scalar("SELECT count(*) FROM role_assignments WHERE role IN ('hod', 'acting_hod') AND status = 'pending'")
+        .fetch_one(db)
+        .await
+}
+
 /// The pending head appointments, oldest first.
 pub async fn list_pending_heads(db: &PgPool) -> Res<Vec<PendingHeadRow>> {
     sqlx::query_as::<_, PendingHeadRow>(

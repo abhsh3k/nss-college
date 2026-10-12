@@ -59,7 +59,7 @@ pub async fn my_courses(
     session: Session,
     StudentOnly(user): StudentOnly,
 ) -> Result<MyCoursesTemplate, AppError> {
-    let shell = Shell::build(&user, &session).await?;
+    let shell = Shell::build(&user, &session, &s.db).await?;
     let Some(p) = hub::student_profile(&s.db, user.id).await? else {
         return Ok(MyCoursesTemplate {
             shell,

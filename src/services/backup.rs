@@ -142,9 +142,23 @@ pub async fn run(db: &PgPool, cfg: &BackupConfig) -> Result<BackupReport, String
     let removed_old = enforce_retention(&cfg.dir, cfg.keep).await;
 
     // Record it so `due_for_backup` and operators can both see when it last ran.
-    super::users::audit(db, None, "backup_completed", "backup", None)
-        .await
-        .map_err(|e| format!("backup written to {} but the audit row failed: {e}", run_dir.display()))?;
+    // The run has no HTTP request behind it, so it carries no correlation id;
+    // the details payload says exactly what was written instead.
+    super::users::audit_detail(
+        db,
+        None,
+        "backup_completed",
+        "backup",
+        None,
+        serde_json::json!({
+            "path": run_dir.display().to_string(),
+            "database_bytes": database_bytes,
+            "uploads_bytes": uploads_bytes,
+            "removed_old": removed_old,
+        }),
+    )
+    .await
+    .map_err(|e| format!("backup written to {} but the audit row failed: {e}", run_dir.display()))?;
 
     Ok(BackupReport {
         path: run_dir,

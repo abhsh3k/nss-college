@@ -6,10 +6,11 @@ use axum::{
 use serde::Deserialize;
 use tower_sessions::Session;
 
-use super::{normalise_time, parse_i32, parse_i64};
+use super::{checkbox, normalise_time, parse_i32, parse_i64};
 use crate::{
     auth::{csrf, Manager},
     error::AppError,
+    sections,
     services::{
         academics::{self, CourseRow, NewOfferingSlot, NewSlot, ProgrammeOption, SlotRow, TeacherOption},
         courses,
@@ -36,6 +37,8 @@ pub struct Day {
 
 /// Everything the timetable panel shows. `programme_id == 0` means nothing is selected yet.
 pub struct Panel {
+    /// The workspace these links belong to: `/admin` or `/hod`.
+    pub base: &'static str,
     pub csrf_token: String,
     pub programme_id: i64,
     pub semester: i32,
@@ -53,6 +56,7 @@ pub struct Panel {
 impl Panel {
     fn empty() -> Panel {
         Panel {
+            base: sections::ADMIN_BASE,
             csrf_token: String::new(),
             programme_id: 0,
             semester: 1,
@@ -69,6 +73,7 @@ impl Panel {
 
 async fn build_panel(
     s: &AppState,
+    base: &'static str,
     department: Option<i64>,
     csrf_token: String,
     programme_id: i64,
@@ -99,6 +104,7 @@ async fn build_panel(
         .collect();
     let has_offering_periods = days.iter().any(|d| d.slots.iter().any(|s| s.is_offering));
     Ok(Panel {
+        base,
         csrf_token,
         programme_id,
         semester,
@@ -117,6 +123,8 @@ async fn build_panel(
 /// Everything the offering timetable panel shows. `offering_id == 0` means
 /// nothing is selected yet.
 pub struct OfferingPanel {
+    /// The workspace these links belong to: `/admin` or `/hod`.
+    pub base: &'static str,
     pub csrf_token: String,
     pub offering_id: i64,
     pub code: String,
@@ -133,6 +141,7 @@ pub struct OfferingPanel {
 impl OfferingPanel {
     fn empty() -> OfferingPanel {
         OfferingPanel {
+            base: sections::ADMIN_BASE,
             csrf_token: String::new(),
             offering_id: 0,
             code: String::new(),
@@ -181,6 +190,7 @@ async fn build_offering_panel(
         }
     }
     Ok(OfferingPanel {
+        base: sections::base_for(&manager.user),
         csrf_token,
         offering_id,
         code: o.code,
@@ -223,7 +233,7 @@ pub async fn page(
     manager: Manager,
     Query(q): Query<PageQuery>,
 ) -> Result<TimetablePage, AppError> {
-    let shell = Shell::build(&manager.user, &session).await?;
+    let shell = Shell::build(&manager.user, &session, &s.db).await?;
     let department = manager.department();
     let sel_programme = q.programme.as_deref().and_then(parse_i64).unwrap_or(0);
     let sel_semester = q
@@ -257,7 +267,7 @@ pub async fn page(
         // One panel at a time: an offering's periods are not a programme's.
         Panel::empty()
     } else if sel_programme > 0 {
-        build_panel(&s, department, shell.csrf_token.clone(), sel_programme, sel_semester, None, None).await?
+        build_panel(&s, shell.base, department, shell.csrf_token.clone(), sel_programme, sel_semester, None, None).await?
     } else {
         Panel::empty()
     };
@@ -292,6 +302,8 @@ pub struct SlotForm {
     end_at: String,
     course_id: String,
     faculty_id: String,
+    /// "1"/"on" when the teacher is explicitly left to be assigned later.
+    teacher_tbd: String,
     room: String,
 }
 
@@ -310,7 +322,19 @@ pub async fn add_slot(
     let semester = parse_i32(&f.semester).filter(|v| (1..=8).contains(v)).ok_or(AppError::NotFound)?;
     let token = f.csrf_token.clone();
 
-    let fail = |msg: &str| build_panel(&s, manager.department(), token.clone(), programme_id, semester, None, Some(msg.to_string()));
+    let base = sections::base_for(&manager.user);
+    let fail = |msg: &str| {
+        build_panel(
+            &s,
+            base,
+            manager.department(),
+            token.clone(),
+            programme_id,
+            semester,
+            None,
+            Some(msg.to_string()),
+        )
+    };
 
     let weekday = parse_i32(&f.weekday).filter(|d| (1..=6).contains(d)).map(|d| d as i16);
     let start_at = normalise_time(&f.start_at);
@@ -326,19 +350,37 @@ pub async fn add_slot(
         return Ok(PanelTemplate { panel: fail("That course does not belong to this programme and semester.").await? });
     }
 
-    // Use the course's teacher unless a different one was chosen for this period.
-    let faculty_id = match parse_i64(&f.faculty_id).filter(|v| *v > 0) {
+    // A period is either taught by a validated teacher or explicitly marked
+    // "to be assigned". A chosen teacher always wins; the course's own teacher
+    // is the fallback; anything else is refused rather than silently created
+    // with no teacher.
+    let explicit = parse_i64(&f.faculty_id).filter(|v| *v > 0);
+    let teacher_tbd = explicit.is_none() && checkbox(&f.teacher_tbd);
+    let faculty_id = match explicit {
         Some(id) => id,
-        None => academics::course_teacher(&s.db, course_id).await?,
+        None if teacher_tbd => 0,
+        None => {
+            let course_teacher = academics::course_teacher(&s.db, course_id).await?;
+            if course_teacher <= 0 {
+                return Ok(PanelTemplate {
+                    panel: fail(
+                        "Choose an active teacher, or mark the teacher as to be assigned.",
+                    )
+                    .await?,
+                });
+            }
+            course_teacher
+        }
     };
-    if faculty_id <= 0
-        || !academics::may_manage_teacher(&s.db, faculty_id, manager.department()).await?
-        || !sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS (SELECT 1 FROM faculty WHERE id = $1 AND status = 'published')",
-        )
-        .bind(faculty_id)
-        .fetch_one(&s.db)
-        .await?
+    if !teacher_tbd
+        && (faculty_id <= 0
+            || !academics::may_manage_teacher(&s.db, faculty_id, manager.department()).await?
+            || !sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM faculty WHERE id = $1 AND status = 'published')",
+            )
+            .bind(faculty_id)
+            .fetch_one(&s.db)
+            .await?)
     {
         return Ok(PanelTemplate {
             panel: fail("Choose an active teacher in the permitted department.").await?,
@@ -350,6 +392,7 @@ pub async fn add_slot(
         semester,
         course_id,
         faculty_id,
+        teacher_tbd,
         weekday,
         start_at: start_at.clone(),
         end_at: end_at.clone(),
@@ -380,7 +423,7 @@ pub async fn add_slot(
     users::audit(&s.db, Some(manager.user.id), "timetable_slot_added", "timetable_entry", Some(id)).await?;
     let notice = format!("Added {start_at}–{end_at}.");
     Ok(PanelTemplate {
-        panel: build_panel(&s, manager.department(), token, programme_id, semester, Some(notice), None).await?,
+        panel: build_panel(&s, sections::base_for(&manager.user), manager.department(), token, programme_id, semester, Some(notice), None).await?,
     })
 }
 
@@ -418,12 +461,13 @@ pub async fn delete_slot(
         Ok(()) => {
             users::audit(&s.db, Some(manager.user.id), "timetable_slot_removed", "timetable_entry", Some(id)).await?;
             Ok(PanelTemplate {
-                panel: build_panel(&s, manager.department(), f.csrf_token, programme_id, semester, Some("Period removed.".into()), None).await?,
+                panel: build_panel(&s, sections::base_for(&manager.user), manager.department(), f.csrf_token, programme_id, semester, Some("Period removed.".into()), None).await?,
             })
         }
         Err(e) if crate::error::is_foreign_key_violation(&e) => Ok(PanelTemplate {
             panel: build_panel(
                 &s,
+                sections::base_for(&manager.user),
                 manager.department(),
                 f.csrf_token,
                 programme_id,
@@ -454,6 +498,8 @@ pub struct OfferingSlotForm {
     start_at: String,
     end_at: String,
     faculty_id: String,
+    /// "1"/"on" when the teacher is explicitly left to be assigned later.
+    teacher_tbd: String,
     room: String,
 }
 
@@ -487,20 +533,37 @@ pub async fn add_offering_slot(
         });
     }
 
-    // The course's own teacher unless a different one was chosen for this period.
+    // Same rule as the programme panel: a validated teacher, or an explicit
+    // "to be assigned". A chosen teacher wins; the offering's course teacher is
+    // the fallback; nothing else is written.
     let o = courses::offering(&s.db, offering_id).await?.ok_or(AppError::NotFound)?;
-    let faculty_id = match parse_i64(&f.faculty_id).filter(|v| *v > 0) {
+    let explicit = parse_i64(&f.faculty_id).filter(|v| *v > 0);
+    let teacher_tbd = explicit.is_none() && checkbox(&f.teacher_tbd);
+    let faculty_id = match explicit {
         Some(id) => id,
-        None => academics::course_teacher(&s.db, o.course_id).await?,
+        None if teacher_tbd => 0,
+        None => {
+            let course_teacher = academics::course_teacher(&s.db, o.course_id).await?;
+            if course_teacher <= 0 {
+                return Ok(OfferingPanelTemplate {
+                    offering_panel: fail(
+                        "Choose an active teacher, or mark the teacher as to be assigned.",
+                    )
+                    .await?,
+                });
+            }
+            course_teacher
+        }
     };
-    if faculty_id <= 0
-        || !academics::may_manage_teacher(&s.db, faculty_id, manager.department()).await?
-        || !sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS (SELECT 1 FROM faculty WHERE id = $1 AND status = 'published')",
-        )
-        .bind(faculty_id)
-        .fetch_one(&s.db)
-        .await?
+    if !teacher_tbd
+        && (faculty_id <= 0
+            || !academics::may_manage_teacher(&s.db, faculty_id, manager.department()).await?
+            || !sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM faculty WHERE id = $1 AND status = 'published')",
+            )
+            .bind(faculty_id)
+            .fetch_one(&s.db)
+            .await?)
     {
         return Ok(OfferingPanelTemplate {
             offering_panel: fail("Choose an active teacher in the permitted department.").await?,
@@ -510,6 +573,7 @@ pub async fn add_offering_slot(
     let slot = NewOfferingSlot {
         offering_id,
         faculty_id,
+        teacher_tbd,
         weekday,
         start_at: start_at.clone(),
         end_at: end_at.clone(),

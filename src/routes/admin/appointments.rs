@@ -44,7 +44,7 @@ async fn render(
     error: Option<String>,
 ) -> Result<Response, AppError> {
     Ok(AppointmentsTemplate {
-        shell: Shell::build(user, session).await?,
+        shell: Shell::build(user, session, &s.db).await?,
         heads: appointments::list_heads(&s.db).await?,
         pending: appointments::list_pending_heads(&s.db).await?,
         delegations: appointments::list_delegations(&s.db).await?,
@@ -256,7 +256,17 @@ pub async fn revoke(
         return Ok(redirect);
     }
     appointments::revoke_head(&s.db, id, user.id).await?;
-    users::audit(&s.db, Some(user.id), "appointment_revoked", "role_assignment", Some(id)).await?;
+    users::audit_detail(
+        &s.db,
+        Some(user.id),
+        "appointment_revoked",
+        "role_assignment",
+        Some(id),
+        // Ending a headship has a side effect (the handover task); record it as
+        // part of the action rather than leaving it implicit.
+        serde_json::json!({ "handover_task_opened": true }),
+    )
+    .await?;
     flash(&session, "Appointment ended. A handover task was opened for the successor.").await?;
     Ok(Redirect::to(LIST))
 }
@@ -301,7 +311,20 @@ pub async fn delegate(
     .await
     {
         Ok(id) => {
-            users::audit(&s.db, Some(user.id), "delegation_granted", "delegation", Some(id)).await?;
+            users::audit_detail(
+                &s.db,
+                Some(user.id),
+                "delegation_granted",
+                "delegation",
+                Some(id),
+                serde_json::json!({
+                    "delegate_user_id": target,
+                    "department_id": department,
+                    "permission": "manage_department",
+                    "ends_at": f.ends_at.trim(),
+                }),
+            )
+            .await?;
             flash(&session, "Delegation granted until that date.").await?;
             Ok(Redirect::to(LIST).into_response())
         }
@@ -331,7 +354,15 @@ pub async fn revoke_delegation(
         return Ok(redirect);
     }
     appointments::revoke_delegation(&s.db, id, user.id).await?;
-    users::audit(&s.db, Some(user.id), "delegation_revoked", "delegation", Some(id)).await?;
+    users::audit_detail(
+        &s.db,
+        Some(user.id),
+        "delegation_revoked",
+        "delegation",
+        Some(id),
+        serde_json::json!({ "revoked": true }),
+    )
+    .await?;
     flash(&session, "Delegation revoked.").await?;
     Ok(Redirect::to(LIST))
 }

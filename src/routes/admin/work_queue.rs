@@ -14,7 +14,7 @@ use crate::{
     auth::Manager,
     error::AppError,
     sections::{self, Area},
-    services::courses,
+    services::{academics, courses},
     shell::Shell,
     state::AppState,
 };
@@ -39,6 +39,8 @@ pub struct WorkQueueTemplate {
     unscheduled: Vec<courses::UnscheduledOffering>,
     /// Published offerings with no seats left.
     capacity: Vec<courses::CapacityWarning>,
+    /// Timetable periods whose teacher is still to be assigned.
+    tbd: Vec<academics::TbdPeriod>,
 }
 
 async fn department_name(s: &AppState, manager: &Manager) -> Result<String, AppError> {
@@ -75,7 +77,7 @@ pub async fn page(
         .collect();
 
     Ok(WorkQueueTemplate {
-        shell: Shell::build(&manager.user, &session).await?,
+        shell: Shell::build(&manager.user, &session, &s.db).await?,
         department_name: department_name(&s, &manager).await?,
         areas_title,
         areas,
@@ -84,6 +86,7 @@ pub async fn page(
         pending_cohorts: courses::pending_cohort_choices(&s.db, department).await?,
         unscheduled: courses::unscheduled_offerings(&s.db, department).await?,
         capacity: courses::capacity_warnings(&s.db, department).await?,
+        tbd: academics::tbd_periods(&s.db, department).await?,
     })
 }
 
@@ -102,6 +105,7 @@ mod tests {
             pending_cohorts: Vec::new(),
             unscheduled: Vec::new(),
             capacity: Vec::new(),
+            tbd: Vec::new(),
         }
         .render()
         .expect("the work queue renders")
@@ -117,6 +121,7 @@ mod tests {
             "Change requests",
             "Cohort decisions not finalised",
             "Published offerings with no timetable",
+            "Periods with no teacher",
             "Capacity warnings",
         ] {
             assert!(html.contains(heading), "lost the {heading} section");

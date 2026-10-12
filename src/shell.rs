@@ -6,12 +6,26 @@ use crate::{
     auth::{csrf, AuthUser, Role},
     error::{internal, AppError},
     models::SiteInfo,
+    sections,
     site,
 };
 
 pub struct NavItem {
     pub label: &'static str,
+    /// The canonical `/admin`-rooted path; see [`NavItem::url`].
     pub href: &'static str,
+}
+
+impl NavItem {
+    /// This link as it should be rendered in the workspace `base`.
+    ///
+    /// A head of department works under `/hod` on the public listener, where
+    /// the `/admin` area is not served at all, so the shared department links
+    /// are rewritten rather than duplicated. Links outside the management area
+    /// (`/teacher/...`, `/hub/...`) are returned untouched.
+    pub fn url(&self, base: &str) -> String {
+        sections::in_workspace(base, self.href)
+    }
 }
 
 /// A run of nav items under one small heading.
@@ -30,11 +44,21 @@ pub struct NavGroup {
 pub struct Shell {
     pub user_name: String,
     pub role_label: &'static str,
+    /// The workspace this caller's links are built in: [`sections::ADMIN_BASE`]
+    /// for the management area, [`sections::HOD_BASE`] for a head of
+    /// department's own pages. See [`NavItem::url`].
+    pub base: &'static str,
+    /// Where this caller's own dashboard is (`Role::home`), for breadcrumbs
+    /// that lead back out of a management-area page.
+    pub home: &'static str,
     pub nav: Vec<NavGroup>,
     pub csrf_token: String,
     pub flash: Option<String>,
     /// The college name and other chrome, from the settings cache.
     pub site: SiteInfo,
+    /// Head appointments waiting for a decision, shown as a badge on the
+    /// Appointments link. Zero for roles that cannot decide them.
+    pub pending_approvals: usize,
 }
 
 fn item(label: &'static str, href: &'static str) -> NavItem {
@@ -289,7 +313,19 @@ pub(crate) fn test_nav_for(user: &AuthUser) -> Vec<NavGroup> {
 }
 
 impl Shell {
-    pub async fn build(user: &AuthUser, session: &Session) -> Result<Shell, AppError> {
+    /// Build the shared page chrome. `db` is only read for the pending-approval
+    /// badge, and only for the roles that can actually decide those approvals.
+    pub async fn build(
+        user: &AuthUser,
+        session: &Session,
+        db: &sqlx::PgPool,
+    ) -> Result<Shell, AppError> {
+        let pending_approvals = match user.role {
+            Role::Admin | Role::SuperAdmin | Role::Principal => {
+                crate::services::appointments::count_pending_heads(db).await? as usize
+            }
+            _ => 0,
+        };
         Ok(Shell {
             user_name: if user.full_name.is_empty() {
                 user.role.label().to_string()
@@ -297,10 +333,13 @@ impl Shell {
                 user.full_name.clone()
             },
             role_label: user.role.label(),
+            base: sections::base_for(user),
+            home: user.role.home(),
             nav: nav_for(user),
             csrf_token: csrf::token(session).await?,
             flash: session.remove::<String>("flash").await.map_err(internal)?,
             site: site::cached(),
+            pending_approvals,
         })
     }
 }
@@ -391,6 +430,41 @@ mod tests {
         let links = hrefs(&nav_for(&user(Role::Faculty, false)));
         assert!(links.iter().all(|h| h.starts_with("/teacher")));
         assert!(links.contains(&"/teacher/sheet"));
+    }
+
+    /// The same links, rendered for a head of department: the department tools
+    /// move into `/hod` (the listener they sign in to), and the teacher's own
+    /// pages are left exactly as they are.
+    #[test]
+    fn the_hod_sidebar_renders_in_the_department_workspace() {
+        let nav = nav_for(&user(Role::Faculty, true));
+        let urls: Vec<String> = nav
+            .iter()
+            .flat_map(|g| g.items.iter())
+            .map(|i| i.url(crate::sections::HOD_BASE))
+            .collect();
+
+        for moved in [
+            "/hod/work-queue",
+            "/hod/notifications",
+            "/hod/departments",
+            "/hod/academics",
+            "/hod/courses",
+            "/hod/courses/offerings",
+            "/hod/timetable",
+            "/hod/substitutions",
+            "/hod/exams",
+            "/hod/marks",
+        ] {
+            assert!(urls.iter().any(|u| u == moved), "the HOD sidebar lost {moved}");
+        }
+        // Their own pages are not management paths and must not be rewritten.
+        assert!(urls.iter().any(|u| u == "/teacher"));
+        assert!(urls.iter().any(|u| u == "/teacher/reports"));
+        assert!(
+            !urls.iter().any(|u| u.starts_with("/admin")),
+            "an HOD's sidebar must not point at /admin"
+        );
     }
 
     #[test]

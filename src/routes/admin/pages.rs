@@ -49,6 +49,8 @@ pub struct IndexPage {
     pages: Vec<site_admin::PageRow>,
     filter: String,
     statuses: Vec<String>,
+    /// Shown by the shared empty-state partial when the list is empty.
+    empty_message: &'static str,
 }
 
 pub async fn index(
@@ -62,10 +64,11 @@ pub async fn index(
         Some(v) => content_admin::clean_status(v).to_string(),
     };
     Ok(IndexPage {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
         pages: site_admin::pages(&s.db, &filter).await?,
         filter,
         statuses: statuses(),
+        empty_message: "No pages match. Add one with the button above.",
     })
 }
 
@@ -147,14 +150,18 @@ pub struct FormPage {
     statuses: Vec<String>,
     /// The choices of the "position" select.
     nav_groups: Vec<NavGroupOpt>,
+    /// Read by the shared form-error partial.
+    error: Option<String>,
 }
 
 fn form_page(form: PageFormValues, shell: Shell) -> FormPage {
+    let error = form.error.clone();
     FormPage {
         shell,
         form,
         statuses: statuses(),
         nav_groups: nav_groups(),
+        error,
     }
 }
 
@@ -177,11 +184,11 @@ fn nav_groups() -> Vec<NavGroupOpt> {
 }
 
 pub async fn new_form(
-    State(_s): State<AppState>,
+    State(s): State<AppState>,
     session: Session,
     AdminOnly(user): AdminOnly,
 ) -> Result<FormPage, AppError> {
-    Ok(form_page(PageFormValues::blank(), Shell::build(&user, &session).await?))
+    Ok(form_page(PageFormValues::blank(), Shell::build(&user, &session, &s.db).await?))
 }
 
 /// The edit screen: the page's own fields plus every section, each editable in place.
@@ -214,7 +221,7 @@ pub async fn edit_form(
         defaults: layout::defaults(&s.db).await?,
         statuses: statuses(),
         nav_groups: nav_groups(),
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
     })
 }
 
@@ -235,7 +242,7 @@ async fn edit_page(
         defaults: layout::defaults(&s.db).await?,
         statuses: statuses(),
         nav_groups: nav_groups(),
-        shell: Shell::build(user, session).await?,
+        shell: Shell::build(user, session, &s.db).await?,
     })
 }
 
@@ -289,7 +296,7 @@ pub async fn create(
 
     let values = read_form(&f, 0);
     if values.error.is_some() {
-        return Ok(form_page(values, Shell::build(&user, &session).await?).into_response());
+        return Ok(form_page(values, Shell::build(&user, &session, &s.db).await?).into_response());
     }
 
     let id = match site_admin::create_page(&s.db, &values.to_input()).await {
@@ -297,7 +304,7 @@ pub async fn create(
         Err(sqlx::Error::Protocol(msg)) => {
             let mut values = values;
             values.error = Some(msg);
-            return Ok(form_page(values, Shell::build(&user, &session).await?).into_response());
+            return Ok(form_page(values, Shell::build(&user, &session, &s.db).await?).into_response());
         }
         Err(e) => return Err(e.into()),
     };
@@ -556,7 +563,15 @@ pub async fn set_status(
     }
     let status = content_admin::clean_status(&f.status);
     site_admin::set_page_status(&s.db, id, status).await?;
-    users::audit(&s.db, Some(user.id), "page_status_changed", "page", Some(id)).await?;
+    users::audit_detail(
+        &s.db,
+        Some(user.id),
+        "page_status_changed",
+        "page",
+        Some(id),
+        serde_json::json!({ "status": status }),
+    )
+    .await?;
     flash(
         &session,
         if status == "draft" {

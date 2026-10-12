@@ -249,7 +249,7 @@ pub async fn today(
     session: Session,
     TeacherOnly(user): TeacherOnly,
 ) -> Result<Response, AppError> {
-    let shell = Shell::build(&user, &session).await?;
+    let shell = Shell::build(&user, &session, &s.db).await?;
     let Some(fid) = teacher_profile(&s, &user).await? else {
         return Ok(NoProfileTemplate { shell }.into_response());
     };
@@ -277,7 +277,7 @@ pub async fn attendance_list(
     session: Session,
     TeacherOnly(user): TeacherOnly,
 ) -> Result<Response, AppError> {
-    let shell = Shell::build(&user, &session).await?;
+    let shell = Shell::build(&user, &session, &s.db).await?;
     let Some(fid) = teacher_profile(&s, &user).await? else {
         return Ok(NoProfileTemplate { shell }.into_response());
     };
@@ -310,7 +310,7 @@ pub async fn mark_form(
     if !attendance::valid_date(&date) {
         return Err(AppError::NotFound);
     }
-    let shell = Shell::build(&user, &session).await?;
+    let shell = Shell::build(&user, &session, &s.db).await?;
     let Some(fid) = teacher_profile(&s, &user).await? else {
         return Ok(NoProfileTemplate { shell }.into_response());
     };
@@ -424,7 +424,7 @@ pub async fn timetable(
     session: Session,
     TeacherOnly(user): TeacherOnly,
 ) -> Result<Response, AppError> {
-    let shell = Shell::build(&user, &session).await?;
+    let shell = Shell::build(&user, &session, &s.db).await?;
     let Some(fid) = teacher_profile(&s, &user).await? else {
         return Ok(NoProfileTemplate { shell }.into_response());
     };
@@ -479,7 +479,7 @@ pub async fn reports(
     TeacherOnly(user): TeacherOnly,
     Query(q): Query<ReportQuery>,
 ) -> Result<Response, AppError> {
-    let shell = Shell::build(&user, &session).await?;
+    let shell = Shell::build(&user, &session, &s.db).await?;
     let Some(fid) = teacher_profile(&s, &user).await? else {
         return Ok(NoProfileTemplate { shell }.into_response());
     };
@@ -534,7 +534,7 @@ async fn materials_render(
     error: Option<String>,
 ) -> Result<Response, AppError> {
     Ok(MaterialsTemplate {
-        shell: Shell::build(user, session).await?,
+        shell: Shell::build(user, session, &s.db).await?,
         materials: materials::for_teacher(&s.db, faculty_id).await?,
         courses: materials::courses_taught(&s.db, faculty_id).await?,
         error,
@@ -547,7 +547,7 @@ pub async fn materials_page(
     session: Session,
     TeacherOnly(user): TeacherOnly,
 ) -> Result<Response, AppError> {
-    let shell = Shell::build(&user, &session).await?;
+    let shell = Shell::build(&user, &session, &s.db).await?;
     let Some(fid) = teacher_profile(&s, &user).await? else {
         return Ok(NoProfileTemplate { shell }.into_response());
     };
@@ -560,7 +560,7 @@ pub async fn materials_upload(
     TeacherOnly(user): TeacherOnly,
     multipart: Multipart,
 ) -> Result<Response, AppError> {
-    let shell = Shell::build(&user, &session).await?;
+    let shell = Shell::build(&user, &session, &s.db).await?;
     let Some(fid) = teacher_profile(&s, &user).await? else {
         return Ok(NoProfileTemplate { shell }.into_response());
     };

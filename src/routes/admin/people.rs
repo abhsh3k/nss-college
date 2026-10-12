@@ -55,7 +55,7 @@ pub async fn list(
     };
     let q = query.q.unwrap_or_default().trim().to_string();
     Ok(PeopleTemplate {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
         people: people::list(&s.db, &role, &q).await?,
         role,
         q,
@@ -183,7 +183,7 @@ pub async fn new_form(
 ) -> Result<PersonFormTemplate, AppError> {
     let kind = clean_kind(q.kind.as_deref().unwrap_or("student"));
     Ok(PersonFormTemplate {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
         is_new: true,
         user_id: 0,
         is_active: true,
@@ -206,7 +206,7 @@ pub async fn edit_form(
     let form = PersonForm::from_detail(&d);
     let next = next_semester(false, &form);
     Ok(PersonFormTemplate {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
         is_new: false,
         user_id: d.id,
         is_active: d.is_active,
@@ -309,7 +309,7 @@ async fn person_form_page(
     error: Option<String>,
 ) -> Result<Response, AppError> {
     Ok(PersonFormTemplate {
-        shell: Shell::build(user, session).await?,
+        shell: Shell::build(user, session, &s.db).await?,
         is_new: meta.is_new,
         user_id: meta.user_id,
         is_active: meta.is_active,
@@ -408,7 +408,7 @@ pub async fn create(
 
     let login = if c.kind == "student" { c.admission_no.clone() } else { c.email.clone() };
     Ok(CredentialsTemplate {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
         heading: "Account created".into(),
         rows: vec![CredentialRow {
             name: c.name,
@@ -511,7 +511,7 @@ pub async fn reset_password(
 
     let login = if d.admission_no.is_empty() { d.email.clone() } else { d.admission_no.clone() };
     Ok(CredentialsTemplate {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
         heading: "New temporary password".into(),
         rows: vec![CredentialRow {
             name: d.full_name,
@@ -555,12 +555,15 @@ pub async fn set_active(
         }
         people::archive_user(&s.db, id).await?;
     }
-    users::audit(
+    users::audit_detail(
         &s.db,
         Some(user.id),
         if active { "user_activated" } else { "user_deactivated" },
         "user",
         Some(id),
+        // The account's access is the thing that changed, so record both ends
+        // of the transition rather than only the new value.
+        serde_json::json!({ "active": { "from": !active, "to": active } }),
     )
     .await?;
     shell::flash(&session, if active { "Account re-activated." } else { "Account deactivated. They can no longer sign in." }).await?;
@@ -683,7 +686,7 @@ async fn upload_page(
     batch_year: &str,
 ) -> Result<ImportTemplate, AppError> {
     Ok(ImportTemplate {
-        shell: Shell::build(user, session).await?,
+        shell: Shell::build(user, session, &s.db).await?,
         programmes: academics::programme_options(&s.db).await?,
         error: error.map(str::to_string),
         programme_id: programme_id.to_string(),
@@ -839,7 +842,7 @@ async fn review_page(
     }
     let programme_names = import_students::programme_names(&s.db).await?;
     Ok(ImportReviewTemplate {
-        shell: Shell::build(user, session).await?,
+        shell: Shell::build(user, session, &s.db).await?,
         batch,
         rows,
         programme_names,
@@ -1102,7 +1105,7 @@ async fn commit(
         heading.push_str(&format!(", {skipped} skipped"));
     }
     Ok(CredentialsTemplate {
-        shell: Shell::build(user, session).await?,
+        shell: Shell::build(user, session, &s.db).await?,
         heading,
         rows: creds,
         back_href: "/admin/people",
@@ -1257,7 +1260,17 @@ pub async fn bulk_delete(
     }
     let archived = people::archive_users(&s.db, &ids, user.id).await?;
     if archived > 0 {
-        users::audit(&s.db, Some(user.id), "users_archived", "user", None).await?;
+        users::audit_detail(
+            &s.db,
+            Some(user.id),
+            "users_archived",
+            "user",
+            None,
+            // Which accounts were archived, and how many succeeded, so the
+            // bulk action is reconstructable from the log alone.
+            serde_json::json!({ "requested": ids.len(), "archived": archived, "user_ids": ids }),
+        )
+        .await?;
     }
     shell::flash(&session, format!("Archived {archived} account(s); academic history was preserved.")).await?;
     Ok(Redirect::to("/admin/people"))

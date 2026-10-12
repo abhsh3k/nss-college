@@ -25,6 +25,7 @@ use super::{parse_i32, parse_i64, safe_back, TokenForm};
 use crate::{
     auth::{csrf, require_reauth, Manager},
     error::AppError,
+    sections,
     services::{
         academics::{self, ProgrammeOption},
         exams::{self, ExamCourseOption},
@@ -36,6 +37,13 @@ use crate::{
     shell::{self, Shell},
     state::AppState,
 };
+
+/// A path in the workspace this manager is working in: `/admin` for the IT
+/// administrator, `/hod` for a head of department, who signs in on the public
+/// listener where `/admin` is not served at all.
+fn ws(manager: &Manager, path: &str) -> String {
+    format!("{}{path}", sections::base_for(&manager.user))
+}
 
 const SEMESTERS: [i32; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
@@ -143,11 +151,12 @@ impl Sel {
         }
     }
 
-    /// The query string that brings the browser back to this exact sheet.
-    fn back_url(&self) -> String {
+    /// The query string that brings the browser back to this exact sheet, in
+    /// the workspace `base` the reader is working in.
+    fn back_url(&self, base: &str) -> String {
         let (assessment, _, exam_name) = self.sheet_key();
         format!(
-            "/admin/marks?programme={}&semester={}&course={}&kind={}&assessment={}&exam_name={}&max={}",
+            "{base}/marks?programme={}&semester={}&course={}&kind={}&assessment={}&exam_name={}&max={}",
             self.programme,
             self.semester,
             self.course,
@@ -303,7 +312,7 @@ async fn render(
     }
 
     Ok(MarksTemplate {
-        shell: Shell::build(&manager.user, session).await?,
+        shell: Shell::build(&manager.user, session, &s.db).await?,
         programmes: academics::programme_options_for(&s.db, manager.department()).await?,
         semester_opts: SEMESTERS.iter().map(|n| (*n, *n == sel.semester)).collect(),
         courses,
@@ -357,7 +366,7 @@ pub async fn save(
     let choose_first = "Choose a programme, semester and course first.";
     if sel.programme == 0 || sel.semester == 0 {
         shell::flash(&session, choose_first).await?;
-        return Ok(Redirect::to("/admin/marks").into_response());
+        return Ok(Redirect::to(&ws(&manager, "/marks")).into_response());
     }
     if !academics::may_manage_programme(&s.db, sel.programme, manager.department()).await? {
         return Err(AppError::Forbidden);
@@ -367,7 +376,7 @@ pub async fn save(
     let courses = exams::course_options_for_semester(&s.db, sel.programme, sel.semester).await?;
     if !courses.iter().any(|c| c.id == sel.course) {
         shell::flash(&session, choose_first).await?;
-        return Ok(Redirect::to("/admin/marks").into_response());
+        return Ok(Redirect::to(&ws(&manager, "/marks")).into_response());
     }
 
     let mut problems: Vec<String> = Vec::new();
@@ -505,18 +514,18 @@ pub async fn import_preview(
     let sel = Sel::from_fields(|k| form.field(k));
     if sel.programme == 0 || sel.semester == 0 {
         shell::flash(&session, "Choose a programme and semester first.").await?;
-        return Ok(Redirect::to("/admin/marks").into_response());
+        return Ok(Redirect::to(&ws(&manager, "/marks")).into_response());
     }
     if !academics::may_manage_programme(&s.db, sel.programme, manager.department()).await? {
         return Err(AppError::Forbidden);
     }
     let Some(file) = form.file("csv_file") else {
         shell::flash(&session, "Choose a CSV file to upload.").await?;
-        return Ok(Redirect::to("/admin/marks").into_response());
+        return Ok(Redirect::to(&ws(&manager, "/marks")).into_response());
     };
     if file.bytes.len() > 5 * 1024 * 1024 {
         shell::flash(&session, "That CSV file is larger than 5 MB — split it into smaller batches.").await?;
-        return Ok(Redirect::to("/admin/marks").into_response());
+        return Ok(Redirect::to(&ws(&manager, "/marks")).into_response());
     }
     // A CSV/TSV file is decoded as before; a workbook is flattened to CSV first.
     let text = crate::services::import_students::to_csv_text(&file.bytes, &file.filename)
@@ -535,7 +544,7 @@ pub async fn import_preview(
         &text,
     )
     .await?;
-    Ok(Redirect::to(&format!("/admin/exams/results/preview?batch={id}")).into_response())
+    Ok(Redirect::to(&ws(&manager, &format!("/exams/results/preview?batch={id}"))).into_response())
 }
 
 /// One uploaded file of results, shaped
@@ -556,7 +565,7 @@ pub async fn import_csv(
     let sel = Sel::from_fields(|k| form.field(k));
     if sel.programme == 0 || sel.semester == 0 {
         shell::flash(&session, "Choose a programme and semester first.").await?;
-        return Ok(Redirect::to("/admin/marks").into_response());
+        return Ok(Redirect::to(&ws(&manager, "/marks")).into_response());
     }
     if !academics::may_manage_programme(&s.db, sel.programme, manager.department()).await? {
         return Err(AppError::Forbidden);
@@ -728,7 +737,7 @@ pub async fn toggle(
 ) -> Result<Redirect, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
     authorise(&s, &manager, id).await?;
-    let back = safe_back(&f.back, "/admin/marks");
+    let back = safe_back(&f.back, &ws(&manager, "/marks"));
 
     match locked(&s, &session, id, &back).await? {
         Some(redirect) => return Ok(redirect),
@@ -767,7 +776,7 @@ pub async fn delete(
 ) -> Result<Redirect, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
     authorise(&s, &manager, id).await?;
-    let back = safe_back(&f.back, "/admin/marks");
+    let back = safe_back(&f.back, &ws(&manager, "/marks"));
 
     match locked(&s, &session, id, &back).await? {
         Some(redirect) => return Ok(redirect),
@@ -802,11 +811,11 @@ pub async fn finalize(
     Form(f): Form<FinalizeForm>,
 ) -> Result<Redirect, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
-    if let Err(redirect) = require_reauth(&session, "/admin/marks").await {
+    if let Err(redirect) = require_reauth(&session, &ws(&manager, "/marks")).await {
         shell::flash(&session, "Re-enter your password to continue.").await?;
         return Ok(redirect);
     }
-    let back = safe_back(&f.back, "/admin/marks");
+    let back = safe_back(&f.back, &ws(&manager, "/marks"));
     let programme = parse_i64(&f.programme).unwrap_or(0);
     let semester = parse_i32(&f.semester).unwrap_or(0);
     let course = parse_i64(&f.course).unwrap_or(0);
@@ -865,12 +874,12 @@ pub async fn correct(
     Form(f): Form<CorrectForm>,
 ) -> Result<Redirect, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
-    if let Err(redirect) = require_reauth(&session, "/admin/marks").await {
+    if let Err(redirect) = require_reauth(&session, &ws(&manager, "/marks")).await {
         shell::flash(&session, "Re-enter your password to continue.").await?;
         return Ok(redirect);
     }
     authorise(&s, &manager, id).await?;
-    let back = safe_back(&f.back, "/admin/marks");
+    let back = safe_back(&f.back, &ws(&manager, "/marks"));
 
     let reason = f.reason.trim();
     if reason.is_empty() {
@@ -946,12 +955,12 @@ async fn decide(
     approve: bool,
 ) -> Result<Redirect, AppError> {
     csrf::verify(session, &f.csrf_token).await?;
-    if let Err(redirect) = require_reauth(session, "/admin/marks").await {
+    if let Err(redirect) = require_reauth(session, &ws(&manager, "/marks")).await {
         shell::flash(session, "Re-enter your password to continue.").await?;
         return Ok(redirect);
     }
     authorise(s, manager, id).await?;
-    let back = safe_back(&f.back, "/admin/marks");
+    let back = safe_back(&f.back, &ws(&manager, "/marks"));
 
     let msg = match marks::decide_correction(&s.db, id, manager.user.id, approve).await? {
         CorrectionOutcome::Done(_) => {

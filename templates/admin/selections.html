@@ -27,12 +27,12 @@
           <td class="py-2 pr-4 text-sm"><span class="font-mono">{{ r.current_code }}</span> → <span class="font-mono font-semibold">{{ r.new_code }}</span></td>
           <td class="py-2 pr-4 text-sm">{{ r.reason }}</td>
           <td class="py-2 text-right whitespace-nowrap">
-            <form method="post" action="/admin/courses/selections/changes/{{ r.id }}/decide" class="inline">
+            <form method="post" action="{{ shell.base }}/courses/selections/changes/{{ r.id }}/decide" class="inline">
               <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
               <input type="hidden" name="decision" value="approve">
               <button type="submit" class="rounded bg-brand px-3 py-1.5 text-sm font-semibold text-chalk hover:bg-ink">Approve</button>
             </form>
-            <form method="post" action="/admin/courses/selections/changes/{{ r.id }}/decide" class="inline ml-2">
+            <form method="post" action="{{ shell.base }}/courses/selections/changes/{{ r.id }}/decide" class="inline ml-2">
               <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
               <input type="hidden" name="decision" value="reject">
               <input type="hidden" name="note" value="Not approved at this time.">
@@ -52,7 +52,7 @@
 <section class="mt-10" aria-labelledby="assign">
   <h2 id="assign" class="font-display text-2xl font-semibold">Assign a course</h2>
   <p class="mt-1 text-sm text-ink/70">Courses published as &ldquo;HOD assigned&rdquo;: place one on a student of your department and they are enrolled at once. Only students whose semester and batch the offering targets — and whose access you have approved — can be assigned.</p>
-  <form method="post" action="/admin/courses/selections/assign" class="mt-4 flex flex-wrap items-end gap-3 rounded border border-ink/15 bg-mist p-5">
+  <form method="post" action="{{ shell.base }}/courses/selections/assign" class="mt-4 flex flex-wrap items-end gap-3 rounded border border-ink/15 bg-mist p-5">
     <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
     <div>
       <label class="block text-sm font-semibold">Course</label>
@@ -87,7 +87,7 @@
   {% for p in pending_cohorts %}
   <div class="mt-4 rounded border border-ink/15 bg-mist p-5">
     <h3 class="font-semibold">{{ p.cohort_label }} — {{ p.choice_group }}</h3>
-    <form method="post" action="/admin/courses/selections/cohort" class="mt-3 flex flex-wrap items-end gap-3">
+    <form method="post" action="{{ shell.base }}/courses/selections/cohort" class="mt-3 flex flex-wrap items-end gap-3">
       <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
       <input type="hidden" name="cohort_id" value="{{ p.cohort_id }}">
       <input type="hidden" name="choice_group" value="{{ p.choice_group }}">
@@ -152,20 +152,20 @@
           </td>
           <td class="py-2 text-right whitespace-nowrap">
             {% if s.state == "confirmed" %}
-            <form method="post" action="/admin/courses/selections/{{ s.selection_id }}/state" class="inline">
+            <form method="post" action="{{ shell.base }}/courses/selections/{{ s.selection_id }}/state" class="inline">
               <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
               <input type="hidden" name="state" value="lock">
               <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Lock<span class="sr-only"> {{ s.code }}</span></button>
             </form>
             {% else if s.state == "locked" %}
-            <form method="post" action="/admin/courses/selections/{{ s.selection_id }}/state" class="inline">
+            <form method="post" action="{{ shell.base }}/courses/selections/{{ s.selection_id }}/state" class="inline">
               <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
               <input type="hidden" name="state" value="unlock">
               <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Unlock<span class="sr-only"> {{ s.code }}</span></button>
             </form>
             {% endif %}
             {% if s.selection_mode == "HOD_ASSIGNED" && s.state != "locked" %}
-            <form method="post" action="/admin/courses/selections/{{ s.selection_id }}/unassign" class="inline ml-2">
+            <form method="post" action="{{ shell.base }}/courses/selections/{{ s.selection_id }}/unassign" class="inline ml-2">
               <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
               <button type="submit" class="font-semibold text-rose-600 underline underline-offset-4 hover:text-ink">Withdraw<span class="sr-only"> {{ s.code }}</span></button>
             </form>

@@ -19,6 +19,7 @@ use super::parse_i64;
 use crate::{
     auth::{csrf, Manager},
     error::AppError,
+    sections,
     services::{
         attendance::{self, DeptCourse, PeriodRow, RosterRow, Rules},
         users,
@@ -109,7 +110,7 @@ pub async fn page(
     .await?;
 
     Ok(DepartmentsTemplate {
-        shell: Shell::build(&manager.user, &session).await?,
+        shell: Shell::build(&manager.user, &session, &s.db).await?,
         students,
         departments,
         department_name: department_name(&s, &manager).await?,
@@ -159,7 +160,17 @@ pub async fn place(
     )
     .await?;
     shell::flash(&session, "Student placed in that department.").await?;
-    Ok(Redirect::to("/admin/departments"))
+    Ok(Redirect::to(&list(&manager)))
+}
+
+/// The department list in the caller's own workspace.
+fn list(manager: &Manager) -> String {
+    format!("{}/departments", sections::base_for(&manager.user))
+}
+
+/// The department attendance report in the caller's own workspace.
+fn report(manager: &Manager) -> String {
+    format!("{}/departments/attendance", sections::base_for(&manager.user))
 }
 
 // ---------- Whole-department attendance ----------
@@ -210,7 +221,7 @@ pub async fn attendance_page(
     }
 
     Ok(DepartmentAttendanceTemplate {
-        shell: Shell::build(&manager.user, &session).await?,
+        shell: Shell::build(&manager.user, &session, &s.db).await?,
         courses,
         department_name: department_name(&s, &manager).await?,
         rules,
@@ -264,7 +275,7 @@ pub async fn mark_form(
     let csrf_token = csrf::token(&session).await?;
 
     Ok(DepartmentMarkTemplate {
-        shell: Shell::build(&manager.user, &session).await?,
+        shell: Shell::build(&manager.user, &session, &s.db).await?,
         period,
         roster,
         window_days: rules.edit_window_days,
@@ -295,7 +306,7 @@ pub async fn mark_save(
         attendance::period_for_manager(&s.db, entry_id, &date, rules.edit_window_days).await?
     else {
         shell::flash(&session, "That period can't be changed.").await?;
-        return Ok(Redirect::to("/admin/departments/attendance"));
+        return Ok(Redirect::to(&report(&manager)));
     };
     let roster = attendance::roster(&s.db, period.course_id, entry_id, &date).await?;
 
@@ -310,10 +321,11 @@ pub async fn mark_save(
             }
             _ => {
                 shell::flash(&session, "Choose present, absent or leave for every student.").await?;
-                // The route is `/admin/departments/attendance/:entry_id/:date`,
+                // The route is `{base}/departments/attendance/:entry_id/:date`,
                 // so the date is a path segment, not a query parameter.
                 return Ok(Redirect::to(&format!(
-                    "/admin/departments/attendance/{entry_id}/{date}"
+                    "{}/departments/attendance/{entry_id}/{date}",
+                    sections::base_for(&manager.user)
                 )));
             }
         }
@@ -336,5 +348,5 @@ pub async fn mark_save(
     )
     .await?;
     shell::flash(&session, "Attendance corrected.").await?;
-    Ok(Redirect::to("/admin/departments/attendance"))
+    Ok(Redirect::to(&report(&manager)))
 }

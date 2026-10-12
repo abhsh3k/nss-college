@@ -16,6 +16,7 @@ use tower_sessions::Session;
 use super::{parse_i32, parse_i64};
 use crate::{
     auth::{csrf, require_reauth, Manager},
+    sections,
     error::{internal, AppError},
     services::{
         exams::PushKind,
@@ -25,6 +26,13 @@ use crate::{
     shell::{self, Shell},
     state::AppState,
 };
+
+/// A path in the workspace this manager is working in: `/admin` for the IT
+/// administrator, `/hod` for a head of department, who signs in on the public
+/// listener where `/admin` is not served at all.
+fn ws(manager: &Manager, path: &str) -> String {
+    format!("{}{path}", sections::base_for(&manager.user))
+}
 
 #[derive(Deserialize, Default)]
 pub struct PasteForm {
@@ -76,11 +84,11 @@ pub async fn preview_paste(
     let programme_id = super::exams::selected_programme(&s, manager.department(), Some(&f.programme)).await?;
     if programme_id == 0 {
         shell::flash(&session, "Choose a programme first.").await?;
-        return Ok(Redirect::to("/admin/exams").into_response());
+        return Ok(Redirect::to(&ws(&manager, "/exams")).into_response());
     }
     if f.rows.trim().is_empty() {
         shell::flash(&session, "Paste at least one result row.").await?;
-        return Ok(Redirect::to(&format!("/admin/exams?programme={programme_id}")).into_response());
+        return Ok(Redirect::to(&format!("{}/exams?programme={programme_id}", ws(&manager, ""))).into_response());
     }
     let semester = semester_of(&f.semester);
     let kind = PushKind::parse(&f.kind);
@@ -97,7 +105,7 @@ pub async fn preview_paste(
         &f.rows,
     )
     .await?;
-    Ok(Redirect::to(&format!("/admin/exams/results/preview?batch={id}")).into_response())
+    Ok(Redirect::to(&format!("{}/exams/results/preview?batch={id}", ws(&manager, ""))).into_response())
 }
 
 /// Stage an uploaded CSV file.
@@ -112,12 +120,12 @@ pub async fn upload(
     let programme_id = super::exams::selected_programme(&s, manager.department(), Some(form.field("programme"))).await?;
     if programme_id == 0 {
         shell::flash(&session, "Choose a programme first.").await?;
-        return Ok(Redirect::to("/admin/exams").into_response());
+        return Ok(Redirect::to(&ws(&manager, "/exams")).into_response());
     }
     let file = form.file("csv_file").ok_or(AppError::BadRequest("Choose a CSV file to upload.".into()))?;
     if file.bytes.len() > 5 * 1024 * 1024 {
         shell::flash(&session, "That CSV file is larger than 5 MB — split it into smaller batches.").await?;
-        return Ok(Redirect::to(&format!("/admin/exams?programme={programme_id}")).into_response());
+        return Ok(Redirect::to(&format!("{}/exams?programme={programme_id}", ws(&manager, ""))).into_response());
     }
     // A CSV/TSV file is decoded as before; a workbook is flattened to CSV, so
     // the same staging pipeline accepts `.xlsx`/`.xls`/`.ods`.
@@ -139,7 +147,7 @@ pub async fn upload(
         &text,
     )
     .await?;
-    Ok(Redirect::to(&format!("/admin/exams/results/preview?batch={id}")).into_response())
+    Ok(Redirect::to(&format!("{}/exams/results/preview?batch={id}", ws(&manager, ""))).into_response())
 }
 
 pub async fn preview_page(
@@ -155,7 +163,7 @@ pub async fn preview_page(
     let rows = result_import::rows(&s.db, id).await?;
     let (valid, error, duplicate, conflict) = result_import::counts(&rows);
     Ok(PreviewTemplate {
-        shell: Shell::build(&manager.user, &session).await?,
+        shell: Shell::build(&manager.user, &session, &s.db).await?,
         batch_id: batch.id,
         source_name: batch.source_name,
         semester: batch.semester,
@@ -177,7 +185,7 @@ pub async fn commit(
     Form(f): Form<BatchForm>,
 ) -> Result<Response, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
-    if let Err(redirect) = require_reauth(&session, "/admin/marks").await {
+    if let Err(redirect) = require_reauth(&session, &ws(&manager, "/marks")).await {
         shell::flash(&session, "Re-enter your password to commit an import.").await?;
         return Ok(redirect.into_response());
     }
@@ -186,7 +194,8 @@ pub async fn commit(
     };
     let batch = result_import::batch(&s.db, id).await?.ok_or(AppError::NotFound)?;
     let back = format!(
-        "/admin/exams?programme={}&semester={}",
+        "{}/exams?programme={}&semester={}",
+        ws(&manager, ""),
         batch.programme_id.unwrap_or(0),
         batch.semester
     );
@@ -198,7 +207,7 @@ pub async fn commit(
         }
         Err(sqlx::Error::Protocol(msg)) => {
             shell::flash(&session, msg).await?;
-            Ok(Redirect::to(&format!("/admin/exams/results/preview?batch={id}")).into_response())
+            Ok(Redirect::to(&format!("{}/exams/results/preview?batch={id}", ws(&manager, ""))).into_response())
         }
         Err(e) => Err(internal(e)),
     }
@@ -216,5 +225,5 @@ pub async fn discard(
         users::audit(&s.db, Some(manager.user.id), "result_import_discarded", "batch", Some(id)).await?;
     }
     shell::flash(&session, "Import discarded; nothing was filed.").await?;
-    Ok(Redirect::to("/admin/exams"))
+    Ok(Redirect::to(&ws(&manager, "/exams")))
 }

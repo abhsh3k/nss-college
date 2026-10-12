@@ -16,12 +16,17 @@ use super::TokenForm;
 use crate::{
     auth::{csrf, Ready},
     error::AppError,
+    sections,
     services::notifications,
     shell::Shell,
     state::AppState,
 };
 
-const FEED: &str = "/admin/notifications";
+/// The feed lives in the caller's own workspace: `/admin/notifications` for the
+/// management area, `/hod/notifications` for a head of department.
+fn feed(user: &crate::auth::AuthUser) -> String {
+    format!("{}/notifications", sections::base_for(user))
+}
 
 #[derive(Template)]
 #[template(path = "admin/notifications.html")]
@@ -37,7 +42,7 @@ pub async fn page(
     Ready(user): Ready,
 ) -> Result<NotificationsTemplate, AppError> {
     Ok(NotificationsTemplate {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
         items: notifications::for_user(&s.db, user.id, 100).await?,
         unread: notifications::unread_count(&s.db, user.id).await?,
     })
@@ -52,7 +57,7 @@ pub async fn mark_read(
 ) -> Result<Response, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
     notifications::mark_read(&s.db, id, user.id).await?;
-    Ok(Redirect::to(FEED).into_response())
+    Ok(Redirect::to(&feed(&user)).into_response())
 }
 
 pub async fn mark_all(
@@ -63,5 +68,5 @@ pub async fn mark_all(
 ) -> Result<Response, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
     notifications::mark_all_read(&s.db, user.id).await?;
-    Ok(Redirect::to(FEED).into_response())
+    Ok(Redirect::to(&feed(&user)).into_response())
 }

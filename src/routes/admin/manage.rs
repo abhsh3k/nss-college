@@ -1,4 +1,6 @@
-//! The section index page behind a dashboard card: `/admin/manage/:key`.
+//! The section index page behind a dashboard card: `/manage/:key`, mounted as
+//! `/admin/manage/:key` for the management workspace and `/hod/manage/:key` for
+//! a head of department's own.
 //!
 //! It renders one [`Area`] from the catalogue in `crate::sections` — a title,
 //! a description and the links to the pages that already implement each
@@ -6,7 +8,7 @@
 //! and that list is chosen by the same rules that guard the links inside it.
 
 use askama::Template;
-use axum::extract::Path;
+use axum::extract::{Path, State};
 use tower_sessions::Session;
 
 use crate::{
@@ -14,6 +16,7 @@ use crate::{
     error::AppError,
     sections::{self, Area},
     shell::Shell,
+    state::AppState,
 };
 
 #[derive(Template)]
@@ -62,6 +65,7 @@ fn lookup(user: &AuthUser, key: &str) -> Result<(&'static Area, &'static [Area])
 }
 
 pub async fn page(
+    State(s): State<AppState>,
     session: Session,
     Ready(user): Ready,
     Path(key): Path<String>,
@@ -69,7 +73,7 @@ pub async fn page(
     let (area, siblings) = lookup(&user, &key)?;
 
     Ok(ManageTemplate {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
         area,
         siblings,
     })
@@ -94,6 +98,28 @@ mod tests {
         assert!(html.contains("/admin/exams"));
         assert!(html.contains("/admin/marks"));
         assert!(html.contains("Other management areas"));
+    }
+
+    /// The same catalogue rendered for a head of department links into the
+    /// department workspace, not into `/admin` — which is not served on the
+    /// listener they sign in to.
+    #[test]
+    fn a_section_page_for_an_hod_links_into_the_department_workspace() {
+        let area = sections::find(sections::HOD, "exams").expect("the exams area");
+        let html = ManageTemplate {
+            shell: crate::sections::test_shell_in("Head of department", sections::HOD_BASE),
+            area,
+            siblings: sections::HOD,
+        }
+        .render()
+        .expect("the section page renders");
+
+        assert!(html.contains("\"/hod/exams\""));
+        assert!(html.contains("\"/hod/marks\""));
+        assert!(html.contains("\"/hod/manage/academic\""));
+        assert!(!html.contains("/admin/"), "an HOD page must not link to /admin");
+        // The breadcrumb leads back to the caller's own dashboard.
+        assert!(html.contains("href=\"/hod\""));
     }
 
     #[test]

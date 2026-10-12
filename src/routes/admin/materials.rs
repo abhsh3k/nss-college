@@ -17,6 +17,7 @@ use super::TokenForm;
 use crate::{
     auth::{csrf, Manager},
     error::AppError,
+    sections,
     services::{content_admin, materials, users},
     shell::{flash, Shell},
     state::AppState,
@@ -24,7 +25,12 @@ use crate::{
 };
 
 const FOLDER: &str = "materials";
-const LIST: &str = "/admin/materials";
+
+/// The materials list in the caller's own workspace: `/admin/materials` for the
+/// IT administrator, `/hod/materials` for a head of department.
+fn list(manager: &Manager) -> String {
+    format!("{}/materials", sections::base_for(&manager.user))
+}
 
 #[derive(Template)]
 #[template(path = "admin/materials.html")]
@@ -43,7 +49,7 @@ async fn render_index(
     error: Option<String>,
 ) -> Result<Response, AppError> {
     Ok(MaterialsTemplate {
-        shell: Shell::build(user, session).await?,
+        shell: Shell::build(user, session, &s.db).await?,
         materials: materials::for_manager(&s.db, department).await?,
         courses: materials::courses_for_manager(&s.db, department).await?,
         error,
@@ -105,7 +111,7 @@ pub async fn create(
     .await?;
     users::audit(&s.db, Some(manager.user.id), "material_uploaded", "study_material", Some(id)).await?;
     flash(&session, "Study material uploaded.").await?;
-    Ok(Redirect::to(LIST).into_response())
+    Ok(Redirect::to(&list(&manager)).into_response())
 }
 
 pub async fn set_status(
@@ -133,7 +139,7 @@ pub async fn set_status(
     )
     .await?;
     flash(&session, "Study material updated.").await?;
-    Ok(Redirect::to(LIST))
+    Ok(Redirect::to(&list(&manager)))
 }
 
 pub async fn destroy(
@@ -155,5 +161,5 @@ pub async fn destroy(
     content_admin::discard_upload(&s.db, &s.upload_dir, path.as_deref().unwrap_or("")).await;
     users::audit(&s.db, Some(manager.user.id), "material_deleted", "study_material", Some(id)).await?;
     flash(&session, "Study material deleted.").await?;
-    Ok(Redirect::to(LIST))
+    Ok(Redirect::to(&list(&manager)))
 }

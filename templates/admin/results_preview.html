@@ -15,12 +15,12 @@
 </div>
 
 <div class="mt-6 flex flex-wrap gap-3">
-  <form method="post" action="/admin/exams/results/commit" class="inline"{% if conflict > 0 %} data-confirm="Conflicts are present and will stop the import. Continue anyway?"{% endif %}>
+  <form method="post" action="{{ shell.base }}/exams/results/commit" class="inline"{% if conflict > 0 %} data-confirm="Conflicts are present and will stop the import. Continue anyway?"{% endif %}>
     <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
     <input type="hidden" name="batch" value="{{ batch_id }}">
     <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Confirm and file {{ valid }} row(s)</button>
   </form>
-  <form method="post" action="/admin/exams/results/discard" class="inline">
+  <form method="post" action="{{ shell.base }}/exams/results/discard" class="inline">
     <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
     <input type="hidden" name="batch" value="{{ batch_id }}">
     <button type="submit" class="rounded border border-ink/40 px-4 py-2 font-semibold hover:bg-mist">Discard</button>

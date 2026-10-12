@@ -7,7 +7,7 @@
     <p class="mt-3 max-w-2xl text-ink/80">Approvals, corrections and handovers that need you. Opening an item always re-checks your access on the page it points to.</p>
   </div>
   {% if unread > 0 %}
-  <form method="post" action="/admin/notifications/read-all">
+  <form method="post" action="{{ shell.base }}/notifications/read-all">
     <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
     <button type="submit" class="rounded border border-ink/40 px-4 py-2 text-sm font-semibold hover:bg-mist">Mark all read ({{ unread }})</button>
   </form>
@@ -31,10 +31,10 @@
       </div>
       <div class="flex items-center gap-4 whitespace-nowrap">
         {% if !n.href.is_empty() %}
-        <a href="{{ n.href }}" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Open</a>
+        <a href="{{ n.href_in(shell.base) }}" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Open</a>
         {% endif %}
         {% if !n.read %}
-        <form method="post" action="/admin/notifications/{{ n.id }}/read">
+        <form method="post" action="{{ shell.base }}/notifications/{{ n.id }}/read">
           <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
           <button type="submit" class="text-sm font-semibold text-ink/70 underline underline-offset-4 hover:text-ink">Mark read</button>
         </form>

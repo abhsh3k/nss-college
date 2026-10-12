@@ -379,7 +379,15 @@ pub fn safe_next_for_role(next: &str, role: Role) -> Option<&str> {
         Role::SuperAdmin | Role::Admin | Role::Principal | Role::Staff => {
             next.starts_with("/admin") || next.starts_with("/account/")
         }
-        Role::Faculty => next.starts_with("/teacher") || next.starts_with("/admin/") || next.starts_with("/account/"),
+        // A teacher's own pages, plus the department workspace an appointed head
+        // of department works in (`/hod`). `/admin` is kept so an HOD who was
+        // bounced to the sign-in page from there is not sent somewhere else.
+        Role::Faculty => {
+            next.starts_with("/teacher")
+                || next.starts_with("/hod/")
+                || next.starts_with("/admin/")
+                || next.starts_with("/account/")
+        }
         Role::Student => next.starts_with("/hub") || next.starts_with("/account/"),
         Role::Alumni => next == "/" || next.starts_with("/account/"),
     };
@@ -396,6 +404,10 @@ mod tests {
         assert_eq!(safe_next_for_role("/admin", Role::Student), None);
         assert_eq!(safe_next_for_role("/admin/people", Role::Admin), Some("/admin/people"));
         assert_eq!(safe_next_for_role("//evil.example", Role::Admin), None);
+        // A head of department signs in on the public listener: their
+        // department workspace is `/hod`, and a student may not be sent there.
+        assert_eq!(safe_next_for_role("/hod/marks", Role::Faculty), Some("/hod/marks"));
+        assert_eq!(safe_next_for_role("/hod/marks", Role::Student), None);
     }
 
     #[test]

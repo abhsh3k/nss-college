@@ -35,13 +35,17 @@ Sign in as the IT admin, then use the sidebar:
   semester's courses automatically; use "Enroll students" after adding courses later.
 - **Timetable**: choose programme and semester, then add periods per day. Clashes (same teacher, room or class at overlapping
   times) are refused with an explanation. Everything updates without reloading the page.
+  A period must name a validated teacher or be explicitly marked **teacher to be assigned**: the missing teacher
+  is then a recorded gap, shown in the work queue, never a silently incomplete row.
   A published course offering is scheduled from the same page (the offering picker): the panel lists that
   offering's periods and adds or removes them in place, with the same clash rules — the offering page's
   "add period" form stays as the secondary path.
-- **Work queue** (`/admin/work-queue`, first item for a head of department): the real work in one list —
+- **Work queue** (`/admin/work-queue` in the management workspace, `/hod/work-queue` for a head of
+  department — see "Two workspaces" below): the real work in one list —
   pending external offering approvals, unanswered change requests, cohort decisions that are not finalised,
-  published offerings with no timetable periods, and offerings with no seats left. Every row links to the
-  catalogue, offering-detail or selections page that handles it; those pages are unchanged.
+  published offerings with no timetable periods, timetable periods with no teacher, and offerings with no
+  seats left. Every row links to the catalogue, offering-detail, timetable or selections page that handles
+  it; those pages are unchanged.
 - **Notifications** (`/admin/notifications`): a per-user, actionable feed. An HOD appointment request
   notifies the Principal and IT admins; a result correction request notifies the IT admins and the
   Principal. Each item is a pointer to the page that owns the decision, and that page re-checks access,
@@ -81,6 +85,23 @@ Create test accounts for the other roles. These must choose a new password at fi
 
 Then run `cargo run` and open http://127.0.0.1:3001/login for staff/admin management accounts. Students and teachers can sign in through the public listener at http://127.0.0.1:3000/login. Each role lands on its own dashboard:
 IT admin, the Principal and office staff on `/admin`, teachers on `/teacher`, students on `/hub`.
+
+### Two workspaces: `/admin` and `/hod`
+
+The management area is served on the loopback listener only, so a **head of department** — who is a
+teacher, and signs in on the public listener — would find every department link there a 404. The
+department tools are therefore mounted twice from the same handlers, with identical per-request guards:
+
+| workspace | who | listener |
+| --- | --- | --- |
+| `/admin` | IT admin, Principal, office staff | management (loopback `:3001`) |
+| `/hod` | head of department, approved delegate | public (`:3000`) — and the management listener too |
+
+Every page, redirect and sidebar link is built from the caller's workspace, so an HOD never sees an
+`/admin` URL and the IT admin never sees an `/hod` one. The college-wide pages (People, Settings, the
+attendance report, the CMS) take `AdminOnly`, are served at `/admin` alone, and stay off the public
+listener. Mounting the department handlers a second time grants nothing: a teacher without an
+appointment is refused at `/hod` exactly as they are at `/admin`.
 
 The **Principal** (`create-user principal ...`) holds institution-wide *academic* authority — the same
 cross-department reach as the IT admin on the academic tools, but no technical powers. The IT admin
@@ -267,6 +288,10 @@ Keep the colours and fonts in `tailwind.config.js` and `styles.html` identical.
 
 ## Known limitations (to do later)
 
+`remaining.md` is the handover file: it explains the architecture and structure, lists everything still open with
+where to change it and how to verify it, and is the CLI/operations cookbook (commands, environment,
+troubleshooting). This section is the behaviour-level list; `remaining.md` Part 2 is the implementation view.
+
 Review of the course management & selection feature (branch `feature/curriculamv2`, first verified
 6 Oct 2026 and re-checked against the current code). The feature works end to end — catalogue → offering →
 publish → cross-department approval → selection (FIXED / HOD-assigned / individual choice / cohort
@@ -312,8 +337,9 @@ the evidence (a test name, or "by inspection" where the code already handled it)
     both the add and edit forms are generated from it (the database CHECK is unchanged and matches it).
     An *offering's* `course_type` is still free text, deliberately, so a new university category is data
     rather than a migration; a categories table with labels would be the next step if it needs policing.
-11. Minor: no pending-approval badge in the nav (a count of pending appointments, selections and
-    corrections); `student_course_selections.state = 'submitted'` is reserved but unused (selections go
+11. Minor: the navigation now badges pending HOD appointments for the roles that decide them
+    (`Shell::pending_approvals`); a combined count of pending selections and result corrections is still
+    absent. `student_course_selections.state = 'submitted'` is reserved but unused (selections go
     draft → confirmed directly).
 
 ### Still open on the redesign brief
@@ -321,25 +347,39 @@ the evidence (a test name, or "by inspection" where the code already handled it)
 `done.md` tracks the brief section by section; these are the items it lists as unfinished, so this file is
 not read as "nothing left".
 
-12. **Timetable integrity (brief §7, P0.10).** Forms no longer treat a bad id as "unassigned", but a
-    published period does not yet *require* a validated teacher, and there is no explicit `teacher_tbd`
-    state with a work-queue item.
+12. ~~**Timetable integrity (brief §7, P0.10).**~~ **Fixed.** A period is now either taught by a validated
+    teacher or explicitly marked `teacher_tbd`; a table CHECK (migration `0032`) makes that a schema
+    invariant, the timetable and offering forms offer the choice, and the outstanding periods are a
+    work-queue section. The two write paths that create a period share one service. Evidence:
+    `tests/database.rs` — `a_period_is_taught_by_a_validated_teacher_or_explicitly_tbd`,
+    `an_offering_period_is_queued_under_its_offering_department`; e2e
+    `a_timetable_period_can_be_left_for_a_teacher_to_be_assigned`.
 13. **Internals contributing to an official result (brief §7).** Internal assessments and university
     results are kept as separate rows keyed by `exam_kind`, and the semester lives on the row, but
     "whether an internal assessment contributes to the official result" is not modelled as a flag —
     today it is a matter of which rows are published.
-14. **Audit detail (brief §6).** Rows carry actor/action/entity/entity_id, the log is append-only by
-    trigger, and the newer calls write a structured `details` payload (result corrections, HOD
-    appointments, role changes); many older calls still pass none, a few still discard their error with
-    `let _ =`, and there is no correlation id.
-15. **Reusable UI components (brief §8).** Tables, empty states and form errors are consistent by
-    convention, not by shared components.
-16. **Authorization test depth (brief §9).** `tests/app.rs` covers HOD-vs-other-department,
-    teacher-with-no-appointment, IT-admin-vs-any-programme and Super-Admin-vs-IT-admin through the real
-    router; the same matrix for student-vs-student, teacher-vs-assigned-course and CMS ownership is still
-    missing.
-17. **JS behaviour coverage (brief §9).** The `data-*` hooks in `app.js` have no automated test (there is no
-    browser in this environment); they were verified by reading the script and the rendered markup.
+14. **Audit detail (brief §6) — improved, still partial.** Rows carry
+    actor/action/entity/entity_id and the log is append-only by trigger; every request now also carries a
+    server-generated `correlation_id` (migration `0033`, `src/correlation.rs` + middleware) shared by every
+    row it writes. Structured `details` now cover result corrections, HOD appointments, role changes,
+    account activation/deactivation, the bulk archive, appointment revoke, delegation grant/revoke, CMS
+    publish/archive, settings save and backups. Remaining: many older calls still pass no detail, a few
+    still discard their error with `let _ =`.
+15. **Reusable UI components (brief §8) — started.** `src/ui.rs` is now the single definition of the status
+    badge (markup *and* colour), rendered `|safe` and reached through a row method; `partials/empty_state.html`
+    and `partials/form_errors.html` are shared partials reading a template field. Limitation: Askama 0.12 has
+    no macros and its `{% include %}` cannot take parameters, so a *per-row* fragment must be built in Rust
+    rather than shared as a partial — tables therefore remain consistent by convention.
+16. **Authorization test depth (brief §9) — extended.** `tests/app.rs` now also drives, through the real
+    router: `one_student_cannot_withdraw_another_students_selection`,
+    `a_student_reaches_their_own_hub_but_not_the_staff_tools`,
+    `a_teacher_cannot_mark_attendance_for_another_teachers_class` and
+    `only_the_it_admin_publishes_or_deletes_cms_content`. The student-vs-student case proves the route scopes
+    the write to the session student by asserting the other student's row survives.
+17. ~~**JS behaviour coverage (brief §9).**~~ **Fixed.** `tests/js/app_hooks.test.mjs` loads the real
+    `static/js/app.js` into a fake DOM and fires each `data-*` hook, asserting its effect (mark-all radios,
+    select-all and its toggle, autosubmit, confirm, print). `cargo test --test js_hooks` runs it under Node;
+    if Node is absent the test reports that and passes.
 
 Previously flagged bugs that have since been fixed:
 

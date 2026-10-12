@@ -8,6 +8,7 @@
 pub mod auth;
 pub mod cli;
 pub mod config;
+pub mod correlation;
 pub mod dates;
 pub mod error;
 pub mod layout;
@@ -19,6 +20,7 @@ pub mod services;
 pub mod shell;
 pub mod site;
 pub mod state;
+pub mod ui;
 pub mod uploads;
 pub mod validate;
 
@@ -96,6 +98,10 @@ pub fn apply_layers(
         // authorization-aware route rather than a raw directory mount.
         .nest_service("/static", ServeDir::new("static"))
         .layer(session_layer)
+        // Stamp every request with a correlation id, so the audit rows written
+        // while handling it can be grouped. It is generated here and never read
+        // from the request.
+        .layer(axum::middleware::from_fn(with_correlation))
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_CONTENT_TYPE_OPTIONS,
             HeaderValue::from_static("nosniff"),
@@ -127,6 +133,15 @@ pub fn apply_layers(
     router
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
+}
+
+/// Attach a fresh correlation id to the request, visible to the audit writes
+/// made while it is handled (see [`correlation`]).
+async fn with_correlation(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    correlation::scope(correlation::new_id(), next.run(request)).await
 }
 
 /// The site's Content-Security-Policy.

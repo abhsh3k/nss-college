@@ -1,6 +1,9 @@
 /** Production Tailwind config. Keep in sync with templates/partials/styles.html (dev CDN config). */
 module.exports = {
-  content: ["./templates/**/*.html", "./static/js/**/*.js"],
+  // Templates and the client script are the usual sources; `src/**/*.rs` is
+  // included because shared fragments with Tailwind classes are built in Rust
+  // (see `src/ui.rs`), and Tailwind must see those class names to emit them.
+  content: ["./templates/**/*.html", "./static/js/**/*.js", "./src/**/*.rs"],
   theme: {
     extend: {
       colors: {

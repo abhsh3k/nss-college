@@ -34,7 +34,7 @@
       <tr class="border-b border-ink/10 align-top">
         <td class="py-3 pr-4 font-medium">{{ n.title }}{% if n.is_pinned %} <span class="ml-1 rounded bg-accent px-1.5 py-0.5 text-xs">Pinned</span>{% endif %}{% if n.has_attachment %} <span class="ml-1 rounded bg-mist px-1.5 py-0.5 text-xs">PDF</span>{% endif %}<p class="mt-1 text-sm font-normal text-ink/70">{{ n.category }}</p></td>
         <td class="py-3 pr-4 text-sm">{{ n.audience }}</td>
-        <td class="py-3 pr-4 text-sm">{{ n.status }}</td>
+        <td class="py-3 pr-4 text-sm">{{ n.status_badge()|safe }}</td>
         <td class="py-3 pr-4 text-sm text-ink/80">{{ n.published_label }}</td>
         <td class="py-3 text-right">
           <div class="flex flex-wrap items-center justify-end gap-3">
@@ -57,7 +57,7 @@
     </tbody>
   </table>
   {% if notices.is_empty() %}
-  <p class="py-8 text-ink/70">No notices match. Add one with the button above.</p>
+  {% include "partials/empty_state.html" %}
   {% endif %}
 </div>
 {% endblock %}

@@ -13,9 +13,9 @@
   {% endif %}
 
   {% if panel.courses.is_empty() %}
-  <p class="mt-4 max-w-3xl">There are no courses in this semester yet. <a class="underline underline-offset-4 hover:text-brand" href="/admin/academics/programmes/{{ panel.programme_id }}">Add courses first</a>.</p>
+  <p class="mt-4 max-w-3xl">There are no courses in this semester yet. <a class="underline underline-offset-4 hover:text-brand" href="{{ panel.base }}/academics/programmes/{{ panel.programme_id }}">Add courses first</a>.</p>
   {% else %}
-  <form hx-post="/admin/timetable/slots" hx-target="#timetable-panel" hx-swap="outerHTML" class="mt-5 grid max-w-4xl gap-4 border border-ink/15 bg-mist p-5 sm:grid-cols-6">
+  <form hx-post="{{ panel.base }}/timetable/slots" hx-target="#timetable-panel" hx-swap="outerHTML" class="mt-5 grid max-w-4xl gap-4 border border-ink/15 bg-mist p-5 sm:grid-cols-6">
     <input type="hidden" name="csrf_token" value="{{ panel.csrf_token }}">
     <input type="hidden" name="programme_id" value="{{ panel.programme_id }}">
     <input type="hidden" name="semester" value="{{ panel.semester }}">
@@ -45,6 +45,10 @@
         <option value="">The course's teacher</option>
         {% for t in panel.teachers %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
       </select>
+      <label class="mt-2 flex items-center gap-2 text-sm text-ink/80">
+        <input type="checkbox" name="teacher_tbd" value="1" class="h-4 w-4 rounded border-ink/40">
+        Teacher to be assigned
+      </label>
     </div>
     <div class="sm:col-span-3">
       <label for="tt-room" class="block font-semibold">Room <span class="font-normal text-ink/70">(optional)</span></label>
@@ -70,13 +74,13 @@
           <tr class="border-b border-ink/10">
             <td class="py-2 pr-4 font-medium">{{ s.start_at }}–{{ s.end_at }}</td>
             <td class="py-2 pr-4">{{ s.code }} {{ s.course }}{% if s.is_offering %} <span class="rounded bg-deep/10 px-1.5 py-0.5 text-xs font-medium text-deep">offering</span>{% endif %}</td>
-            <td class="py-2 pr-4 text-sm">{% if s.teacher != "" %}{{ s.teacher }}{% else %}<span class="text-brand">No teacher</span>{% endif %}</td>
+            <td class="py-2 pr-4 text-sm">{% if s.teacher_tbd %}<span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800">Teacher TBD</span>{% else if s.teacher != "" %}{{ s.teacher }}{% else %}<span class="text-brand">No teacher</span>{% endif %}</td>
             <td class="py-2 pr-4 text-sm">{{ s.room }}</td>
             <td class="py-2 text-right">
               {% if s.is_offering %}
               <span class="text-sm text-ink/60">Offering period<span class="sr-only"> of {{ s.course }} at {{ s.start_at }}; manage it from the offering picker</span></span>
               {% else %}
-              <form hx-post="/admin/timetable/slots/{{ s.id }}/delete" hx-target="#timetable-panel" hx-swap="outerHTML" hx-confirm="Remove this period?">
+              <form hx-post="{{ panel.base }}/timetable/slots/{{ s.id }}/delete" hx-target="#timetable-panel" hx-swap="outerHTML" hx-confirm="Remove this period?">
                 <input type="hidden" name="csrf_token" value="{{ panel.csrf_token }}">
                 <input type="hidden" name="programme_id" value="{{ panel.programme_id }}">
                 <input type="hidden" name="semester" value="{{ panel.semester }}">

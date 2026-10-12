@@ -35,7 +35,7 @@
         <td class="py-3 pr-4 font-medium">{{ e.title }}{% if e.has_image %} <span class="ml-1 rounded bg-mist px-1.5 py-0.5 text-xs">Photo</span>{% endif %}{% if e.is_past %} <span class="ml-1 rounded bg-mist px-1.5 py-0.5 text-xs">Past</span>{% endif %}{% if e.location != "" %}<p class="mt-1 text-sm font-normal text-ink/70">{{ e.location }}</p>{% endif %}</td>
         <td class="py-3 pr-4 text-sm">{{ e.starts_label }}</td>
         <td class="py-3 pr-4 text-sm">{{ e.audience }}</td>
-        <td class="py-3 pr-4 text-sm">{{ e.status }}</td>
+        <td class="py-3 pr-4 text-sm">{{ e.status_badge()|safe }}</td>
         <td class="py-3 text-right">
           <div class="flex flex-wrap items-center justify-end gap-3">
             <a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/events/{{ e.id }}">Edit<span class="sr-only"> {{ e.title }}</span></a>
@@ -57,7 +57,7 @@
     </tbody>
   </table>
   {% if events.is_empty() %}
-  <p class="py-8 text-ink/70">No events match. Add one with the button above.</p>
+  {% include "partials/empty_state.html" %}
   {% endif %}
 </div>
 {% endblock %}

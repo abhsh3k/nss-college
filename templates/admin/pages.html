@@ -38,7 +38,7 @@
         </td>
         <td class="py-3 pr-4 font-medium">{{ p.title }}{% if p.lede != "" %}<span class="block text-sm font-normal text-ink/80">{{ p.lede }}</span>{% endif %}</td>
         <td class="py-3 pr-4 text-sm text-ink/80">{{ p.section_count }}</td>
-        <td class="py-3 pr-4 text-sm">{{ p.status }}</td>
+        <td class="py-3 pr-4 text-sm">{{ p.status_badge()|safe }}</td>
         <td class="py-3 text-right">
           <div class="flex flex-wrap items-center justify-end gap-3">
             <a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/pages/{{ p.id }}">Edit<span class="sr-only"> {{ p.title }}</span></a>
@@ -60,7 +60,7 @@
     </tbody>
   </table>
   {% if pages.is_empty() %}
-  <p class="py-8 text-ink/70">No pages match. Add one with the button above.</p>
+  {% include "partials/empty_state.html" %}
   {% endif %}
 </div>
 {% endblock %}

@@ -1,0 +1,6 @@
+{# A consistent empty state.
+   The including template must expose a field named `empty_message` (Askama 0.12
+   includes cannot take parameters), e.g. `empty_message: &'static str` on the
+   template struct, then: {% include "partials/empty_state.html" %}
+#}
+<p class="mt-3 max-w-3xl border-l-4 border-ink/20 bg-mist px-4 py-3 text-ink/80">{{ empty_message }}</p>

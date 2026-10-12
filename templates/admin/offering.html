@@ -1,7 +1,7 @@
 {% extends "layouts/app.html" %}
 {% block title %}{{ offering.code }} — Offering{% endblock %}
 {% block content %}
-<p class="text-sm"><a class="underline underline-offset-4 hover:text-brand" href="/admin/courses/offerings">All offerings</a></p>
+<p class="text-sm"><a class="underline underline-offset-4 hover:text-brand" href="{{ shell.base }}/courses/offerings">All offerings</a></p>
 <h1 class="mt-2 font-display text-3xl font-semibold md:text-4xl">{{ offering.code }} — {{ offering.title }}</h1>
 <p class="mt-1 text-ink/80">{{ offering.department }} · {{ offering.year_label }} · Semester {{ offering.semester }} · {{ offering.course_type }} · {{ offering.selection_mode }}{% if offering.choice_group != "" %} ({{ offering.choice_group }}){% endif %}</p>
 <p class="mt-1 text-sm text-ink/70">{{ offering.credits }} credits (course v{{ offering.version_no }}) · {{ offering.enrolled }} enrolled{% if let Some(cap) = offering.capacity %} of {{ cap }} seats{% endif %} ·
@@ -11,20 +11,20 @@
 <div class="mt-6 flex flex-wrap gap-3">
   {% if can_edit %}
   {% if offering.status != "published" %}
-  <form method="post" action="/admin/courses/offerings/{{ offering.id }}/status">
+  <form method="post" action="{{ shell.base }}/courses/offerings/{{ offering.id }}/status">
     <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
     <input type="hidden" name="status" value="published">
     <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Publish offering</button>
   </form>
   {% else %}
-  <form method="post" action="/admin/courses/offerings/{{ offering.id }}/status">
+  <form method="post" action="{{ shell.base }}/courses/offerings/{{ offering.id }}/status">
     <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
     <input type="hidden" name="status" value="draft">
     <button type="submit" class="rounded border border-ink px-4 py-2 font-semibold text-sm hover:bg-ink hover:text-chalk">Unpublish</button>
   </form>
   {% endif %}
   {% if offering.status == "draft" %}
-  <form method="post" action="/admin/courses/offerings/{{ offering.id }}/delete">
+  <form method="post" action="{{ shell.base }}/courses/offerings/{{ offering.id }}/delete">
     <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
     <button type="submit" class="rounded border border-rose-500 px-4 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-500 hover:text-white">Delete draft</button>
   </form>
@@ -36,7 +36,7 @@
 <section class="mt-10" aria-labelledby="config">
   <h2 id="config" class="font-display text-2xl font-semibold">Configuration</h2>
   <p class="mt-1 text-sm text-ink/70">Semester, course type, selection mode, choice group and seats. Course, academic year and owning department are fixed at creation, and an offering that already has student selections can no longer be re-shaped.</p>
-  <form method="post" action="/admin/courses/offerings/{{ offering.id }}" class="mt-4 grid max-w-4xl gap-4 rounded border border-ink/15 bg-mist p-5 sm:grid-cols-6">
+  <form method="post" action="{{ shell.base }}/courses/offerings/{{ offering.id }}" class="mt-4 grid max-w-4xl gap-4 rounded border border-ink/15 bg-mist p-5 sm:grid-cols-6">
     <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
     <div class="sm:col-span-1">
       <label for="edit_semester" class="block text-sm font-semibold">Semester</label>
@@ -88,7 +88,7 @@
   {% endif %}
 
   {% if can_edit %}
-  <form method="post" action="/admin/courses/offerings/{{ offering.id }}/targets" class="mt-4 max-w-2xl border border-ink/15 bg-mist p-5">
+  <form method="post" action="{{ shell.base }}/courses/offerings/{{ offering.id }}/targets" class="mt-4 max-w-2xl border border-ink/15 bg-mist p-5">
     <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
     <fieldset class="grid gap-2 sm:grid-cols-2">
       <legend class="font-semibold">Target programmes</legend>
@@ -146,7 +146,7 @@
           <td class="py-2 pr-4 text-sm">{% if t.room != "" %}{{ t.room }}{% else %}—{% endif %}</td>
           <td class="py-2 text-right">
             {% if can_edit %}
-            <form method="post" action="/admin/courses/offerings/{{ offering.id }}/periods/{{ t.id }}/delete" class="inline">
+            <form method="post" action="{{ shell.base }}/courses/offerings/{{ offering.id }}/periods/{{ t.id }}/delete" class="inline">
               <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
               <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Remove</button>
             </form>
@@ -160,7 +160,7 @@
   {% endif %}
 
   {% if can_edit %}
-  <form method="post" action="/admin/courses/offerings/{{ offering.id }}/periods" class="mt-4 grid gap-4 rounded border border-ink/15 bg-mist p-5 sm:grid-cols-6">
+  <form method="post" action="{{ shell.base }}/courses/offerings/{{ offering.id }}/periods" class="mt-4 grid gap-4 rounded border border-ink/15 bg-mist p-5 sm:grid-cols-6">
     <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
     <div class="sm:col-span-1">
       <label for="weekday" class="block font-semibold text-sm">Day</label>

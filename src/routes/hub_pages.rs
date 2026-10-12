@@ -43,7 +43,7 @@ pub async fn timetable(
     session: Session,
     StudentOnly(user): StudentOnly,
 ) -> Result<TimetableTemplate, AppError> {
-    let shell = Shell::build(&user, &session).await?;
+    let shell = Shell::build(&user, &session, &s.db).await?;
     let (today_str, now_hm, weekday_today) = now_parts(&s.db).await?;
 
     let Some(p) = hub::student_profile(&s.db, user.id).await? else {
@@ -151,7 +151,7 @@ pub async fn results(
     StudentOnly(user): StudentOnly,
     Query(q): Query<ResultsQuery>,
 ) -> Result<ResultsTemplate, AppError> {
-    let shell = Shell::build(&user, &session).await?;
+    let shell = Shell::build(&user, &session, &s.db).await?;
     let Some(p) = hub::student_profile(&s.db, user.id).await? else {
         return Ok(ResultsTemplate {
             shell,
@@ -227,7 +227,7 @@ pub async fn exam_timetable(
     session: Session,
     StudentOnly(user): StudentOnly,
 ) -> Result<ExamTimetableTemplate, AppError> {
-    let shell = Shell::build(&user, &session).await?;
+    let shell = Shell::build(&user, &session, &s.db).await?;
     let Some(p) = hub::student_profile(&s.db, user.id).await? else {
         return Ok(ExamTimetableTemplate {
             shell,
@@ -257,7 +257,7 @@ pub async fn materials(
     session: Session,
     StudentOnly(user): StudentOnly,
 ) -> Result<MaterialsTemplate, AppError> {
-    let shell = Shell::build(&user, &session).await?;
+    let shell = Shell::build(&user, &session, &s.db).await?;
     let Some(_p) = hub::student_profile(&s.db, user.id).await? else {
         return Ok(MaterialsTemplate {
             shell,

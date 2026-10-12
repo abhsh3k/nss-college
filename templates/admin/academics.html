@@ -22,7 +22,7 @@
         <td class="py-3 pr-4 text-sm">{{ p.department }}</td>
         <td class="py-3 pr-4">{{ p.course_count }}</td>
         <td class="py-3 pr-4">{{ p.student_count }}</td>
-        <td class="py-3 text-right"><a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/academics/programmes/{{ p.id }}">Manage<span class="sr-only"> {{ p.name }}</span></a></td>
+        <td class="py-3 text-right"><a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="{{ shell.base }}/academics/programmes/{{ p.id }}">Manage<span class="sr-only"> {{ p.name }}</span></a></td>
       </tr>
       {% endfor %}
     </tbody>

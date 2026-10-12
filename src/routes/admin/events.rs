@@ -38,6 +38,8 @@ pub struct IndexPage {
     events: Vec<EventRow>,
     filter: String,
     statuses: Vec<String>,
+    /// Shown by the shared empty-state partial when the list is empty.
+    empty_message: &'static str,
 }
 
 pub async fn index(
@@ -51,10 +53,11 @@ pub async fn index(
         Some(v) => content_admin::clean_status(v).to_string(),
     };
     Ok(IndexPage {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
         events: content_admin::events(&s.db, &filter).await?,
         filter,
         statuses: statuses(),
+        empty_message: "No events match. Add one with the button above.",
     })
 }
 
@@ -103,23 +106,27 @@ pub struct FormPage {
     form: EventFormValues,
     statuses: Vec<String>,
     audiences: Vec<String>,
+    /// Read by the shared form-error partial.
+    error: Option<String>,
 }
 
 fn form_page(form: EventFormValues, shell: Shell) -> FormPage {
+    let error = form.error.clone();
     FormPage {
         shell,
         form,
         statuses: statuses(),
         audiences: audiences(),
+        error,
     }
 }
 
 pub async fn new_form(
-    State(_s): State<AppState>,
+    State(s): State<AppState>,
     session: Session,
     AdminOnly(user): AdminOnly,
 ) -> Result<FormPage, AppError> {
-    Ok(form_page(EventFormValues::blank(), Shell::build(&user, &session).await?))
+    Ok(form_page(EventFormValues::blank(), Shell::build(&user, &session, &s.db).await?))
 }
 
 pub async fn edit_form(
@@ -146,7 +153,7 @@ pub async fn edit_form(
             unpublish_value: row.unpublish_at,
             error: None,
         },
-        Shell::build(&user, &session).await?,
+        Shell::build(&user, &session, &s.db).await?,
     ))
 }
 
@@ -258,6 +265,7 @@ fn to_input(values: &EventFormValues) -> Result<EventInput, AppError> {
 }
 
 async fn with_error(
+    db: &sqlx::PgPool,
     user: &AuthUser,
     session: &Session,
     mut values: EventFormValues,
@@ -267,7 +275,7 @@ async fn with_error(
         .clone()
         .unwrap_or_else(|| "Check the form and try again.".into());
     values.error = Some(msg);
-    Ok(form_page(values, Shell::build(user, session).await?).into_response())
+    Ok(form_page(values, Shell::build(user, session, db).await?).into_response())
 }
 
 pub async fn create(
@@ -280,7 +288,7 @@ pub async fn create(
 
     store_image(&s, &body, &mut values, user.id).await?;
     if values.error.is_some() {
-        return with_error(&user, &session, values).await;
+        return with_error(&s.db, &user, &session, values).await;
     }
 
     let input = to_input(&values)?;
@@ -320,7 +328,7 @@ pub async fn update(
 
     store_image(&s, &body, &mut values, user.id).await?;
     if values.error.is_some() {
-        return with_error(&user, &session, values).await;
+        return with_error(&s.db, &user, &session, values).await;
     }
 
     let input = to_input(&values)?;
@@ -353,7 +361,7 @@ pub async fn set_status(
 
     let status = content_admin::clean_status(&f.status);
     content_admin::set_event_status(&s.db, id, status).await?;
-    users::audit(
+    users::audit_detail(
         &s.db,
         Some(user.id),
         if status == "archived" {
@@ -363,6 +371,7 @@ pub async fn set_status(
         },
         "event",
         Some(id),
+        serde_json::json!({ "status": status }),
     )
     .await?;
     flash(

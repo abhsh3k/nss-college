@@ -33,7 +33,7 @@
 <h1 class="font-display text-3xl font-semibold md:text-4xl">Edit catalogue course</h1>
 <p class="mt-3 max-w-2xl text-ink/80">Rename or recategorise a course in your department's catalogue. This does not touch any offering, result or timetable entry already built from it.</p>
 
-<form method="post" action="/admin/courses/{{ course_id }}/edit" class="mt-8 grid max-w-3xl gap-4 sm:grid-cols-6">
+<form method="post" action="{{ shell.base }}/courses/{{ course_id }}/edit" class="mt-8 grid max-w-3xl gap-4 sm:grid-cols-6">
   <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
   <div class="sm:col-span-2">
     <label for="code" class="block font-semibold">Course code</label>
@@ -68,7 +68,7 @@
   </div>
   <div class="sm:col-span-6 flex gap-3">
     <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Save course</button>
-    <a href="/admin/courses" class="rounded border border-ink/40 px-4 py-2 font-semibold hover:bg-mist">Cancel</a>
+    <a href="{{ shell.base }}/courses" class="rounded border border-ink/40 px-4 py-2 font-semibold hover:bg-mist">Cancel</a>
   </div>
 </form>
 {#- Append-only history: what this course was, as of each save. -#}

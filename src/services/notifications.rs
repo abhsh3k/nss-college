@@ -21,6 +21,18 @@ pub struct Notification {
     pub at_label: String,
 }
 
+impl Notification {
+    /// The target page as it should be rendered in the reader's workspace.
+    ///
+    /// Rows carry the canonical `/admin…` path (that is where every writer of a
+    /// notification looks the page up), but the same page is served under
+    /// `/hod` for a head of department, who signs in on the public listener.
+    /// Anything outside the management area is left as it is.
+    pub fn href_in(&self, base: &str) -> String {
+        crate::sections::in_workspace(base, &self.href)
+    }
+}
+
 /// Record a notification for one user. The caller passes a short title, an
 /// optional body, and the relative `href` the reader should open.
 pub async fn create(

@@ -2,9 +2,9 @@
 {% block title %}Exam timetable{% endblock %}
 {% block content %}
 <h1 class="font-display text-3xl font-semibold md:text-4xl">Exam timetable</h1>
-<p class="mt-3 max-w-2xl text-ink/80">Assemble the exam timetable for a programme and semester, then push it: students see it from the push until the date of the last exam. Results are filed from <a href="/admin/marks" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Marks entry</a>, and reach the student's Results page straight away.</p>
+<p class="mt-3 max-w-2xl text-ink/80">Assemble the exam timetable for a programme and semester, then push it: students see it from the push until the date of the last exam. Results are filed from <a href="{{ shell.base }}/marks" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Marks entry</a>, and reach the student's Results page straight away.</p>
 
-<form method="get" action="/admin/exams" class="mt-6 flex flex-wrap items-end gap-4">
+<form method="get" action="{{ shell.base }}/exams" class="mt-6 flex flex-wrap items-end gap-4">
   <div>
     <label for="programme" class="block text-sm font-semibold">Programme</label>
     <select id="programme" name="programme" required class="mt-1 rounded border border-ink/40 bg-white px-3 py-2 text-sm">
@@ -43,14 +43,14 @@
     </div>
     <div class="flex gap-3">
       {% if group.pushed %}
-      <form method="post" action="/admin/exams/unpush">
+      <form method="post" action="{{ shell.base }}/exams/unpush">
         <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
         <input type="hidden" name="programme" value="{{ sel_programme }}">
         <input type="hidden" name="semester" value="{{ sel_semester }}">
         <button type="submit" class="rounded border border-rose-400 px-4 py-2 font-semibold text-rose-700 hover:bg-rose-50">Unpublish</button>
       </form>
       {% else %}
-      <form method="post" action="/admin/exams/push">
+      <form method="post" action="{{ shell.base }}/exams/push">
         <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
         <input type="hidden" name="programme" value="{{ sel_programme }}">
         <input type="hidden" name="semester" value="{{ sel_semester }}">
@@ -65,7 +65,7 @@
 <!-- Add one exam row -->
 <section class="mt-8 max-w-5xl border border-ink/15 bg-mist p-5" aria-labelledby="add-exam">
   <h2 id="add-exam" class="font-display text-2xl font-semibold">Add an exam</h2>
-  <form method="post" action="/admin/exams/add" class="mt-4 grid gap-4 sm:grid-cols-6">
+  <form method="post" action="{{ shell.base }}/exams/add" class="mt-4 grid gap-4 sm:grid-cols-6">
     <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
     <input type="hidden" name="programme" value="{{ sel_programme }}">
     <input type="hidden" name="semester" value="{{ sel_semester }}">
@@ -126,7 +126,7 @@
         <td class="py-2 pr-4 text-sm font-semibold">{% if e.status == "published" %}<span class="text-emerald-700">Pushed</span>{% else %}<span class="text-amber-700">Draft</span>{% endif %}</td>
         <td class="py-2 text-right">
           {% if e.status == "draft" %}
-          <form method="post" action="/admin/exams/{{ e.id }}/delete" class="inline">
+          <form method="post" action="{{ shell.base }}/exams/{{ e.id }}/delete" class="inline">
             <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
             <input type="hidden" name="programme" value="{{ sel_programme }}">
             <input type="hidden" name="semester" value="{{ sel_semester }}">

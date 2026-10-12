@@ -19,6 +19,7 @@ use tower_sessions::Session;
 use super::parse_i32;
 use crate::{
     auth::{csrf, Manager},
+    sections,
     error::{is_unique_violation, AppError},
     services::{
         courses::{self, CatalogueCourse, CourseInput},
@@ -27,6 +28,13 @@ use crate::{
     shell::{self, Shell},
     state::AppState,
 };
+
+/// A path in the workspace this manager is working in: `/admin` for the IT
+/// administrator, `/hod` for a head of department, signing in on the public
+/// listener where `/admin` is not served at all.
+fn ws(manager: &Manager, path: &str) -> String {
+    format!("{}{path}", sections::base_for(&manager.user))
+}
 
 async fn department_name(s: &AppState, manager: &Manager) -> Result<String, AppError> {
     Ok(match manager.department() {
@@ -60,7 +68,7 @@ pub async fn catalogue(
 ) -> Result<CatalogueTemplate, AppError> {
     let department = manager.department();
     Ok(CatalogueTemplate {
-        shell: Shell::build(&manager.user, &session).await?,
+        shell: Shell::build(&manager.user, &session, &s.db).await?,
         courses: match department {
             Some(id) => courses::department_courses(&s.db, id).await?,
             None => courses::catalogue_courses(&s.db, None).await?,
@@ -119,7 +127,7 @@ pub async fn add_course(
         Ok(c) => c,
         Err(msg) => {
             shell::flash(&session, msg).await?;
-            return Ok(Redirect::to("/admin/courses"));
+            return Ok(Redirect::to(&ws(&manager, "/courses")));
         }
     };
     match courses::create_catalogue_course(&s.db, department_id, &input).await {
@@ -132,7 +140,7 @@ pub async fn add_course(
         }
         Err(e) => return Err(e.into()),
     }
-    Ok(Redirect::to("/admin/courses"))
+    Ok(Redirect::to(&ws(&manager, "/courses")))
 }
 
 #[derive(Template)]
@@ -171,7 +179,7 @@ pub async fn edit_form(
         return Err(AppError::Forbidden);
     }
     Ok(CatalogueEditTemplate {
-        shell: Shell::build(&manager.user, &session).await?,
+        shell: Shell::build(&manager.user, &session, &s.db).await?,
         course_id: course.id,
         code: course.code,
         title: course.title,
@@ -201,7 +209,7 @@ pub async fn edit_course(
         Ok(c) => c,
         Err(msg) => {
             shell::flash(&session, msg).await?;
-            return Ok(Redirect::to("/admin/courses"));
+            return Ok(Redirect::to(&ws(&manager, "/courses")));
         }
     };
     match courses::update_catalogue_course(&s.db, id, &input, Some(manager.user.id)).await {
@@ -218,7 +226,7 @@ pub async fn edit_course(
         }
         Err(e) => return Err(e.into()),
     }
-    Ok(Redirect::to("/admin/courses"))
+    Ok(Redirect::to(&ws(&manager, "/courses")))
 }
 
 #[derive(Deserialize)]
@@ -245,7 +253,7 @@ pub async fn toggle_course(
     courses::set_course_active(&s.db, id, !active).await?;
     users::audit(&s.db, Some(manager.user.id), "catalogue_course_toggled", "course", Some(id)).await?;
     shell::flash(&session, if active { "Course retired." } else { "Course reactivated." }).await?;
-    Ok(Redirect::to("/admin/courses"))
+    Ok(Redirect::to(&ws(&manager, "/courses")))
 }
 
 // ---------- Offerings ----------
@@ -269,7 +277,7 @@ pub async fn offerings(
 ) -> Result<OfferingsTemplate, AppError> {
     let department = manager.department();
     Ok(OfferingsTemplate {
-        shell: Shell::build(&manager.user, &session).await?,
+        shell: Shell::build(&manager.user, &session, &s.db).await?,
         offerings: courses::offerings_for_department(&s.db, department).await?,
         // An HOD offers courses from their own catalogue; the admin sees every department's.
         catalogue: match department {
@@ -378,7 +386,7 @@ pub async fn create_offering(
         Ok(n) => n,
         Err(msg) => {
             shell::flash(&session, msg).await?;
-            return Ok(Redirect::to("/admin/courses/offerings"));
+            return Ok(Redirect::to(&ws(&manager, "/courses/offerings")));
         }
     };
     // The course must belong to the offering department, whatever the form says.
@@ -396,7 +404,7 @@ pub async fn create_offering(
         }
         Err(e) => return Err(e.into()),
     }
-    Ok(Redirect::to("/admin/courses/offerings"))
+    Ok(Redirect::to(&ws(&manager, "/courses/offerings")))
 }
 
 #[derive(Deserialize, Default)]
@@ -429,7 +437,7 @@ pub async fn edit_offering(
     if manager.department() != Some(o.offering_department_id) && !manager.is_admin() {
         return Err(AppError::Forbidden);
     }
-    let back = format!("/admin/courses/offerings/{id}");
+    let back = ws(&manager, &format!("/courses/offerings/{id}"));
     let cfg = match check_config(
         &f.semester,
         &f.course_type,
@@ -499,14 +507,14 @@ pub async fn delete_offering(
     if courses::delete_offering(&s.db, id).await? {
         users::audit(&s.db, Some(manager.user.id), "offering_deleted", "course_offering", Some(id)).await?;
         shell::flash(&session, "Draft offering deleted.").await?;
-        Ok(Redirect::to("/admin/courses/offerings"))
+        Ok(Redirect::to(&ws(&manager, "/courses/offerings")))
     } else {
         shell::flash(
             &session,
             "Only a draft can be deleted; unpublish or archive this offering instead.",
         )
         .await?;
-        Ok(Redirect::to(&format!("/admin/courses/offerings/{id}")))
+        Ok(Redirect::to(&ws(&manager, &format!("/courses/offerings/{id}"))))
     }
 }
 
@@ -594,7 +602,7 @@ pub async fn offering_page(
     .await?;
 
     Ok(OfferingTemplate {
-        shell: Shell::build(&manager.user, &session).await?,
+        shell: Shell::build(&manager.user, &session, &s.db).await?,
         targets: targets
             .into_iter()
             .map(|t| TargetView {
@@ -669,7 +677,7 @@ pub async fn set_targets(
     }
     if programme_ids.is_empty() {
         shell::flash(&session, "Choose at least one programme (or cohort).").await?;
-        return Ok(Redirect::to(&format!("/admin/courses/offerings/{id}")));
+        return Ok(Redirect::to(&ws(&manager, &format!("/courses/offerings/{id}"))));
     }
 
     // A batch year narrows the target to a cohort; create or find it on demand.
@@ -678,7 +686,7 @@ pub async fn set_targets(
             let first: i64 = *programme_ids.first().ok_or(AppError::NotFound)?;
             if programme_ids.len() > 1 {
                 shell::flash(&session, "A batch year targets one programme's cohort; pick one programme or clear the year.").await?;
-                return Ok(Redirect::to(&format!("/admin/courses/offerings/{id}")));
+                return Ok(Redirect::to(&ws(&manager, &format!("/courses/offerings/{id}"))));
             }
             Some(
                 sqlx::query_scalar(
@@ -705,7 +713,7 @@ pub async fn set_targets(
     courses::auto_apply_fixed(&s.db, Some(id), None).await?;
     users::audit(&s.db, Some(manager.user.id), "offering_targets_set", "course_offering", Some(id)).await?;
     shell::flash(&session, "Target programmes saved.").await?;
-    Ok(Redirect::to(&format!("/admin/courses/offerings/{id}")))
+    Ok(Redirect::to(&ws(&manager, &format!("/courses/offerings/{id}"))))
 }
 
 #[derive(Deserialize)]
@@ -736,7 +744,7 @@ pub async fn publish(
     };
     if status == "published" && !o.has_target {
         shell::flash(&session, "Choose the target programmes before publishing.").await?;
-        return Ok(Redirect::to(&format!("/admin/courses/offerings/{id}")));
+        return Ok(Redirect::to(&ws(&manager, &format!("/courses/offerings/{id}"))));
     }
     courses::set_offering_status(&s.db, id, status).await?;
     let message = if status == "published" {
@@ -759,7 +767,7 @@ pub async fn publish(
     };
     users::audit(&s.db, Some(manager.user.id), "offering_status_set", "course_offering", Some(id)).await?;
     shell::flash(&session, message).await?;
-    Ok(Redirect::to(&format!("/admin/courses/offerings/{id}")))
+    Ok(Redirect::to(&ws(&manager, &format!("/courses/offerings/{id}"))))
 }
 
 #[derive(Deserialize)]
@@ -823,7 +831,7 @@ pub async fn decide(
     } else {
         shell::flash(&session, "That approval is not yours to decide.").await?;
     }
-    Ok(Redirect::to("/admin/courses/external"))
+    Ok(Redirect::to(&ws(&manager, "/courses/external")))
 }
 
 #[derive(Template)]
@@ -842,7 +850,7 @@ pub async fn external(
     // A receiving HOD sees their own worklist; the IT admin sees them all.
     let department = manager.department();
     Ok(ExternalTemplate {
-        shell: Shell::build(&manager.user, &session).await?,
+        shell: Shell::build(&manager.user, &session, &s.db).await?,
         approvals: courses::external_offerings_for(&s.db, department).await?,
         department_name: department_name(&s, &manager).await?,
     })
@@ -859,6 +867,8 @@ pub struct PeriodForm {
     end_at: String,
     room: String,
     faculty_id: String,
+    /// "1"/"on" when the teacher is explicitly left to be assigned later.
+    teacher_tbd: String,
 }
 
 pub async fn add_period(
@@ -879,30 +889,60 @@ pub async fn add_period(
     let weekday = parse_i32(&f.weekday).filter(|v| (1..=6).contains(v)).map(|v| v as i16);
     let start = super::normalise_time(&f.start_at);
     let end = super::normalise_time(&f.end_at);
-    let faculty_id = f.faculty_id.trim().parse::<i64>().ok().filter(|v| *v > 0).unwrap_or(0);
     let (Some(weekday), Some(start), Some(end)) = (weekday, start, end) else {
         shell::flash(&session, "Choose the day and both times.").await?;
-        return Ok(Redirect::to(&format!("/admin/courses/offerings/{id}")));
+        return Ok(Redirect::to(&ws(&manager, &format!("/courses/offerings/{id}"))));
     };
     if end <= start {
         shell::flash(&session, "The period must end after it starts.").await?;
-        return Ok(Redirect::to(&format!("/admin/courses/offerings/{id}")));
+        return Ok(Redirect::to(&ws(&manager, &format!("/courses/offerings/{id}"))));
+    }
+
+    // Teacher integrity, the same rule as the timetable page: a validated
+    // teacher, or an explicit "to be assigned". The offering's course teacher
+    // is the fallback; a period is never left silently teacher-less.
+    let explicit = f.faculty_id.trim().parse::<i64>().ok().filter(|v| *v > 0);
+    let teacher_tbd = explicit.is_none() && super::checkbox(&f.teacher_tbd);
+    let faculty_id = match explicit {
+        Some(id) => id,
+        None if teacher_tbd => 0,
+        None => crate::services::academics::course_teacher(&s.db, o.course_id).await?,
+    };
+    if !teacher_tbd
+        && (faculty_id <= 0
+            || !crate::services::academics::may_manage_teacher(
+                &s.db,
+                faculty_id,
+                manager.department(),
+            )
+            .await?
+            || !sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM faculty WHERE id = $1 AND status = 'published')",
+            )
+            .bind(faculty_id)
+            .fetch_one(&s.db)
+            .await?)
+    {
+        shell::flash(
+            &session,
+            "Choose an active teacher in the permitted department, or mark the teacher as to be assigned.",
+        )
+        .await?;
+        return Ok(Redirect::to(&ws(&manager, &format!("/courses/offerings/{id}"))));
     }
 
     // Same clash rules as the timetable page: a teacher, room or class is
     // never double-booked, whichever of the two paths added the period.
-    let clashes = crate::services::academics::offering_clashes(
-        &s.db,
-        &crate::services::academics::NewOfferingSlot {
-            offering_id: id,
-            faculty_id,
-            weekday,
-            start_at: start.clone(),
-            end_at: end.clone(),
-            room: f.room.trim().to_string(),
-        },
-    )
-    .await?;
+    let slot = crate::services::academics::NewOfferingSlot {
+        offering_id: id,
+        faculty_id,
+        teacher_tbd,
+        weekday,
+        start_at: start.clone(),
+        end_at: end.clone(),
+        room: f.room.trim().to_string(),
+    };
+    let clashes = crate::services::academics::offering_clashes(&s.db, &slot).await?;
     if let Some(c) = clashes.first() {
         let who = if c.same_class {
             "that class already has"
@@ -916,33 +956,13 @@ pub async fn add_period(
             format!("Clash: {who} {} ({}–{}).", c.course, c.start_at, c.end_at),
         )
         .await?;
-        return Ok(Redirect::to(&format!("/admin/courses/offerings/{id}")));
+        return Ok(Redirect::to(&ws(&manager, &format!("/courses/offerings/{id}"))));
     }
 
-    match sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO timetable_entries
-               (course_offering_id, programme_id, semester, course_id, faculty_id,
-                weekday, start_time, end_time, room)
-           SELECT $1, NULL, o.semester, o.course_id, NULLIF($2, 0), $3, $4::time, $5::time, NULLIF($6, '')
-           FROM course_offerings o WHERE o.id = $1
-           RETURNING id"#,
-    )
-    .bind(id)
-    .bind(faculty_id)
-    .bind(weekday)
-    .bind(&start)
-    .bind(&end)
-    .bind(f.room.trim())
-    .fetch_one(&s.db)
-    .await
-    {
-        Ok(entry_id) => {
-            users::audit(&s.db, Some(manager.user.id), "offering_period_added", "timetable_entry", Some(entry_id)).await?;
-            shell::flash(&session, format!("Added {start}–{end}.")).await?;
-        }
-        Err(e) => return Err(e.into()),
-    }
-    Ok(Redirect::to(&format!("/admin/courses/offerings/{id}")))
+    let entry_id = crate::services::academics::add_offering_slot(&s.db, &slot).await?;
+    users::audit(&s.db, Some(manager.user.id), "offering_period_added", "timetable_entry", Some(entry_id)).await?;
+    shell::flash(&session, format!("Added {start}–{end}.")).await?;
+    Ok(Redirect::to(&ws(&manager, &format!("/courses/offerings/{id}"))))
 }
 
 pub async fn delete_period(
@@ -975,7 +995,7 @@ pub async fn delete_period(
                 "Attendance has already been taken for this period, so it can't be removed.",
             )
             .await?;
-            return Ok(Redirect::to(&format!("/admin/courses/offerings/{id}")));
+            return Ok(Redirect::to(&ws(&manager, &format!("/courses/offerings/{id}"))));
         }
         Err(e) => return Err(e.into()),
     };
@@ -983,7 +1003,7 @@ pub async fn delete_period(
         users::audit(&s.db, Some(manager.user.id), "offering_period_removed", "timetable_entry", Some(entry_id)).await?;
         shell::flash(&session, "Period removed.").await?;
     }
-    Ok(Redirect::to(&format!("/admin/courses/offerings/{id}")))
+    Ok(Redirect::to(&ws(&manager, &format!("/courses/offerings/{id}"))))
 }
 
 // ---------- Student selections (HOD view) ----------
@@ -1009,7 +1029,7 @@ pub async fn selections(
 ) -> Result<SelectionsTemplate, AppError> {
     let department = manager.department();
     Ok(SelectionsTemplate {
-        shell: Shell::build(&manager.user, &session).await?,
+        shell: Shell::build(&manager.user, &session, &s.db).await?,
         selections: courses::department_selections(&s.db, department).await?,
         requests: courses::pending_change_requests(&s.db, department).await?,
         cohort_decisions: courses::cohort_decisions(&s.db, department).await?,
@@ -1074,7 +1094,7 @@ pub async fn set_selection_state(
     .await?;
     users::audit(&s.db, Some(manager.user.id), "selection_state_set", "student_course_selection", Some(selection_id)).await?;
     shell::flash(&session, if state == "locked" { "Selection locked." } else { "Selection unlocked." }).await?;
-    Ok(Redirect::to("/admin/courses/selections"))
+    Ok(Redirect::to(&ws(&manager, "/courses/selections")))
 }
 
 #[derive(Deserialize)]
@@ -1117,7 +1137,7 @@ pub async fn decide_change(
     } else {
         shell::flash(&session, "That request is not yours to decide.").await?;
     }
-    Ok(Redirect::to("/admin/courses/selections"))
+    Ok(Redirect::to(&ws(&manager, "/courses/selections")))
 }
 
 #[derive(Deserialize)]
@@ -1170,7 +1190,7 @@ pub async fn finalize_cohort(
         },
     )
     .await?;
-    Ok(Redirect::to("/admin/courses/selections"))
+    Ok(Redirect::to(&ws(&manager, "/courses/selections")))
 }
 
 // ---------- Assigning HOD-assigned courses ----------
@@ -1221,7 +1241,7 @@ pub async fn assign(
         }
         Err(e) => return Err(e),
     }
-    Ok(Redirect::to("/admin/courses/selections"))
+    Ok(Redirect::to(&ws(&manager, "/courses/selections")))
 }
 
 #[derive(Deserialize)]
@@ -1263,5 +1283,5 @@ pub async fn unassign(
         Err(AppError::BadRequest(m)) => shell::flash(&session, m).await?,
         Err(e) => return Err(e),
     }
-    Ok(Redirect::to("/admin/courses/selections"))
+    Ok(Redirect::to(&ws(&manager, "/courses/selections")))
 }

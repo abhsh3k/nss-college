@@ -11,6 +11,7 @@ use super::parse_i64;
 use crate::{
     auth::{csrf, Manager},
     error::{is_foreign_key_violation, AppError},
+    sections,
     services::{
         academics::{self, TeacherOption},
         attendance::{self, CoverCandidate},
@@ -64,7 +65,7 @@ pub async fn page(
         Vec::new()
     };
     Ok(SubstitutionsTemplate {
-        shell: Shell::build(&manager.user, &session).await?,
+        shell: Shell::build(&manager.user, &session, &s.db).await?,
         date,
         teacher_id,
         teachers: academics::teacher_options_for(&s.db, department).await?,
@@ -84,8 +85,13 @@ pub struct SetForm {
     reason: String,
 }
 
-fn back(date: &str, teacher: i64) -> String {
-    format!("/admin/substitutions?date={date}&teacher={teacher}")
+/// The substitutions page, in the workspace this manager is working in, for
+/// one teacher and date.
+fn back(manager: &Manager, date: &str, teacher: i64) -> String {
+    format!(
+        "{}/substitutions?date={date}&teacher={teacher}",
+        sections::base_for(&manager.user)
+    )
 }
 
 pub async fn set(
@@ -99,7 +105,7 @@ pub async fn set(
         return Err(AppError::NotFound);
     }
     let teacher = parse_i64(&f.teacher).ok_or(AppError::NotFound)?;
-    let target = back(&f.date, teacher);
+    let target = back(&manager, &f.date, teacher);
 
     let (Some(entry_id), Some(substitute)) = (parse_i64(&f.entry_id), parse_i64(&f.substitute_id).filter(|v| *v > 0)) else {
         shell::flash(&session, "Choose a substitute teacher for the period.").await?;
@@ -181,5 +187,5 @@ pub async fn remove(
     attendance::remove_substitution(&s.db, id).await?;
     users::audit(&s.db, Some(manager.user.id), "substitution_removed", "substitution", Some(id)).await?;
     shell::flash(&session, "Substitution removed. The original teacher is responsible for the period again.").await?;
-    Ok(Redirect::to(&back(&f.date, teacher)))
+    Ok(Redirect::to(&back(&manager, &f.date, teacher)))
 }

@@ -71,6 +71,13 @@ pub struct NoticeRow {
     pub has_attachment: bool,
 }
 
+impl NoticeRow {
+    /// The status badge markup, from the one shared component.
+    pub fn status_badge(&self) -> String {
+        crate::ui::status_badge(&self.status)
+    }
+}
+
 #[derive(Debug)]
 pub struct NoticeInput {
     pub title: String,
@@ -200,6 +207,13 @@ pub struct NewsRow {
     pub has_image: bool,
 }
 
+impl NewsRow {
+    /// The status badge markup, from the one shared component.
+    pub fn status_badge(&self) -> String {
+        crate::ui::status_badge(&self.status)
+    }
+}
+
 #[derive(Debug)]
 pub struct NewsInput {
     pub title: String,
@@ -309,6 +323,13 @@ pub struct EventRow {
     pub status: String,
     pub is_past: bool,
     pub has_image: bool,
+}
+
+impl EventRow {
+    /// The status badge markup, from the one shared component.
+    pub fn status_badge(&self) -> String {
+        crate::ui::status_badge(&self.status)
+    }
 }
 
 #[derive(Debug)]

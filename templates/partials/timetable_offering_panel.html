@@ -9,7 +9,7 @@
   <p role="alert" class="mt-4 max-w-3xl border-l-4 border-brand bg-mist px-4 py-3 font-medium">{{ msg }}</p>
   {% endif %}
 
-  <form hx-post="/admin/timetable/offering-periods" hx-target="#offering-panel" hx-swap="outerHTML" class="mt-5 grid max-w-4xl gap-4 border border-ink/15 bg-mist p-5 sm:grid-cols-6">
+  <form hx-post="{{ offering_panel.base }}/timetable/offering-periods" hx-target="#offering-panel" hx-swap="outerHTML" class="mt-5 grid max-w-4xl gap-4 border border-ink/15 bg-mist p-5 sm:grid-cols-6">
     <input type="hidden" name="csrf_token" value="{{ offering_panel.csrf_token }}">
     <input type="hidden" name="offering_id" value="{{ offering_panel.offering_id }}">
     <div class="sm:col-span-2">
@@ -32,6 +32,10 @@
         <option value="">The offering's teacher</option>
         {% for t in offering_panel.teachers %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
       </select>
+      <label class="mt-2 flex items-center gap-2 text-sm text-ink/80">
+        <input type="checkbox" name="teacher_tbd" value="1" class="h-4 w-4 rounded border-ink/40">
+        Teacher to be assigned
+      </label>
     </div>
     <div class="sm:col-span-3">
       <label for="off-room" class="block font-semibold">Room <span class="font-normal text-ink/70">(optional)</span></label>
@@ -56,10 +60,10 @@
           <tr class="border-b border-ink/10">
             <td class="py-2 pr-4 font-medium">{{ s.start_at }}–{{ s.end_at }}</td>
             <td class="py-2 pr-4">{{ s.code }} {{ s.course }}</td>
-            <td class="py-2 pr-4 text-sm">{% if s.teacher != "" %}{{ s.teacher }}{% else %}<span class="text-brand">No teacher</span>{% endif %}</td>
+            <td class="py-2 pr-4 text-sm">{% if s.teacher_tbd %}<span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800">Teacher TBD</span>{% else if s.teacher != "" %}{{ s.teacher }}{% else %}<span class="text-brand">No teacher</span>{% endif %}</td>
             <td class="py-2 pr-4 text-sm">{{ s.room }}</td>
             <td class="py-2 text-right">
-              <form hx-post="/admin/timetable/offering-periods/{{ s.id }}/delete" hx-target="#offering-panel" hx-swap="outerHTML" hx-confirm="Remove this period?">
+              <form hx-post="{{ offering_panel.base }}/timetable/offering-periods/{{ s.id }}/delete" hx-target="#offering-panel" hx-swap="outerHTML" hx-confirm="Remove this period?">
                 <input type="hidden" name="csrf_token" value="{{ offering_panel.csrf_token }}">
                 <button type="submit" class="text-sm font-semibold text-brand underline underline-offset-4 hover:text-ink">Remove<span class="sr-only"> {{ s.start_at }} {{ s.course }}</span></button>
               </form>

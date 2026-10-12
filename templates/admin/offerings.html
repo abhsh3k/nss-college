@@ -7,7 +7,7 @@
 {% if can_create %}
 <section class="mt-8 max-w-4xl border border-ink/15 bg-mist p-5" aria-labelledby="new-offering">
   <h2 id="new-offering" class="font-display text-2xl font-semibold">Create an offering</h2>
-  <form method="post" action="/admin/courses/offerings" class="mt-4 grid gap-4 sm:grid-cols-6">
+  <form method="post" action="{{ shell.base }}/courses/offerings" class="mt-4 grid gap-4 sm:grid-cols-6">
     <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
     <div class="sm:col-span-2">
       <label for="course_id" class="block font-semibold">Course</label>
@@ -87,7 +87,7 @@
         <td class="py-2 pr-4 text-sm">{{ o.selection_mode }}{% if o.choice_group != "" %} <span class="text-ink/60">({{ o.choice_group }})</span>{% endif %}</td>
         <td class="py-2 pr-4">{{ o.enrolled }}{% if let Some(cap) = o.capacity %}/{{ cap }}{% endif %}</td>
         <td class="py-2 pr-4 text-sm font-semibold">{% if o.status == "published" %}<span class="text-emerald-700">Published</span>{% else if o.status == "draft" %}<span class="text-amber-700">Draft</span>{% else %}<span class="text-ink/50">Archived</span>{% endif %}</td>
-        <td class="py-2 text-right"><a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses/offerings/{{ o.id }}">Manage<span class="sr-only"> {{ o.code }}</span></a></td>
+        <td class="py-2 text-right"><a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="{{ shell.base }}/courses/offerings/{{ o.id }}">Manage<span class="sr-only"> {{ o.code }}</span></a></td>
       </tr>
       {% endfor %}
     </tbody>

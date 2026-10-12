@@ -1475,3 +1475,203 @@ async fn a_locked_out_account_can_be_unlocked_without_touching_its_password(pool
     );
     let _ = root;
 }
+
+// ---------- Audit correlation ----------
+
+#[sqlx::test]
+async fn audit_rows_carry_the_correlation_id_of_their_request(pool: PgPool) {
+    let actor = user(&pool, "audit@college.test", "admin").await;
+
+    // Inside a correlation scope — what the request middleware sets — every row
+    // written while handling the request shares the id.
+    let seen = nss_college::correlation::scope("req-abc".to_string(), async {
+        users::audit(&pool, Some(actor), "thing_done", "thing", Some(1))
+            .await
+            .unwrap();
+        users::audit_detail(
+            &pool,
+            Some(actor),
+            "thing_detailed",
+            "thing",
+            Some(2),
+            serde_json::json!({ "reason": "test" }),
+        )
+        .await
+        .unwrap();
+        nss_college::correlation::current()
+    })
+    .await;
+    assert_eq!(seen.as_deref(), Some("req-abc"));
+
+    let ids: Vec<Option<String>> =
+        sqlx::query_scalar("SELECT correlation_id FROM audit_log ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(ids, vec![Some("req-abc".into()), Some("req-abc".into())]);
+    // With no scope (background work), the absence is recorded as NULL rather
+    // than a fabricated id.
+    users::audit(&pool, None, "background_job", "system", None)
+        .await
+        .unwrap();
+    let last: Option<String> =
+        sqlx::query_scalar("SELECT correlation_id FROM audit_log ORDER BY id DESC LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(last.is_none());
+}
+
+// ---------- Timetable teacher integrity ----------
+
+#[sqlx::test]
+async fn a_period_is_taught_by_a_validated_teacher_or_explicitly_tbd(pool: PgPool) {
+    let dept = department(&pool, "cs").await;
+    let prog = programme(&pool, dept, "test-ug").await;
+    let course_id: i64 = sqlx::query_scalar(
+        "INSERT INTO courses (programme_id, department_id, code, title, credits, category, semester)
+         VALUES ($1, $2, 'BCA101', 'Direct course', 4, 'MAJOR', 3) RETURNING id",
+    )
+    .bind(prog)
+    .bind(dept)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Explicitly "to be assigned": the missing teacher is allowed only because
+    // the flag says so, and it is queued as work for the owning department.
+    let tbd_id = academics::add_slot(
+        &pool,
+        &academics::NewSlot {
+            programme_id: prog,
+            semester: 3,
+            course_id,
+            faculty_id: 0,
+            teacher_tbd: true,
+            weekday: 1,
+            start_at: "09:00".into(),
+            end_at: "10:00".into(),
+            room: String::new(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let tbd = academics::tbd_periods(&pool, Some(dept)).await.unwrap();
+    assert_eq!(tbd.len(), 1, "the outstanding period is queued once");
+    assert_eq!(tbd[0].id, tbd_id);
+    assert_eq!(tbd[0].day_label, "Monday");
+    assert_eq!(tbd[0].scope, "programme");
+
+    // A different department's queue does not show it.
+    let other = department(&pool, "en").await;
+    assert!(academics::tbd_periods(&pool, Some(other)).await.unwrap().is_empty());
+    // The IT admin sees every department's outstanding periods.
+    assert_eq!(academics::tbd_periods(&pool, None).await.unwrap().len(), 1);
+
+    // A period with no teacher and no flag is refused by the table itself, not
+    // merely by a route: the invariant is in the schema.
+    let err = academics::add_slot(
+        &pool,
+        &academics::NewSlot {
+            programme_id: prog,
+            semester: 3,
+            course_id,
+            faculty_id: 0,
+            teacher_tbd: false,
+            weekday: 2,
+            start_at: "09:00".into(),
+            end_at: "10:00".into(),
+            room: String::new(),
+        },
+    )
+    .await
+    .expect_err("a teacher-less period must be marked to be assigned");
+    assert_eq!(
+        err.as_database_error().and_then(|e| e.code()).as_deref(),
+        Some("23514"),
+        "the teacher check constraint should reject it, got: {err}"
+    );
+
+    // A validated teacher clears the flag and drops the period out of the queue.
+    let teacher = user(&pool, "teacher@college.test", "faculty").await;
+    faculty(&pool, teacher, Some(dept), false).await;
+    let faculty_id: i64 = sqlx::query_scalar("SELECT id FROM faculty WHERE user_id = $1")
+        .bind(teacher)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let assigned = academics::add_slot(
+        &pool,
+        &academics::NewSlot {
+            programme_id: prog,
+            semester: 3,
+            course_id,
+            faculty_id,
+            teacher_tbd: false,
+            weekday: 3,
+            start_at: "11:00".into(),
+            end_at: "12:00".into(),
+            room: String::new(),
+        },
+    )
+    .await
+    .unwrap();
+    let flagged: bool = sqlx::query_scalar("SELECT teacher_tbd FROM timetable_entries WHERE id = $1")
+        .bind(assigned)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(!flagged);
+    assert_eq!(academics::tbd_periods(&pool, Some(dept)).await.unwrap().len(), 1);
+}
+
+#[sqlx::test]
+async fn an_offering_period_is_queued_under_its_offering_department(pool: PgPool) {
+    let dept = department(&pool, "cs").await;
+    let course_id = courses::create_catalogue_course(&pool, dept, &course("BCA101", "MAJOR"))
+        .await
+        .unwrap();
+    let year = academic_year(&pool, "2099-2100", 2099).await;
+    let offering = courses::create_offering(
+        &pool,
+        &courses::NewOffering {
+            course_id,
+            offering_department_id: dept,
+            academic_year_id: year,
+            semester: 1,
+            course_type: "Regular".into(),
+            selection_mode: "FIXED".into(),
+            choice_group: String::new(),
+            capacity: None,
+            faculty_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    academics::add_offering_slot(
+        &pool,
+        &academics::NewOfferingSlot {
+            offering_id: offering,
+            faculty_id: 0,
+            teacher_tbd: true,
+            weekday: 4,
+            start_at: "14:00".into(),
+            end_at: "15:00".into(),
+            room: String::new(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let tbd = academics::tbd_periods(&pool, Some(dept)).await.unwrap();
+    assert_eq!(tbd.len(), 1);
+    assert_eq!(tbd[0].scope, "offering");
+    assert_eq!(tbd[0].offering_id, Some(offering));
+    assert_eq!(tbd[0].day_label, "Thursday");
+    assert!(tbd[0].link("/admin").contains(&format!("offering={offering}")));
+    // The same period points into the department workspace when an HOD reads
+    // it, so the link is not a dead `/admin` URL on the public listener.
+    assert!(tbd[0].link("/hod").starts_with("/hod/timetable?"));
+}

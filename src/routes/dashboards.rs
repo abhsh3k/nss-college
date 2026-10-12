@@ -37,7 +37,7 @@ pub async fn admin(
     AdminDashboard(user): AdminDashboard,
 ) -> Result<AdminTemplate, AppError> {
     Ok(AdminTemplate {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
         // The Super Admin holds every IT-admin power, so it gets the same
         // overview cards and the same extra panels.
         is_admin: matches!(user.role, Role::Admin | Role::SuperAdmin),
@@ -162,7 +162,7 @@ pub async fn teacher(
     };
 
     Ok(TeacherTemplate {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
         today_str,
         classes,
     })
@@ -276,7 +276,7 @@ pub async fn student(
     session: Session,
     StudentOnly(user): StudentOnly,
 ) -> Result<StudentTemplate, AppError> {
-    let shell = Shell::build(&user, &session).await?;
+    let shell = Shell::build(&user, &session, &s.db).await?;
     let feed = hub::student_feed(&s.db, 5).await?;
 
     let (today_str, now_hm, weekday_today) = attendance::now_parts(&s.db).await?;
@@ -392,6 +392,22 @@ mod tests {
             let title = a.title.replace('&', "&amp;");
             assert!(html.contains(&title), "no title for {}", a.key);
         }
+    }
+
+    /// The Principal works in the management workspace, so the department areas
+    /// on their overview stay in `/admin` — never `/hod`, which is the
+    /// department workspace for a head of department.
+    #[test]
+    fn the_principals_overview_lists_the_department_areas_in_the_admin_workspace() {
+        let html = overview(false, crate::sections::HOD);
+        for a in crate::sections::HOD {
+            assert!(
+                html.contains(&format!("/admin/manage/{}", a.key)),
+                "no card for {}",
+                a.key
+            );
+        }
+        assert!(!html.contains("/hod/"));
     }
 
     #[test]

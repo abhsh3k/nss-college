@@ -1,0 +1,10 @@
+{# Form-level error banner — one shared component instead of a copy per form.
+   The including template must expose a field named `error` (an `Option<String>`),
+   e.g. mirrored from the form values in the handler, then:
+     {% include "partials/form_errors.html" %}
+   (An Askama 0.12 include is a separate block and cannot read a `{% let %}` from
+   the including template, so the value travels as a struct field.)
+#}
+{% if let Some(msg) = error %}
+<p role="alert" class="mt-6 max-w-xl border-l-4 border-brand bg-mist px-4 py-3 font-medium">{{ msg }}</p>
+{% endif %}

@@ -129,13 +129,19 @@ pub async fn audit(
     entity: &str,
     entity_id: Option<i64>,
 ) -> Res<()> {
-    sqlx::query("INSERT INTO audit_log (actor_user_id, action, entity, entity_id) VALUES ($1, $2, $3, $4)")
-        .bind(actor)
-        .bind(action)
-        .bind(entity)
-        .bind(entity_id)
-        .execute(db)
-        .await?;
+    // The correlation id is picked up from the request being handled, if there
+    // is one, so several rows from one action share it. Background work (the
+    // backup scheduler) has none, which is recorded as NULL rather than faked.
+    sqlx::query(
+        "INSERT INTO audit_log (actor_user_id, action, entity, entity_id, correlation_id) VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(actor)
+    .bind(action)
+    .bind(entity)
+    .bind(entity_id)
+    .bind(crate::correlation::current())
+    .execute(db)
+    .await?;
     Ok(())
 }
 
@@ -153,13 +159,14 @@ pub async fn audit_detail(
     // The JSON is bound as text and cast, so the `json` compile-time feature is
     // not needed just for the audit payload.
     sqlx::query(
-        "INSERT INTO audit_log (actor_user_id, action, entity, entity_id, details) VALUES ($1, $2, $3, $4, $5::jsonb)",
+        "INSERT INTO audit_log (actor_user_id, action, entity, entity_id, details, correlation_id) VALUES ($1, $2, $3, $4, $5::jsonb, $6)",
     )
     .bind(actor)
     .bind(action)
     .bind(entity)
     .bind(entity_id)
     .bind(details.to_string())
+    .bind(crate::correlation::current())
     .execute(db)
     .await?;
     Ok(())

@@ -7,7 +7,7 @@
 {% if can_edit %}
 <section class="mt-8 max-w-3xl border border-ink/15 bg-mist p-5" aria-labelledby="add-course">
   <h2 id="add-course" class="font-display text-2xl font-semibold">Add a catalogue course</h2>
-  <form method="post" action="/admin/courses/add" class="mt-4 grid gap-4 sm:grid-cols-6">
+  <form method="post" action="{{ shell.base }}/courses/add" class="mt-4 grid gap-4 sm:grid-cols-6">
     <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
     <div class="sm:col-span-2">
       <label for="code" class="block font-semibold">Course code</label>
@@ -64,10 +64,10 @@
         <td class="py-2 pr-4 text-sm">{% if let Some(p) = c.programme %}{{ p }}{% else %}{{ c.department }} catalogue{% endif %}</td>
         <td class="py-2 text-right whitespace-nowrap">
           {% if can_edit && c.programme.is_none() %}
-          <a class="mr-3 font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/courses/{{ c.id }}/edit">Edit</a>
+          <a class="mr-3 font-semibold text-brand underline underline-offset-4 hover:text-ink" href="{{ shell.base }}/courses/{{ c.id }}/edit">Edit</a>
           {% endif %}
           {% if can_edit && c.programme.is_none() && c.is_active %}
-          <form method="post" action="/admin/courses/{{ c.id }}/toggle" class="inline">
+          <form method="post" action="{{ shell.base }}/courses/{{ c.id }}/toggle" class="inline">
             <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
             <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Retire</button>
           </form>

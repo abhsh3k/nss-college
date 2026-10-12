@@ -49,7 +49,7 @@ pub async fn index(
         settings: site_admin::settings(&s.db).await?,
         home_sections: site_admin::home_sections(&s.db).await?,
         defaults,
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
     })
 }
 
@@ -80,7 +80,15 @@ pub async fn save(
         }
     }
 
-    users::audit(&s.db, Some(user.id), "settings_saved", "site_settings", None).await?;
+    users::audit_detail(
+        &s.db,
+        Some(user.id),
+        "settings_saved",
+        "site_settings",
+        None,
+        serde_json::json!({ "written": written }),
+    )
+    .await?;
     // Refresh the cache now rather than waiting for the next timer tick, so the
     // change is on the site as soon as this returns.
     if let Err(e) = site::get(&s.db).await {

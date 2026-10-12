@@ -3,9 +3,7 @@
 {% block content %}
 <h1 class="font-display text-3xl font-semibold md:text-4xl">Add page</h1>
 
-{% if let Some(msg) = form.error %}
-<p role="alert" class="mt-6 max-w-xl border-l-4 border-brand bg-mist px-4 py-3 font-medium">{{ msg }}</p>
-{% endif %}
+{% include "partials/form_errors.html" %}
 
 <form method="post" action="/admin/pages" class="mt-8 max-w-2xl space-y-5">
   <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">

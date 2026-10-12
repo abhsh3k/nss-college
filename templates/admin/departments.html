@@ -25,7 +25,7 @@
         <td class="py-3 pr-4 text-sm">{{ st.programme }}</td>
         <td class="py-3 pr-4 text-sm">{{ st.semester }}</td>
         <td class="py-3">
-          <form method="post" action="/admin/departments/{{ st.id }}" class="flex items-center gap-2">
+          <form method="post" action="{{ shell.base }}/departments/{{ st.id }}" class="flex items-center gap-2">
             <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
             <label class="sr-only" for="dept-{{ st.id }}">Department for {{ st.name }}</label>
             <select id="dept-{{ st.id }}" name="department_id" class="rounded border border-ink/40 bg-white px-2 py-1.5 text-sm">

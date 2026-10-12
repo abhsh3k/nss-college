@@ -4,9 +4,7 @@
 <h1 class="font-display text-3xl font-semibold md:text-4xl">{% if form.id == 0 %}Upload document{% else %}Edit document{% endif %}</h1>
 {% if form.id != 0 %}<p class="mt-2 text-lg text-ink/80">{{ form.file_name }}</p>{% endif %}
 
-{% if let Some(msg) = form.error %}
-<p role="alert" class="mt-6 max-w-xl border-l-4 border-brand bg-mist px-4 py-3 font-medium">{{ msg }}</p>
-{% endif %}
+{% include "partials/form_errors.html" %}
 
 <form method="post" enctype="multipart/form-data" action="{% if form.id == 0 %}/admin/documents{% else %}/admin/documents/{{ form.id }}{% endif %}" class="mt-8 max-w-2xl space-y-5">
   <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">

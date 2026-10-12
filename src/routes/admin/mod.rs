@@ -1,4 +1,22 @@
-//! IT-administrator tools. Every handler here takes `AdminOnly`.
+//! The management area: IT-administrator tools, and the department tools that
+//! a head of department also uses.
+//!
+//! The routes come in two sets:
+//!
+//! * [`routes`] — the technical administration pages (people, publishing,
+//!   settings, appointments, root authority). They are absolute `/admin/...`
+//!   paths and are served on the loopback management listener only, and their
+//!   handlers take `AdminOnly`/`OfficeOrAdmin`/`SuperAdminOnly`.
+//! * [`manager_routes`] — the department pages, whose handlers take `Manager`
+//!   (plus the per-user notification feed and the section index). They are
+//!   written with *relative* paths and mounted twice: at `/admin` (where the IT
+//!   administrator and the Principal work) and at `/hod`. The `/hod` mount is
+//!   what makes the head of department's tools work: an HOD is a teacher, they
+//!   sign in on the *public* listener, and `/admin` is not served there.
+//!
+//! Mounting the same handlers under a second prefix grants nothing: the guards
+//! run per request and are identical, so a caller who is not a manager is
+//! refused at `/hod` exactly as they are at `/admin`.
 
 mod academics;
 mod appointments;
@@ -30,12 +48,144 @@ use axum::{
     Router,
 };
 
-use crate::state::AppState;
+use crate::{sections, state::AppState};
 
 /// Ceiling on a content form's whole body, a little above the per-file limit in
 /// `crate::uploads` so a big attachment still has room for the text fields.
 const CONTENT_BODY_LIMIT: usize = 10 * 1024 * 1024;
 
+/// The department (manager-scoped) pages, with relative paths so the set can be
+/// mounted in more than one workspace. See the module docs.
+pub fn manager_routes() -> Router<AppState> {
+    // The head of department's landing page: every queue in one list, with
+    // links back to the pages that already handle each kind of decision.
+    let work_queue = Router::new().route("/work-queue", get(work_queue::page));
+
+    // The management-area index a dashboard card opens. It only lists pages
+    // that already exist behind their own guards, so it is `Ready` + a
+    // catalogue lookup — nothing is granted here.
+    let areas = Router::new().route("/manage/:key", get(manage::page));
+
+    // The in-app notification feed, readable by any signed-in user for their
+    // own rows. An HOD needs it on the listener they sign in to.
+    let notifications = Router::new()
+        .route("/notifications", get(notifications::page))
+        .route("/notifications/:id/read", post(notifications::mark_read))
+        .route("/notifications/read-all", post(notifications::mark_all));
+
+    // Course offerings and student selection (HOD tools).
+    let course_offerings = Router::new()
+        .route("/courses", get(course_offerings::catalogue))
+        .route("/courses/add", post(course_offerings::add_course))
+        .route(
+            "/courses/:id/edit",
+            get(course_offerings::edit_form).post(course_offerings::edit_course),
+        )
+        .route("/courses/:id/toggle", post(course_offerings::toggle_course))
+        .route("/courses/offerings", get(course_offerings::offerings).post(course_offerings::create_offering))
+        .route("/courses/offerings/:id", get(course_offerings::offering_page).post(course_offerings::edit_offering))
+        .route("/courses/offerings/:id/delete", post(course_offerings::delete_offering))
+        .route("/courses/offerings/:id/targets", post(course_offerings::set_targets))
+        .route("/courses/offerings/:id/status", post(course_offerings::publish))
+        .route("/courses/offerings/:id/periods", post(course_offerings::add_period))
+        .route("/courses/offerings/:id/periods/:entry_id/delete", post(course_offerings::delete_period))
+        .route("/courses/external", get(course_offerings::external))
+        .route("/courses/external/:id/decide", post(course_offerings::decide))
+        .route("/courses/selections", get(course_offerings::selections))
+        .route("/courses/selections/assign", post(course_offerings::assign))
+        .route("/courses/selections/:selection_id/state", post(course_offerings::set_selection_state))
+        .route("/courses/selections/:selection_id/unassign", post(course_offerings::unassign))
+        .route("/courses/selections/changes/:id/decide", post(course_offerings::decide_change))
+        .route("/courses/selections/cohort", post(course_offerings::finalize_cohort));
+
+    let academics_and_timetable = Router::new()
+        // Programmes and courses. Adding a course to a programme, or editing
+        // the course itself, is `AdminOnly` and stays on the technical router.
+        .route("/academics", get(academics::index))
+        .route("/academics/programmes/:id", get(academics::programme))
+        .route("/academics/programmes/:id/enroll", post(academics::enroll))
+        // Timetable
+        .route("/timetable", get(timetable::page))
+        .route("/timetable/slots", post(timetable::add_slot))
+        .route("/timetable/slots/:id/delete", post(timetable::delete_slot))
+        // Periods of a course offering, scheduled from the same page.
+        .route("/timetable/offering-periods", post(timetable::add_offering_slot))
+        .route(
+            "/timetable/offering-periods/:id/delete",
+            post(timetable::delete_offering_slot),
+        )
+        // Substitutes (head of department)
+        .route("/substitutions", get(substitutions::page).post(substitutions::set))
+        .route("/substitutions/:id/remove", post(substitutions::remove))
+        // Students in the department, and correcting its attendance
+        .route("/departments", get(departments::page))
+        .route("/departments/:id", post(departments::place))
+        .route("/departments/attendance", get(departments::attendance_page))
+        .route("/departments/attendance/:entry_id/:date", get(departments::mark_form))
+        .route(
+            "/departments/attendance/:entry_id/:date/save",
+            post(departments::mark_save),
+        )
+        // Exam timetable (results are filed from Marks entry)
+        .route("/exams", get(exams::page))
+        .route("/exams/add", post(exams::add))
+        .route("/exams/:id/delete", post(exams::delete))
+        .route("/exams/push", post(exams::push))
+        .route("/exams/unpush", post(exams::unpush))
+        .route("/exams/results", post(exams::push_results))
+        .route("/exams/results/csv", post(exams::push_results_csv))
+        // Marks entry grid and the management of filed results.
+        .route("/marks", get(marks::page))
+        .route("/marks/save", post(marks::save))
+        // Finalize a course's published marks, then correct them through a
+        // reasoned, separately-approved correction.
+        .route("/marks/finalize", post(marks::finalize))
+        .route("/marks/:id/toggle", post(marks::toggle))
+        .route("/marks/:id/delete", post(marks::delete))
+        .route("/marks/:id/correct", post(marks::correct))
+        .route("/marks/:id/correction/approve", post(marks::approve))
+        .route("/marks/:id/correction/reject", post(marks::reject));
+
+    // The marks CSV import uploads a file, so it needs the same body limit as
+    // the other multipart forms.
+    let marks_import = Router::new()
+        .route("/marks/import", post(marks::import_csv))
+        .route("/marks/import/preview", post(marks::import_preview))
+        .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
+
+    // Staged result import: paste or CSV upload stages a preview, then a
+    // separate confirmation commits it. The CSV upload needs the raised limit.
+    let results_import = Router::new()
+        .route(
+            "/exams/results/preview",
+            get(results_import::preview_page).post(results_import::preview_paste),
+        )
+        .route("/exams/results/upload", post(results_import::upload))
+        .route("/exams/results/commit", post(results_import::commit))
+        .route("/exams/results/discard", post(results_import::discard))
+        .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
+
+    // Study materials: the file upload makes the whole form multipart, so it
+    // shares the raised body limit.
+    let materials = Router::new()
+        .route("/materials", get(materials::index).post(materials::create))
+        .route("/materials/:id/status", post(materials::set_status))
+        .route("/materials/:id/delete", post(materials::destroy))
+        .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
+
+    Router::new()
+        .merge(work_queue)
+        .merge(areas)
+        .merge(notifications)
+        .merge(course_offerings)
+        .merge(academics_and_timetable)
+        .merge(marks_import)
+        .merge(results_import)
+        .merge(materials)
+}
+
+/// Everything the IT administrator's own workspace serves: the technical tools
+/// at their `/admin/...` paths, and the department set mounted underneath them.
 pub fn routes() -> Router<AppState> {
     let people = Router::new()
         // People
@@ -59,92 +209,20 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/people/import/finished", post(people::import_finished))
         .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
 
-    // Course offerings and student selection (HOD tools).
-    let course_offerings = Router::new()
-        .route("/admin/courses", get(course_offerings::catalogue))
-        .route("/admin/courses/add", post(course_offerings::add_course))
-        .route(
-            "/admin/courses/:id/edit",
-            get(course_offerings::edit_form).post(course_offerings::edit_course),
-        )
-        .route("/admin/courses/:id/toggle", post(course_offerings::toggle_course))
-        .route("/admin/courses/offerings", get(course_offerings::offerings).post(course_offerings::create_offering))
-        .route("/admin/courses/offerings/:id", get(course_offerings::offering_page).post(course_offerings::edit_offering))
-        .route("/admin/courses/offerings/:id/delete", post(course_offerings::delete_offering))
-        .route("/admin/courses/offerings/:id/targets", post(course_offerings::set_targets))
-        .route("/admin/courses/offerings/:id/status", post(course_offerings::publish))
-        .route("/admin/courses/offerings/:id/periods", post(course_offerings::add_period))
-        .route("/admin/courses/offerings/:id/periods/:entry_id/delete", post(course_offerings::delete_period))
-        .route("/admin/courses/external", get(course_offerings::external))
-        .route("/admin/courses/external/:id/decide", post(course_offerings::decide))
-        .route("/admin/courses/selections", get(course_offerings::selections))
-        .route("/admin/courses/selections/assign", post(course_offerings::assign))
-        .route("/admin/courses/selections/:selection_id/state", post(course_offerings::set_selection_state))
-        .route("/admin/courses/selections/:selection_id/unassign", post(course_offerings::unassign))
-        .route("/admin/courses/selections/changes/:id/decide", post(course_offerings::decide_change))
-        .route("/admin/courses/selections/cohort", post(course_offerings::finalize_cohort));
-
-    // The HOD landing page: every queue above in one list, with links back to
-    // the pages that already handle each kind of decision.
-    let work_queue = Router::new().route("/admin/work-queue", get(work_queue::page));
-
-    // The management-area index a dashboard card opens. It only lists pages
-    // that already exist behind their own guards, so it is `Ready` + a
-    // catalogue lookup — nothing is granted here.
-    let areas = Router::new().route("/admin/manage/:key", get(manage::page));
-
-    let academics_and_timetable = Router::new()
-        // Programmes and courses
-        .route("/admin/academics", get(academics::index))
-        .route("/admin/academics/programmes/:id", get(academics::programme))
-        .route("/admin/academics/programmes/:id/courses", post(academics::add_course))
-        .route("/admin/academics/programmes/:id/enroll", post(academics::enroll))
-        .route("/admin/academics/courses/:id", get(academics::course_form).post(academics::course_update))
-        .route("/admin/academics/courses/:id/delete", post(academics::course_delete))
-        // Timetable
-        .route("/admin/timetable", get(timetable::page))
-        .route("/admin/timetable/slots", post(timetable::add_slot))
-        .route("/admin/timetable/slots/:id/delete", post(timetable::delete_slot))
-        // Periods of a course offering, scheduled from the same page.
-        .route("/admin/timetable/offering-periods", post(timetable::add_offering_slot))
-        .route(
-            "/admin/timetable/offering-periods/:id/delete",
-            post(timetable::delete_offering_slot),
-        )
-        // Substitutes (head of department)
-        .route("/admin/substitutions", get(substitutions::page).post(substitutions::set))
-        .route("/admin/substitutions/:id/remove", post(substitutions::remove))
-        // Students in the department, and correcting its attendance
-        .route("/admin/departments", get(departments::page))
-        .route("/admin/departments/:id", post(departments::place))
-        .route("/admin/departments/attendance", get(departments::attendance_page))
-        .route("/admin/departments/attendance/:entry_id/:date", get(departments::mark_form))
-        .route(
-            "/admin/departments/attendance/:entry_id/:date/save",
-            post(departments::mark_save),
-        )
-        // Attendance reporting
+    // The college-wide attendance report is `AdminOnly`, so it stays in this
+    // workspace; a head of department corrects their own department's register
+    // at `/departments/attendance` instead.
+    let attendance_report = Router::new()
         .route("/admin/attendance", get(attendance::report))
-        .route("/admin/attendance.csv", get(attendance::csv))
-        // Exam timetable (results are filed from Marks entry)
-        .route("/admin/exams", get(exams::page))
-        .route("/admin/exams/add", post(exams::add))
-        .route("/admin/exams/:id/delete", post(exams::delete))
-        .route("/admin/exams/push", post(exams::push))
-        .route("/admin/exams/unpush", post(exams::unpush))
-        .route("/admin/exams/results", post(exams::push_results))
-        .route("/admin/exams/results/csv", post(exams::push_results_csv))
-        // Marks entry grid and the management of filed results.
-        .route("/admin/marks", get(marks::page))
-        .route("/admin/marks/save", post(marks::save))
-        // Finalize a course's published marks, then correct them through a
-        // reasoned, separately-approved correction.
-        .route("/admin/marks/finalize", post(marks::finalize))
-        .route("/admin/marks/:id/toggle", post(marks::toggle))
-        .route("/admin/marks/:id/delete", post(marks::delete))
-        .route("/admin/marks/:id/correct", post(marks::correct))
-        .route("/admin/marks/:id/correction/approve", post(marks::approve))
-        .route("/admin/marks/:id/correction/reject", post(marks::reject));
+        .route("/admin/attendance.csv", get(attendance::csv));
+
+    // Adding courses to a programme, and editing or deleting a course, is
+    // `AdminOnly`: a head of department enrols students into a semester's
+    // courses, but does not change the programme's structure.
+    let academics_admin = Router::new()
+        .route("/admin/academics/programmes/:id/courses", post(academics::add_course))
+        .route("/admin/academics/courses/:id", get(academics::course_form).post(academics::course_update))
+        .route("/admin/academics/courses/:id/delete", post(academics::course_delete));
 
     // Notices, news and events take multipart bodies, so they need a body limit
     // well above axum's 2 MB default.
@@ -227,32 +305,6 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/rank-holders/:id/move", post(rank_holders::reorder))
         .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
 
-    // The marks CSV import uploads a file, so it needs the same body limit as
-    // the other multipart forms.
-    let marks_import = Router::new()
-        .route("/admin/marks/import", post(marks::import_csv))
-        .route("/admin/marks/import/preview", post(marks::import_preview))
-        .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
-
-    // Staged result import: paste or CSV upload stages a preview, then a
-    // separate confirmation commits it. The CSV upload needs the raised limit.
-    let results_import = Router::new()
-        .route(
-            "/admin/exams/results/preview",
-            get(results_import::preview_page).post(results_import::preview_paste),
-        )
-        .route("/admin/exams/results/upload", post(results_import::upload))
-        .route("/admin/exams/results/commit", post(results_import::commit))
-        .route("/admin/exams/results/discard", post(results_import::discard))
-        .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
-
-    // The in-app notification feed, readable by any signed-in user for their
-    // own rows.
-    let notifications = Router::new()
-        .route("/admin/notifications", get(notifications::page))
-        .route("/admin/notifications/:id/read", post(notifications::mark_read))
-        .route("/admin/notifications/read-all", post(notifications::mark_all));
-
     // HOD appointments and delegations: plain urlencoded forms, no uploads.
     let appointments = Router::new()
         .route("/admin/appointments", get(appointments::index))
@@ -266,14 +318,6 @@ pub fn routes() -> Router<AppState> {
             "/admin/appointments/delegations/:id/revoke",
             post(appointments::revoke_delegation),
         );
-
-    // Study materials: the file upload makes the whole form multipart, so it
-    // shares the raised body limit.
-    let materials = Router::new()
-        .route("/admin/materials", get(materials::index).post(materials::create))
-        .route("/admin/materials/:id/status", post(materials::set_status))
-        .route("/admin/materials/:id/delete", post(materials::destroy))
-        .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
 
     // Root authority: account roles, emergency recovery, the Principal
     // appointment, and the audited reopening of a finalized academic record.
@@ -294,20 +338,18 @@ pub fn routes() -> Router<AppState> {
         .merge(root)
         .merge(people)
         .merge(imports)
-        .merge(academics_and_timetable)
-        .merge(course_offerings)
-        .merge(work_queue)
-        .merge(areas)
-        .merge(marks_import)
-        .merge(results_import)
-        .merge(notifications)
+        .merge(academics_admin)
+        .merge(attendance_report)
         .merge(appointments)
-        .merge(materials)
         .merge(publishing)
         .merge(documents)
         .merge(rank_holders)
         .merge(pages)
         .merge(settings)
+        // The department tools in their `/admin` form, for the two roles that
+        // work in this workspace. A head of department reaches the same set
+        // under `/hod` (see `manager_routes`).
+        .nest("/admin", manager_routes())
 }
 
 // ---------- small form helpers shared by the admin handlers ----------
@@ -318,6 +360,16 @@ pub(super) fn parse_i64(s: &str) -> Option<i64> {
 
 pub(super) fn parse_i32(s: &str) -> Option<i32> {
     s.trim().parse().ok()
+}
+
+/// Read a checkbox field. An unchecked box is simply absent from a urlencoded
+/// body (and arrives empty here), so absence must mean `false` rather than an
+/// error, and every spelling a browser or test might send is accepted.
+pub(super) fn checkbox(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "on" | "true" | "yes"
+    )
 }
 
 /// Accepts "9:30", "09:30" or "09:30:00" and returns "09:30".
@@ -404,11 +456,32 @@ pub(super) struct TokenForm {
     pub back: String,
 }
 
-/// `back` comes from the form, so only ever follow it back into the admin area.
+/// `back` comes from the form, so only ever follow it back into one of the two
+/// management workspaces: `/admin` (the IT administrator) or `/hod` (a head of
+/// department, whose pages live on the public listener).
 pub(super) fn safe_back(value: &str, fallback: &str) -> String {
-    if value.starts_with("/admin/") && !value.starts_with("//") {
+    if (value.starts_with(sections::ADMIN_BASE) || value.starts_with(sections::HOD_BASE))
+        && !value.starts_with("//")
+    {
         value.to_string()
     } else {
         fallback.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::checkbox;
+
+    #[test]
+    fn a_checkbox_understands_every_spelling_a_browser_sends() {
+        // A checked box; every form of "on", plus the value the template sets.
+        for on in ["1", "on", "true", "TRUE", "yes", " Yes "] {
+            assert!(checkbox(on), "{on:?} should read as checked");
+        }
+        // An unchecked box is simply absent from the body, arriving empty.
+        for off in ["", " ", "0", "off", "false", "no"] {
+            assert!(!checkbox(off), "{off:?} should read as unchecked");
+        }
     }
 }

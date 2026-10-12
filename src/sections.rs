@@ -17,12 +17,65 @@
 //! academic tools, and an HOD never sees college-wide pages such as People or
 //! Settings. That difference is a UX mirror of the guards in `src/auth`, not a
 //! replacement for them.
+//!
+//! # Two workspaces, one catalogue
+//!
+//! The department tools are served in two places. The IT administrator (and the
+//! Principal) work in the management workspace on the loopback listener, under
+//! `/admin`. A head of department is a *teacher*: they sign in on the public
+//! listener, where `/admin` does not exist, so the same pages are also mounted
+//! under [`HOD_BASE`] (`/hod`) on both listeners. Every `href` below is written
+//! once, in its `/admin` form, and rendered through [`Link::url`] /
+//! [`crate::shell::NavItem::url`], which swap that prefix for the caller's
+//! workspace — so an HOD never sees an `/admin` URL that would 404 for them.
+
+use crate::auth::{AuthUser, Role};
+
+/// The management workspace: the IT administrator and the Principal, served on
+/// the loopback listener.
+pub const ADMIN_BASE: &str = "/admin";
+
+/// The department workspace: a head of department (or an approved delegate),
+/// served on the public listener where teachers sign in.
+pub const HOD_BASE: &str = "/hod";
+
+/// The workspace a signed-in user's department pages belong to.
+///
+/// A teacher — the only role that holds an HOD appointment or a delegation —
+/// reads their department tools under `/hod`; everyone else works under
+/// `/admin`. Roles that never see these pages at all resolve to `/admin`.
+pub fn base_for(user: &AuthUser) -> &'static str {
+    match user.role {
+        Role::Faculty => HOD_BASE,
+        _ => ADMIN_BASE,
+    }
+}
 
 /// One entry inside a section: a page the user can open, and why they would.
 pub struct Link {
     pub label: &'static str,
+    /// The canonical `/admin`-rooted path; see [`Link::url`].
     pub href: &'static str,
     pub desc: &'static str,
+}
+
+impl Link {
+    /// This link as it should be rendered in the workspace `base`.
+    ///
+    /// Only the leading `/admin` is swapped: a link that points outside the
+    /// management area (a teacher's own reports, say) is returned untouched, so
+    /// one catalogue can serve both workspaces.
+    pub fn url(&self, base: &str) -> String {
+        in_workspace(base, self.href)
+    }
+}
+
+/// Rewrite a canonical `/admin…` path into `base`.
+pub fn in_workspace(base: &str, path: &str) -> String {
+    match path.strip_prefix(ADMIN_BASE) {
+        Some(rest) => format!("{base}{rest}"),
+        None => path.to_string(),
+    }
 }
 
 const fn link(label: &'static str, href: &'static str, desc: &'static str) -> Link {
@@ -276,6 +329,9 @@ pub const STAFF: &[Area] = &[area(
 /// `faculty.department_id`. College-wide pages (`/admin/people`,
 /// `/admin/settings`, `/admin/attendance`, ...) are deliberately absent: their
 /// handlers take `AdminOnly` and would answer 403 anyway.
+///
+/// The URLs are written in their `/admin` form and rewritten into
+/// [`HOD_BASE`] for the department workspace — see [`Link::url`].
 pub const HOD: &[Area] = &[
     area(
         "students",
@@ -401,13 +457,23 @@ pub fn exists_any(key: &str) -> bool {
 /// unit test without a database.
 #[cfg(test)]
 pub(crate) fn test_shell(role_label: &'static str) -> crate::shell::Shell {
+    test_shell_in(role_label, ADMIN_BASE)
+}
+
+/// The same, in a chosen workspace, so the department rendering can be tested
+/// without a session.
+#[cfg(test)]
+pub(crate) fn test_shell_in(role_label: &'static str, base: &'static str) -> crate::shell::Shell {
     crate::shell::Shell {
         user_name: "Test User".into(),
         role_label,
+        base,
+        home: base,
         nav: Vec::new(),
         csrf_token: "csrf".into(),
         flash: None,
         site: crate::models::SiteInfo::default(),
+        pending_approvals: 0,
     }
 }
 
@@ -464,6 +530,26 @@ mod tests {
                     a.key,
                     l.href
                 );
+            }
+        }
+    }
+
+    /// The point of `in_workspace`: an HOD opening a card reaches `/hod`, and
+    /// the IT administrator keeps `/admin`, from the same catalogue entry.
+    #[test]
+    fn a_catalogue_link_is_rewritten_into_the_readers_workspace() {
+        let l = link("Marks", "/admin/marks", "Enter marks.");
+        assert_eq!(l.url(ADMIN_BASE), "/admin/marks");
+        assert_eq!(l.url(HOD_BASE), "/hod/marks");
+        // A page outside the management area is not rewritten.
+        assert_eq!(in_workspace(HOD_BASE, "/teacher/reports"), "/teacher/reports");
+        // The rule is applied to the whole catalogue, not one entry.
+        for a in ADMIN.iter().chain(HOD) {
+            for l in a.items {
+                if l.href.starts_with(ADMIN_BASE) {
+                    assert!(l.url(HOD_BASE).starts_with(HOD_BASE), "{} was not moved", l.href);
+                    assert!(l.url(ADMIN_BASE).starts_with(ADMIN_BASE));
+                }
             }
         }
     }

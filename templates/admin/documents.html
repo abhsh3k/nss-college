@@ -39,7 +39,7 @@
           <a class="text-brand underline underline-offset-4 hover:text-ink" href="{{ d.file_path }}">{{ d.file_name }}</a>
           <span class="block text-xs text-ink/70">{{ d.size_label }}</span>
         </td>
-        <td class="py-3 pr-4 text-sm">{{ d.status }}</td>
+        <td class="py-3 pr-4 text-sm">{{ d.status_badge()|safe }}</td>
         <td class="py-3 pr-4 text-sm text-ink/80">{{ d.published_label }}</td>
         <td class="py-3 text-right">
           <div class="flex flex-wrap items-center justify-end gap-3">
@@ -62,7 +62,7 @@
     </tbody>
   </table>
   {% if documents.is_empty() %}
-  <p class="py-8 text-ink/70">No documents match. Upload one with the button above.</p>
+  {% include "partials/empty_state.html" %}
   {% endif %}
 </div>
 {% endblock %}

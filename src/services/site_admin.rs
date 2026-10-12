@@ -26,6 +26,13 @@ pub struct DocumentRow {
     pub size_label: String,
 }
 
+impl DocumentRow {
+    /// The status badge markup, from the one shared component.
+    pub fn status_badge(&self) -> String {
+        crate::ui::status_badge(&self.status)
+    }
+}
+
 #[derive(Debug)]
 pub struct DocumentInput {
     pub title: String,
@@ -198,6 +205,13 @@ pub struct PageRow {
     /// True when the page is one the router serves from its own handler, so
     /// renaming it here would have no effect until that handler changes.
     pub is_list_page: bool,
+}
+
+impl PageRow {
+    /// The status badge markup, from the one shared component.
+    pub fn status_badge(&self) -> String {
+        crate::ui::status_badge(&self.status)
+    }
 }
 
 #[derive(Debug)]

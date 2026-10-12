@@ -8,7 +8,7 @@
 <p class="mt-4 rounded border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">{{ error.as_deref().unwrap_or("") }}</p>
 {% endif %}
 
-<form method="post" action="/admin/materials" enctype="multipart/form-data" class="mt-8 grid gap-4 rounded border border-ink/15 bg-white p-5 md:grid-cols-2">
+<form method="post" action="{{ shell.base }}/materials" enctype="multipart/form-data" class="mt-8 grid gap-4 rounded border border-ink/15 bg-white p-5 md:grid-cols-2">
   <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
   <div>
     <label for="title" class="block text-sm font-semibold">Title</label>
@@ -62,12 +62,12 @@
         <td class="py-3 pr-4 text-sm">{{ m.status }}</td>
         <td class="py-3 text-right">
           <div class="flex flex-wrap items-center justify-end gap-3">
-            <form method="post" action="/admin/materials/{{ m.id }}/status" class="inline">
+            <form method="post" action="{{ shell.base }}/materials/{{ m.id }}/status" class="inline">
               <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
               <input type="hidden" name="status" value="{% if m.status == "published" %}archived{% else %}published{% endif %}">
               <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">{% if m.status == "published" %}Archive{% else %}Publish{% endif %}<span class="sr-only"> {{ m.title }}</span></button>
             </form>
-            <form method="post" action="/admin/materials/{{ m.id }}/delete" class="inline" data-confirm="Permanently delete &quot;{{ m.title }}&quot; and its file?">
+            <form method="post" action="{{ shell.base }}/materials/{{ m.id }}/delete" class="inline" data-confirm="Permanently delete &quot;{{ m.title }}&quot; and its file?">
               <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
               <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Delete<span class="sr-only"> {{ m.title }}</span></button>
             </form>

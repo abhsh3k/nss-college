@@ -10,7 +10,9 @@ Test commands referenced throughout:
 
     docker compose up -d
     DATABASE_URL=postgres://nss:nss@localhost:5432/nss_college cargo test
-    # 65 unit + 37 database + 14 end-to-end, currently all passing
+    # 74 unit + 40 database + 25 end-to-end + 1 Node hook test, currently all passing
+    # (the Node test shells out to `node --test tests/js/app_hooks.test.mjs`; it skips
+    #  with a note if Node is not installed)
 
 ---
 
@@ -36,14 +38,14 @@ Test commands referenced throughout:
 | §7 Record states + no silent overwrite of finalized | Done |
 | §7 In-app notifications and task lists | Done (feed) / Partial (the work queue is unchanged) |
 | §7 Stable course identity and versions | Done |
-| §7 Timetable/course relationship validation | Partial |
+| §7 Timetable/course relationship validation | Done (a period is taught or explicitly `teacher_tbd`, migration `0032`) / Partial (no broader validation) |
 | §7 Internal vs university results kept separately | Done |
 | §7 1–3 internal assessments without a schema change | Done |
 | §7 CSV/Excel import with preview, validation, confirmation | Done (CSV and Excel) |
 | §7 Correction of finalized results | Done |
 | §7 Versioned migrations, history preserved | Done |
-| §8 Role-specific workspaces, HTMX, responsive UI | Done / Partial (reusable components incomplete) |
-| §9 Automated test suite (unit / DB / authz / workflow / e2e / migration) | Done for what exists; gaps listed in §3.B.18–19 |
+| §8 Role-specific workspaces, HTMX, responsive UI | Done / Partial (shared status badge, empty state and form error; per-row fragments cannot be partials under Askama 0.12) |
+| §9 Automated test suite (unit / DB / authz / workflow / e2e / migration) | Done; the §3.B.18–19 gaps are now closed |
 | §8, §9 README + architecture/permission notes | Done |
 | §8, §6 Scheduled/timed CMS publishing | Done |
 | §6 Reserved CMS page paths | Done |
@@ -58,6 +60,19 @@ Test commands referenced throughout:
   address is validated at startup and the process **panics** on a non-loopback bind, so the boundary is
   network-level, not navigation-level. `public_router()` and `management_router()` register disjoint route
   sets.
+- **The department workspace `/hod`** fixes the consequence of that split: an HOD is a teacher, so they
+  sign in on the public listener, where `/admin` is not served at all — every department link was a 404.
+  `admin::manager_routes()` (every `Manager`-guarded handler, plus the per-user notification feed and the
+  section index) is written with relative paths and mounted twice, at `/admin` (management listener) and at
+  `/hod` (both listeners; the same handlers, so the same guards — a teacher without an appointment is
+  refused at `/hod` exactly as at `/admin`). The mount adds no authority; it makes the pages reachable
+  from the listener the HOD is actually on. College-wide pages (People, Settings, the attendance report,
+  the CMS, root authority) stay `AdminOnly` at `/admin` and off the public listener.
+- The workspace is a single value, not a duplicated URL table: `sections::base_for(user)` is `/hod` for a
+  teacher and `/admin` for every other role, `Shell::base` carries it into every template, and
+  `sections::Link::url` / `shell::NavItem::url` / `notifications::Notification::href_in` rewrite the one
+  canonical `/admin…` path per link (`/teacher/reports` is left alone). Handler redirects use the same
+  base, so an action taken under `/hod` returns to `/hod`.
 - `role_assignments`, `delegations`, `appointment_handover_tasks` (migration `0021`) are the authority
   source. `services::appointments` resolves the effective department from an **active, in-date** head
   assignment or an **active, in-date** delegation whose granting assignment is still live.
@@ -127,6 +142,17 @@ Test commands referenced throughout:
   cohort roll), and never touches past results. It does **not** yet create the next semester's
   enrolments — see §3.B.12. Enrolments themselves record the offering that produced them
   (`enrollments.offering_id`).
+- **Timetable teacher integrity** (migration `0032`): a period is either taught by a validated teacher or
+  explicitly marked `teacher_tbd`, enforced by a table CHECK (`teacher_tbd = (faculty_id IS NULL)`) rather
+  than a route convention. The programme and offering forms offer the choice, both write paths go through
+  one service (`academics::add_slot` / `add_offering_slot`), the grid shows a `Teacher TBD` badge, and the
+  outstanding periods are a work-queue section (`academics::tbd_periods`). Evidence: `tests/database.rs`
+  — `a_period_is_taught_by_a_validated_teacher_or_explicitly_tbd`,
+  `an_offering_period_is_queued_under_its_offering_department`; e2e
+  `a_timetable_period_can_be_left_for_a_teacher_to_be_assigned`.
+- **Correlation ids** (migration `0033`, `src/correlation.rs` + middleware): every request is stamped with a
+  server-generated id, and every audit row written while handling it carries it, so the rows from one
+  action can be grouped. Background work (the backup scheduler) records NULL rather than a fabricated id.
 
 ### 2.4 CMS and content (§6 P1.1, P1.3)
 
@@ -164,15 +190,23 @@ Test commands referenced throughout:
 - `main.rs` is only process setup and the listeners; the application is `src/lib.rs`, which is what the
   tests build against. `apply_layers`, `connect`, `migrator` and `init_session_store` are library
   functions.
-- **Suite**: 65 unit, 37 database (`#[sqlx::test]`, a freshly migrated database per test), 14 end-to-end
-  (`tower::oneshot` through the real layered router). Currently all passing; the only build warning is the
-  pre-existing `sqlx-postgres v0.7.4` future-incompatibility notice.
+- **Suite**: 70 unit, 40 database (`#[sqlx::test]`, a freshly migrated database per test), 22 end-to-end
+  (`tower::oneshot` through the real layered router), and one Node hook test (`tests/js/app_hooks.test.mjs`,
+  run by `tests/js_hooks.rs`). Currently all passing; the only build warning is the pre-existing
+  `sqlx-postgres v0.7.4` future-incompatibility notice.
+- **Shared UI**: `src/ui.rs` owns the status badge (markup and colour, rendered `|safe` via a row method);
+  `templates/partials/empty_state.html` and `form_errors.html` are shared partials that read a template
+  field. `Shell::pending_approvals` badges pending HOD appointments in the navigation.
 - README documents the two listeners, roles, backups/restore, security headers, test commands, the layout
   and the migrations; `fixes.md` §13–§15 records each pass with its live verification.
 
 ---
 
 ## 3. What is left
+
+This section is the brief-by-brief view. `remaining.md` Part 2 is the implementation view of the same
+backlog: each item says where to change it and how to verify it, and `remaining.md` Parts 1/3/4 cover the
+architecture, the recipe for adding a page, and the CLI/operations cookbook.
 
 ### A. Not started — no implementation exists
 
@@ -231,6 +265,8 @@ Test commands referenced throughout:
    `notifications` table; `services::notifications` creates/lists them, counts unread, and marks them read
    (scoped to the owner). `/admin/notifications` (guarded by `Ready`, so any signed-in user reads only
    their own) is the feed, with per-item and Mark-all-read actions, linked from every workspace sidebar.
+   The same feed is mounted at `/hod/notifications`, and each row's target is rewritten into the reader's
+   workspace (`Notification::href_in`), so a head of department is not sent to an `/admin` URL.
    Notifications are created when an HOD appointment is requested (→ Principals and IT admins), when a
    result correction is requested (→ IT admins and the Principal). A notification is a pointer only: the
    page it opens re-checks authorization. Evidence: `tests/database.rs` —
@@ -276,9 +312,12 @@ Test commands referenced throughout:
     pickers (`exams::course_options_for_semester`, documented as the same rule) cannot drift. Exam and marks
     writes already rejected a course outside the picker. Evidence: `tests/database.rs` —
     `a_catalogue_course_is_applicable_through_its_offering`.
-10. **Timetable/course relationship enforcement** (P0.10). Forms no longer treat a bad id as "unassigned",
-    but a published period still does not require a validated teacher, and there is no explicit
-    `teacher_tbd` state with a work-queue item.
+10. ~~**Timetable/course relationship enforcement** (P0.10).~~ **Done.** A period is taught by a validated
+    teacher or explicitly `teacher_tbd` (migration `0032`, table CHECK), the forms offer the choice, the
+    grid shows a `Teacher TBD` badge, and the outstanding periods are a work-queue section. Evidence:
+    `a_period_is_taught_by_a_validated_teacher_or_explicitly_tbd`,
+    `an_offering_period_is_queued_under_its_offering_department` (database),
+    `a_timetable_period_can_be_left_for_a_teacher_to_be_assigned` (e2e), `a_checkbox_understands_every_spelling_a_browser_sends` (unit).
 11. ~~**Capacity policy** (P0.11).~~ **Done.** Student confirmation is race-safe (`SELECT … FOR UPDATE`
     with a fresh enrolment count); HOD assignment enforces it through `offering_for_confirm`; and cohort
     finalization now locks the offering and refuses when the cohort does not fit
@@ -304,23 +343,39 @@ Test commands referenced throughout:
     enrolled in it (catalogue courses have `programme_id IS NULL`). Evidence: `tests/database.rs` —
     `the_attendance_course_filter_includes_catalogue_courses_taught_to_the_programme`.
 16. **Audit detail** (P0.7) — **improved, partial.** Rows carry actor/action/entity/entity_id and the log is
-    append-only by trigger. `users::audit_detail` now writes the structured `details` JSONB, used for result
-    corrections (reason + proposed value, and the decision) and HOD appointments (department, acting,
-    reason, appointed user). Remaining: other audit calls still pass no detail, and some still discard their
-    error with `let _ =`; there is no correlation id. Evidence: `tests/database.rs` —
-    `an_audit_detail_row_keeps_its_structured_payload`.
-17. **Reusable UI components** (brief §8). Tables, empty states and form errors are consistent by
-    convention, not by shared components; there is no pending-approval badge in the navigation.
-18. **Authentication test depth** (brief §9) — **started, partial.** `tests/app.rs` now has a real sign-in
-    helper (login through the router, session cookie reused) and four through-the-router authorization
-    tests: `an_hod_cannot_touch_another_departments_programme` (cross-department mutation is 403),
-    `a_teacher_with_no_appointment_cannot_reach_the_academic_tools` (403),
-    `the_it_admin_may_act_for_any_programme` (positive control) and
-    `root_authority_belongs_to_the_super_admin_alone` (403 for the IT admin, and the Super Admin's
-    re-authenticated role change takes effect). Remaining: the same matrix for the other roles and
-    resource kinds (student-vs-student, teacher-vs-assigned-course, CMS ownership).
-19. **JS behaviour coverage.** The `data-*` hooks in `app.js` are not covered by automated tests (no
-    browser in this environment); they were verified by inspecting rendered markup and reading the script.
+    append-only by trigger. `users::audit_detail` writes the structured `details` JSONB, used for result
+    corrections, HOD appointments, role changes, account activation/deactivation, the bulk archive,
+    appointment revoke, delegation grant/revoke, CMS publish/archive, settings save and backups. Every row
+    now also carries a per-request `correlation_id` (migration `0033`), read from `src/correlation.rs` and set
+    by middleware — background work records NULL. Remaining: other audit calls still pass no detail, and some
+    still discard their error with `let _ =`. Evidence: `tests/database.rs` —
+    `an_audit_detail_row_keeps_its_structured_payload`, `audit_rows_carry_the_correlation_id_of_their_request`;
+    e2e `every_request_gets_its_own_audit_correlation_id`; unit `ids_do_not_repeat`,
+    `the_id_is_visible_only_inside_its_scope`.
+17. **Reusable UI components** (brief §8) — **started.** `src/ui.rs` is the one definition of the status
+    badge (markup and colour), rendered `|safe` through a row method; the five content lists use it.
+    `templates/partials/empty_state.html` and `form_errors.html` are shared partials reading a template
+    field, used by those lists and forms. `Shell::pending_approvals` adds the pending-appointment badge to
+    the navigation for the roles that decide appointments. Limitation: Askama 0.12 has no macros and its
+    `{% include %}` cannot take parameters, so a per-row fragment cannot be a partial — tables stay
+    consistent by convention. Evidence: unit `a_status_badge_is_consistent_and_escaped`,
+    `every_known_status_has_its_own_colour`; e2e
+    `the_notice_list_uses_the_shared_empty_state_and_status_badge`,
+    `the_navigation_badges_appointments_waiting_for_a_decision`.
+18. **Authentication test depth** (brief §9) — **extended.** `tests/app.rs` has a real sign-in helper (login
+    through the router, session cookie reused) and now eight through-the-router authorization tests:
+    `an_hod_cannot_touch_another_departments_programme`, `a_teacher_with_no_appointment_cannot_reach_the_academic_tools`,
+    `the_it_admin_may_act_for_any_programme`, `root_authority_belongs_to_the_super_admin_alone`,
+    `one_student_cannot_withdraw_another_students_selection`,
+    `a_student_reaches_their_own_hub_but_not_the_staff_tools`,
+    `a_teacher_cannot_mark_attendance_for_another_teachers_class` and
+    `only_the_it_admin_publishes_or_deletes_cms_content`. The student-vs-student case proves the route scopes
+    the write to the session student by asserting the other student's row survives.
+19. ~~**JS behaviour coverage.**~~ **Done.** `tests/js/app_hooks.test.mjs` loads the real
+    `static/js/app.js` into a fake DOM and fires each `data-*` hook (mark-all radios, select-all and its
+    toggle, autosubmit, confirm, print), asserting its effect. `tests/js_hooks.rs` runs it under
+    `node --test` so `cargo test` covers it, skipping with a note when Node is absent. There is still no
+    real-browser test of layout or `hx-*` behaviour.
 
 ### C. Known stale or thin spots in the docs
 
@@ -352,6 +407,7 @@ Dependency-aware, highest value first:
    the attendance course filter (§3.B.15) is fixed with a regression test.
 8. ~~**Super Admin distinct powers.**~~ **Done** — the `super_admin` account role, `/admin/roles`,
    the last-recovery-account guard, the Principal appointment and the audited reopening of a finalized
-   course (§3.A.2). With audit detail (§3.B.16), re-authentication (§3.A.7) and the through-the-router
-   authorization tests (§3.B.18) done, the remaining work is the UI-consistency items (§3.B.17, §3.B.19)
-   and the rest of the authorization matrix, all of which are recorded above rather than hidden.
+   course (§3.A.2). The audit-detail (§3.B.16), timetable-teacher (§3.B.10), UI-component (§3.B.17),
+   authorization-matrix (§3.B.18) and JS-coverage (§3.B.19) items from the same pass are also now done or
+   bounded, leaving only the items this document records as still partial. The one structural limit left in
+   §3.B.17 is Askama's: per-row fragments cannot be partials without a template-macro upgrade.

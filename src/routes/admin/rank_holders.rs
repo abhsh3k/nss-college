@@ -91,7 +91,7 @@ pub async fn index(
         photo,
         filter,
         statuses: statuses(),
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
     })
 }
 
@@ -178,7 +178,7 @@ async fn form_page(
     Ok(FormPage {
         departments: svc::departments(&s.db).await?,
         statuses: statuses(),
-        shell: Shell::build(user, session).await?,
+        shell: Shell::build(user, session, &s.db).await?,
         form,
     })
 }

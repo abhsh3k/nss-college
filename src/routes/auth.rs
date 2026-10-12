@@ -176,9 +176,13 @@ pub struct PasswordTemplate {
     error: Option<String>,
 }
 
-pub async fn password_form(user: AuthUser, session: Session) -> Result<PasswordTemplate, AppError> {
+pub async fn password_form(
+    State(s): State<AppState>,
+    user: AuthUser,
+    session: Session,
+) -> Result<PasswordTemplate, AppError> {
     Ok(PasswordTemplate {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
         forced: user.must_change_password,
         error: None,
     })
@@ -217,7 +221,7 @@ pub async fn password_submit(
 
     if let Some(error) = problem {
         return Ok(PasswordTemplate {
-            shell: Shell::build(&user, &session).await?,
+            shell: Shell::build(&user, &session, &s.db).await?,
             forced: user.must_change_password,
             error: Some(error),
         }
@@ -249,6 +253,7 @@ pub struct ReauthQuery {
 /// Ask for the password again before a critical action. Already-fresh callers
 /// are sent straight on to where they were going.
 pub async fn reauth_form(
+    State(s): State<AppState>,
     user: AuthUser,
     session: Session,
     Query(q): Query<ReauthQuery>,
@@ -259,7 +264,7 @@ pub async fn reauth_form(
         return Ok(Redirect::to(target).into_response());
     }
     Ok(ReauthTemplate {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
         next,
         error: None,
     }
@@ -285,7 +290,7 @@ pub async fn reauth_submit(
     let stored = users::password_hash(&s.db, user.id).await?;
     if !password::verify_blocking(f.password.clone(), stored).await? {
         return Ok(ReauthTemplate {
-            shell: Shell::build(&user, &session).await?,
+            shell: Shell::build(&user, &session, &s.db).await?,
             next: f.next.clone(),
             error: Some("That password is not right.".to_string()),
         }

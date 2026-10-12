@@ -18,6 +18,20 @@ use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::{seo, state::AppState};
 
+/// The department workspace, `/hod`.
+///
+/// A head of department is a teacher: they sign in on the *public* listener,
+/// where the `/admin` management area is deliberately not served. The same
+/// manager-scoped handlers are therefore mounted a second time under `/hod`,
+/// with identical per-request guards, so the pages work on the listener the HOD
+/// is actually using. See `crate::routes::admin::manager_routes`.
+fn department_routes() -> Router<AppState> {
+    admin::manager_routes().layer(SetResponseHeaderLayer::overriding(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"),
+    ))
+}
+
 fn auth_routes() -> Router<AppState> {
     Router::new()
         .route("/login", get(auth::login_form).post(auth::login_submit))
@@ -106,7 +120,10 @@ pub fn public_router() -> Router<AppState> {
             HeaderValue::from_static("no-cache"),
         ));
 
-    site.merge(auth_routes()).merge(signed_in_public_routes())
+    site.merge(auth_routes())
+        .merge(signed_in_public_routes())
+        // The head of department's pages, on the listener they sign in to.
+        .merge(Router::new().nest("/hod", department_routes()))
 }
 
 /// Routes for the loopback-only management listener. Keeping this router
@@ -119,6 +136,9 @@ pub fn management_router() -> Router<AppState> {
         // narrowed to the content area for office staff.
         .route("/admin", get(dashboards::admin))
         .merge(admin::routes())
+        // The department workspace is also offered here, so a head of
+        // department who is at the server itself lands somewhere that works.
+        .merge(Router::new().nest("/hod", department_routes()))
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),

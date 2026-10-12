@@ -20,6 +20,7 @@ use tower_sessions::Session;
 use super::{parse_i32, parse_i64};
 use crate::{
     auth::{csrf, Manager},
+    sections,
     dates::valid_date,
     error::AppError,
     services::{
@@ -30,6 +31,13 @@ use crate::{
     shell::{self, Shell},
     state::AppState,
 };
+
+/// A path in the workspace this manager is working in: `/admin` for the IT
+/// administrator, `/hod` for a head of department, who signs in on the public
+/// listener where `/admin` is not served at all.
+fn ws(manager: &Manager, path: &str) -> String {
+    format!("{}{path}", sections::base_for(&manager.user))
+}
 
 const SEMESTERS: [i32; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
@@ -100,7 +108,7 @@ async fn render(
     programme_id: i64,
     semester: i32,
 ) -> Result<ExamsTemplate, AppError> {
-    let shell = Shell::build(&manager.user, session).await?;
+    let shell = Shell::build(&manager.user, session, &s.db).await?;
     let programmes = academics::programme_options_for(&s.db, manager.department()).await?;
     let mut page = ExamsTemplate {
         shell,
@@ -164,8 +172,10 @@ pub async fn add(
 ) -> Result<Redirect, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
     let back = format!(
-        "/admin/exams?programme={}&semester={}",
-        f.programme, f.semester
+        "{}/exams?programme={}&semester={}",
+        ws(&manager, ""),
+        f.programme,
+        f.semester
     );
     let flash = |msg: String| async move {
         shell::flash(&session, msg).await?;
@@ -240,8 +250,10 @@ pub async fn delete(
 ) -> Result<Redirect, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
     let back = format!(
-        "/admin/exams?programme={}&semester={}",
-        f.programme, f.semester
+        "{}/exams?programme={}&semester={}",
+        ws(&manager, ""),
+        f.programme,
+        f.semester
     );
     let programme_id = parse_i64(&f.programme).unwrap_or(0);
     if !academics::may_manage_programme(&s.db, programme_id, manager.department()).await? {
@@ -289,7 +301,8 @@ pub async fn push(
     )
     .await?;
     Ok(Redirect::to(&format!(
-        "/admin/exams?programme={programme_id}&semester={semester}"
+        "{}/exams?programme={programme_id}&semester={semester}",
+        ws(&manager, "")
     )))
 }
 
@@ -318,7 +331,8 @@ pub async fn unpush(
     .await?;
     shell::flash(&session, format!("Pulled back {count} exam(s); students can no longer see them.")).await?;
     Ok(Redirect::to(&format!(
-        "/admin/exams?programme={programme_id}&semester={semester}"
+        "{}/exams?programme={programme_id}&semester={semester}",
+        ws(&manager, "")
     )))
 }
 
@@ -371,7 +385,8 @@ pub async fn push_results(
 
     flash_push(&session, filed, &problems, kind, semester).await?;
     Ok(Redirect::to(&format!(
-        "/admin/exams?programme={programme_id}&semester={semester}"
+        "{}/exams?programme={programme_id}&semester={semester}",
+        ws(&manager, "")
     )))
 }
 
@@ -396,7 +411,8 @@ pub async fn push_results_csv(
     ))?;
 
     let back = format!(
-        "/admin/exams?programme={programme_id}&semester={semester}"
+        "{}/exams?programme={programme_id}&semester={semester}",
+        ws(&manager, "")
     );
 
     // Limit CSV file size to 5 MB

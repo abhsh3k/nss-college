@@ -39,6 +39,8 @@ pub struct IndexPage {
     documents: Vec<site_admin::DocumentRow>,
     filter: String,
     statuses: Vec<String>,
+    /// Shown by the shared empty-state partial when the list is empty.
+    empty_message: &'static str,
 }
 
 pub async fn index(
@@ -52,10 +54,11 @@ pub async fn index(
         Some(v) => content_admin::clean_status(v).to_string(),
     };
     Ok(IndexPage {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
         documents: site_admin::documents(&s.db, &filter).await?,
         filter,
         statuses: statuses(),
+        empty_message: "No documents match. Upload one with the button above.",
     })
 }
 
@@ -107,22 +110,26 @@ pub struct FormPage {
     shell: Shell,
     form: DocumentFormValues,
     statuses: Vec<String>,
+    /// Read by the shared form-error partial.
+    error: Option<String>,
 }
 
 fn form_page(form: DocumentFormValues, shell: Shell) -> FormPage {
+    let error = form.error.clone();
     FormPage {
         shell,
         form,
         statuses: statuses(),
+        error,
     }
 }
 
 pub async fn new_form(
-    State(_s): State<AppState>,
+    State(s): State<AppState>,
     session: Session,
     AdminOnly(user): AdminOnly,
 ) -> Result<FormPage, AppError> {
-    Ok(form_page(DocumentFormValues::blank(), Shell::build(&user, &session).await?))
+    Ok(form_page(DocumentFormValues::blank(), Shell::build(&user, &session, &s.db).await?))
 }
 
 pub async fn edit_form(
@@ -146,7 +153,7 @@ pub async fn edit_form(
             unpublish_value: row.unpublish_at,
             error: None,
         },
-        Shell::build(&user, &session).await?,
+        Shell::build(&user, &session, &s.db).await?,
     ))
 }
 
@@ -227,6 +234,7 @@ async fn store_file(
 }
 
 async fn with_error(
+    db: &sqlx::PgPool,
     user: &AuthUser,
     session: &Session,
     mut values: DocumentFormValues,
@@ -236,7 +244,7 @@ async fn with_error(
         .clone()
         .unwrap_or_else(|| "Check the form and try again.".into());
     values.error = Some(msg);
-    Ok(form_page(values, Shell::build(user, session).await?).into_response())
+    Ok(form_page(values, Shell::build(user, session, db).await?).into_response())
 }
 
 pub async fn create(
@@ -256,7 +264,7 @@ pub async fn create(
     if values.error.is_some() {
         // Nothing will point at this file, so do not leave it on disk.
         content_admin::discard_upload(&s.db, &s.upload_dir, &values.file_path).await;
-        return with_error(&user, &session, values).await;
+        return with_error(&s.db, &user, &session, values).await;
     }
 
     let id = site_admin::create_document(&s.db, &values.to_input(), Some(user.id)).await?;
@@ -297,7 +305,7 @@ pub async fn update(
         if values.file_path != previous {
             content_admin::discard_upload(&s.db, &s.upload_dir, &values.file_path).await;
         }
-        return with_error(&user, &session, values).await;
+        return with_error(&s.db, &user, &session, values).await;
     }
 
     site_admin::update_document(&s.db, id, &values.to_input()).await?;
@@ -329,7 +337,7 @@ pub async fn set_status(
 
     let status = content_admin::clean_status(&f.status);
     site_admin::set_document_status(&s.db, id, status).await?;
-    users::audit(
+    users::audit_detail(
         &s.db,
         Some(user.id),
         if status == "archived" {
@@ -339,6 +347,7 @@ pub async fn set_status(
         },
         "document",
         Some(id),
+        serde_json::json!({ "status": status }),
     )
     .await?;
     flash(

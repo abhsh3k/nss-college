@@ -34,7 +34,7 @@ pub async fn index(
     manager: Manager,
 ) -> Result<AcademicsTemplate, AppError> {
     Ok(AcademicsTemplate {
-        shell: Shell::build(&manager.user, &session).await?,
+        shell: Shell::build(&manager.user, &session, &s.db).await?,
         programmes: academics::programme_summaries_for(&s.db, manager.department()).await?,
     })
 }
@@ -81,7 +81,7 @@ pub async fn programme(
         })
         .collect();
     Ok(ProgrammeTemplate {
-        shell: Shell::build(&manager.user, &session).await?,
+        shell: Shell::build(&manager.user, &session, &s.db).await?,
         programme,
         semesters,
         teachers: academics::teacher_options_for(&s.db, manager.department()).await?,
@@ -180,7 +180,7 @@ pub async fn course_form(
     Path(id): Path<i64>,
 ) -> Result<CourseEditTemplate, AppError> {
     Ok(CourseEditTemplate {
-        shell: Shell::build(&user, &session).await?,
+        shell: Shell::build(&user, &session, &s.db).await?,
         course: academics::course(&s.db, id).await?.ok_or(AppError::NotFound)?,
         teachers: academics::teacher_options(&s.db).await?,
     })

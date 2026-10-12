@@ -63,7 +63,7 @@ async fn render(
     error: Option<String>,
 ) -> Result<Response, AppError> {
     Ok(RolesTemplate {
-        shell: Shell::build(user, session).await?,
+        shell: Shell::build(user, session, &s.db).await?,
         accounts: super_admin::list_accounts(&s.db).await?,
         principal: super_admin::current_principal(&s.db).await?,
         candidates: super_admin::principal_candidates(&s.db).await?,

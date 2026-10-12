@@ -319,6 +319,10 @@ pub struct SlotRow {
     /// programme itself. The programme grid shows those read-only so a clash
     /// is visible before it is attempted.
     pub is_offering: bool,
+    /// True when the period is waiting for a teacher. The paired table check
+    /// makes this exactly `faculty_id IS NULL`, so a period is never quietly
+    /// teacher-less without being queued as work.
+    pub teacher_tbd: bool,
 }
 
 /// The programme's own periods plus the periods of every course offering that
@@ -336,7 +340,8 @@ pub async fn slots(db: &PgPool, programme_id: i64, semester: i32) -> Res<Vec<Slo
                   c.code, c.title AS course,
                   COALESCE(f.name, '') AS teacher,
                   COALESCE(t.room, '') AS room,
-                  (t.course_offering_id IS NOT NULL) AS is_offering
+                  (t.course_offering_id IS NOT NULL) AS is_offering,
+                  t.teacher_tbd
            FROM timetable_entries t
            JOIN courses c ON c.id = t.course_id
            LEFT JOIN faculty f ON f.id = t.faculty_id
@@ -357,7 +362,8 @@ pub struct NewSlot {
     pub programme_id: i64,
     pub semester: i32,
     pub course_id: i64,
-    pub faculty_id: i64, // 0 = none
+    pub faculty_id: i64, // 0 = none, which is only valid when `teacher_tbd` is set
+    pub teacher_tbd: bool,
     pub weekday: i16,
     pub start_at: String, // HH:MM
     pub end_at: String,   // HH:MM
@@ -463,14 +469,16 @@ pub async fn clashes(db: &PgPool, n: &NewSlot) -> Res<Vec<Clash>> {
 pub async fn add_slot(db: &PgPool, n: &NewSlot) -> Res<i64> {
     sqlx::query_scalar(
         r#"INSERT INTO timetable_entries
-               (programme_id, semester, course_id, faculty_id, weekday, start_time, end_time, room)
-           VALUES ($1, $2, $3, NULLIF($4, 0), $5, $6::time, $7::time, NULLIF($8, ''))
+               (programme_id, semester, course_id, faculty_id, teacher_tbd,
+                weekday, start_time, end_time, room)
+           VALUES ($1, $2, $3, NULLIF($4, 0), $5, $6, $7::time, $8::time, NULLIF($9, ''))
            RETURNING id"#,
     )
     .bind(n.programme_id)
     .bind(n.semester)
     .bind(n.course_id)
     .bind(n.faculty_id)
+    .bind(n.teacher_tbd)
     .bind(n.weekday)
     .bind(&n.start_at)
     .bind(&n.end_at)
@@ -498,7 +506,8 @@ pub async fn offering_slots(db: &PgPool, offering_id: i64) -> Res<Vec<SlotRow>> 
                   c.code, c.title AS course,
                   COALESCE(f.name, '') AS teacher,
                   COALESCE(t.room, '') AS room,
-                  true AS is_offering
+                  true AS is_offering,
+                  t.teacher_tbd
            FROM timetable_entries t
            JOIN courses c ON c.id = t.course_id
            LEFT JOIN faculty f ON f.id = t.faculty_id
@@ -512,7 +521,8 @@ pub async fn offering_slots(db: &PgPool, offering_id: i64) -> Res<Vec<SlotRow>> 
 
 pub struct NewOfferingSlot {
     pub offering_id: i64,
-    pub faculty_id: i64, // 0 = none
+    pub faculty_id: i64, // 0 = none, which is only valid when `teacher_tbd` is set
+    pub teacher_tbd: bool,
     pub weekday: i16,
     pub start_at: String, // HH:MM
     pub end_at: String,   // HH:MM
@@ -580,8 +590,8 @@ pub async fn add_offering_slot(db: &PgPool, n: &NewOfferingSlot) -> Res<i64> {
     sqlx::query_scalar(
         r#"INSERT INTO timetable_entries
                (course_offering_id, programme_id, semester, course_id, faculty_id,
-                weekday, start_time, end_time, room)
-           SELECT $1, NULL, o.semester, o.course_id, NULLIF($3, 0), $2, $4::time, $5::time, NULLIF($6, '')
+                teacher_tbd, weekday, start_time, end_time, room)
+           SELECT $1, NULL, o.semester, o.course_id, NULLIF($3, 0), $6, $2, $4::time, $5::time, NULLIF($7, '')
              FROM course_offerings o WHERE o.id = $1
            RETURNING id"#,
     )
@@ -590,7 +600,81 @@ pub async fn add_offering_slot(db: &PgPool, n: &NewOfferingSlot) -> Res<i64> {
     .bind(n.faculty_id)
     .bind(&n.start_at)
     .bind(&n.end_at)
+    .bind(n.teacher_tbd)
     .bind(&n.room)
     .fetch_one(db)
+    .await
+}
+
+// ---------- Periods waiting for a teacher (the work queue) ----------
+
+/// One timetable period with no teacher yet. A period reaches this state only
+/// when somebody explicitly chose "teacher to be assigned"; the paired table
+/// check keeps it an exact match for `faculty_id IS NULL`.
+#[derive(Debug, FromRow)]
+pub struct TbdPeriod {
+    pub id: i64,
+    pub weekday: i16,
+    /// The weekday name, resolved in SQL so the template renders no logic.
+    pub day_label: String,
+    pub start_at: String,
+    pub end_at: String,
+    pub code: String,
+    pub title: String,
+    /// "offering" or "programme" — which picker resolves the period.
+    pub scope: String,
+    pub programme_id: Option<i64>,
+    pub offering_id: Option<i64>,
+    pub semester: i32,
+    pub department: String,
+}
+
+impl TbdPeriod {
+    /// The timetable page that can assign this period's teacher, in the
+    /// workspace `base` the reader is working in (see `crate::sections`).
+    pub fn link(&self, base: &str) -> String {
+        match self.offering_id {
+            Some(id) => format!("{base}/timetable?offering={id}"),
+            None => format!(
+                "{base}/timetable?programme={}&semester={}",
+                self.programme_id.unwrap_or(0),
+                self.semester
+            ),
+        }
+    }
+}
+
+/// The teacher-less periods this manager is responsible for. A programme's
+/// periods belong to the programme's department; an offering's periods belong
+/// to the offering's department. `None` is the IT admin, who sees every one.
+pub async fn tbd_periods(db: &PgPool, department: Option<i64>) -> Res<Vec<TbdPeriod>> {
+    sqlx::query_as::<_, TbdPeriod>(
+        r#"SELECT t.id, t.weekday,
+                  CASE t.weekday
+                      WHEN 1 THEN 'Monday' WHEN 2 THEN 'Tuesday'
+                      WHEN 3 THEN 'Wednesday' WHEN 4 THEN 'Thursday'
+                      WHEN 5 THEN 'Friday' WHEN 6 THEN 'Saturday'
+                      ELSE 'Day ' || t.weekday::text END AS day_label,
+                  to_char(t.start_time, 'HH24:MI') AS start_at,
+                  to_char(t.end_time, 'HH24:MI') AS end_at,
+                  c.code, c.title,
+                  CASE WHEN t.course_offering_id IS NOT NULL THEN 'offering'
+                       ELSE 'programme' END AS scope,
+                  t.programme_id,
+                  t.course_offering_id AS offering_id,
+                  t.semester,
+                  COALESCE(od.name, pd.name, '—') AS department
+             FROM timetable_entries t
+             JOIN courses c ON c.id = t.course_id
+             LEFT JOIN course_offerings o ON o.id = t.course_offering_id
+             LEFT JOIN departments od ON od.id = o.offering_department_id
+             LEFT JOIN programmes p ON p.id = t.programme_id
+             LEFT JOIN departments pd ON pd.id = p.department_id
+            WHERE t.teacher_tbd
+              AND ($1::bigint IS NULL OR COALESCE(od.id, pd.id) = $1)
+            ORDER BY t.weekday, t.start_time, c.code"#,
+    )
+    .bind(department)
+    .fetch_all(db)
     .await
 }
