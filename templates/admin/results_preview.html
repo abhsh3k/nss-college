@@ -2,7 +2,7 @@
 {% block title %}Review import{% endblock %}
 {% block content %}
 <h1 class="font-display text-3xl font-semibold md:text-4xl">Review result import</h1>
-<p class="mt-3 max-w-2xl text-ink/80">Nothing has been filed yet. Check the rows below, then confirm. A row that would overwrite a finalized result is marked as a conflict and stops the whole import — use the correction workflow for those.</p>
+<p class="mt-3 max-w-2xl text-ink/80">Nothing has been filed yet. Check the rows below, set each course's maximum, then confirm. A row that would overwrite a finalized result is marked as a conflict and stops the whole import — use the correction workflow for those.</p>
 
 <div class="mt-6 flex flex-wrap gap-4 text-sm">
   <span class="rounded bg-mist px-3 py-1">Source: {{ source_name }}</span>
@@ -14,25 +14,59 @@
   {% if conflict > 0 %}<span class="rounded bg-red-200 px-3 py-1 text-red-900">{{ conflict }} conflict(s)</span>{% endif %}
 </div>
 
-<div class="mt-6 flex flex-wrap gap-3">
-  <form method="post" action="{{ shell.base }}/exams/results/commit" class="inline"{% if conflict > 0 %} data-confirm="Conflicts are present and will stop the import. Continue anyway?"{% endif %}>
-    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
-    <input type="hidden" name="batch" value="{{ batch_id }}">
+<form method="post" action="{{ shell.base }}/exams/results/commit" class="mt-6"{% if conflict > 0 %} data-confirm="Conflicts are present and will stop the import. Continue anyway?"{% endif %}>
+  <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+  <input type="hidden" name="batch" value="{{ batch_id }}">
+
+  {% if !courses.is_empty() %}
+  <section class="max-w-4xl border border-ink/15 bg-mist p-5" aria-labelledby="import-max">
+    <h2 id="import-max" class="font-display text-2xl font-semibold">Max marks</h2>
+    <p class="mt-2 max-w-3xl text-sm text-ink/70">Every mark of a course is filed out of that course's maximum. Each box starts from what the file said, or from 100 when it said nothing — a course-wise sheet carries no maximum of its own.</p>
+    <div class="mt-4 overflow-x-auto">
+      <table class="w-full min-w-[36rem] text-left">
+        <thead>
+          <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
+            <th scope="col" class="py-2 pr-4 font-medium">Course</th>
+            <th scope="col" class="py-2 pr-4 font-medium">Rows</th>
+            <th scope="col" class="py-2 font-medium">Max marks</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in courses %}
+          <tr class="border-b border-ink/10">
+            <td class="py-2 pr-4 text-sm"><span class="font-mono font-medium">{{ c.course_code }}</span> <span class="text-ink/70">{{ c.course_title }}</span></td>
+            <td class="py-2 pr-4 text-sm text-ink/70">{{ c.valid_rows }}</td>
+            <td class="py-2">
+              <input type="number" name="max_{{ c.course_id }}" value="{{ c.max_label() }}" min="0.01" max="9999.99" step="0.01" inputmode="decimal"
+                     class="w-28 rounded border border-ink/40 bg-white px-3 py-1 text-sm text-right"
+                     aria-label="Maximum marks for {{ c.course_code }}">
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  <div class="mt-6">
     <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Confirm and file {{ valid }} row(s)</button>
-  </form>
-  <form method="post" action="{{ shell.base }}/exams/results/discard" class="inline">
-    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
-    <input type="hidden" name="batch" value="{{ batch_id }}">
-    <button type="submit" class="rounded border border-ink/40 px-4 py-2 font-semibold hover:bg-mist">Discard</button>
-  </form>
-</div>
+  </div>
+</form>
+
+<form method="post" action="{{ shell.base }}/exams/results/discard" class="mt-3">
+  <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+  <input type="hidden" name="batch" value="{{ batch_id }}">
+  <button type="submit" class="rounded border border-ink/40 px-4 py-2 font-semibold hover:bg-mist">Discard</button>
+</form>
 
 <div class="mt-8 overflow-x-auto">
-  <table class="w-full min-w-[44rem] text-left">
+  <table class="w-full min-w-[48rem] text-left">
     <thead>
       <tr class="border-b-2 border-ink/20 text-sm text-ink/70">
         <th scope="col" class="py-2 pr-4 font-medium">Line</th>
-        <th scope="col" class="py-2 pr-4 font-medium">Student</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Key</th>
+        <th scope="col" class="py-2 pr-4 font-medium">Name</th>
         <th scope="col" class="py-2 pr-4 font-medium">Course</th>
         <th scope="col" class="py-2 pr-4 font-medium">Marks</th>
         <th scope="col" class="py-2 font-medium">State</th>
@@ -42,8 +76,9 @@
       {% for r in rows %}
       <tr class="border-b border-ink/10 align-top">
         <td class="py-2 pr-4 text-sm text-ink/70">{{ r.line_no }}</td>
-        <td class="py-2 pr-4 text-sm">{{ r.identity_key }}</td>
-        <td class="py-2 pr-4 text-sm">{{ r.course_code }}</td>
+        <td class="py-2 pr-4 text-sm font-mono">{{ r.identity_key }}</td>
+        <td class="py-2 pr-4 text-sm">{{ r.student_name }}</td>
+        <td class="py-2 pr-4 text-sm font-mono">{{ r.course_code }}</td>
         <td class="py-2 pr-4 text-sm">{{ r.marks_label }}</td>
         <td class="py-2 text-sm">
           <span class="{% if r.state == "valid" %}text-green-800{% else %}text-red-800{% endif %} font-medium">{{ r.state }}</span>

@@ -41,7 +41,7 @@ Sign in as the IT admin, then use the sidebar:
   offering's periods and adds or removes them in place, with the same clash rules — the offering page's
   "add period" form stays as the secondary path.
 - **Work queue** (`/admin/work-queue` in the management workspace, `/hod/work-queue` for a head of
-  department — see "Two workspaces" below): the real work in one list —
+  department — see "Three workspaces" below): the real work in one list —
   pending external offering approvals, unanswered change requests, cohort decisions that are not finalised,
   published offerings with no timetable periods, timetable periods with no teacher, and offerings with no
   seats left. Every row links to the catalogue, offering-detail, timetable or selections page that handles
@@ -84,24 +84,28 @@ Create test accounts for the other roles. These must choose a new password at fi
     cargo run -- create-user student 1001@college.local "Test Student"
 
 Then run `cargo run` and open http://127.0.0.1:3001/login for staff/admin management accounts. Students and teachers can sign in through the public listener at http://127.0.0.1:3000/login. Each role lands on its own dashboard:
-IT admin, the Principal and office staff on `/admin`, teachers on `/teacher`, students on `/hub`.
+IT admin and the Principal on `/admin`, office staff on `/staff`, teachers on `/teacher`, students on `/hub`.
 
-### Two workspaces: `/admin` and `/hod`
+### Three workspaces: `/admin`, `/staff` and `/hod`
 
-The management area is served on the loopback listener only, so a **head of department** — who is a
-teacher, and signs in on the public listener — would find every department link there a 404. The
-department tools are therefore mounted twice from the same handlers, with identical per-request guards:
+The management area is served on both listeners, so the roles that sign in on the public listener also
+reach it. **Root authority is the exception**: a Super Admin session is refused on the public listener
+and works only on the loopback management listener. The workspaces are built from the same handlers, with
+identical per-request guards:
 
 | workspace | who | listener |
 | --- | --- | --- |
-| `/admin` | IT admin, Principal, office staff | management (loopback `:3001`) |
-| `/hod` | head of department, approved delegate | public (`:3000`) — and the management listener too |
+| `/admin` | IT admin, Principal (and Super Admin) | both; **root-only pages loopback `:3001` only** |
+| `/staff` | office staff | both (`:3000` and `:3001`) |
+| `/hod` | head of department, approved delegate | both (`:3000` and `:3001`) |
 
-Every page, redirect and sidebar link is built from the caller's workspace, so an HOD never sees an
-`/admin` URL and the IT admin never sees an `/hod` one. The college-wide pages (People, Settings, the
-attendance report, the CMS) take `AdminOnly`, are served at `/admin` alone, and stay off the public
-listener. Mounting the department handlers a second time grants nothing: a teacher without an
-appointment is refused at `/hod` exactly as they are at `/admin`.
+Every page, redirect and sidebar link is built from the caller's workspace, so an HOD or an office-staff
+member never sees an `/admin` URL, and the IT admin never sees an `/hod` or `/staff` one. The public
+`/admin` and `/staff` mounts are wrapped by `auth::management_area_on_public`, which refuses a `faculty`
+account (its workspace is `/hod`) and, above all, **root authority** — so `/admin/roles`, recovery and the
+emergency reopening of a finalized result are reachable only on the loopback listener. Mounting a handler
+set a second time grants nothing: the guards run per request, so a caller who is not allowed is refused
+wherever they try.
 
 The **Principal** (`create-user principal ...`) holds institution-wide *academic* authority — the same
 cross-department reach as the IT admin on the academic tools, but no technical powers. The IT admin
@@ -128,7 +132,7 @@ the last root account but never demote it, and it records the change in the audi
 
 Rules built in: five wrong passwords lock an account for 15 minutes; sessions last 8 hours of inactivity;
 every form carries a CSRF token; passwords are stored with Argon2.
-The management listener is hard-bound to loopback by the application and must not be exposed by a reverse proxy. In production set `COOKIE_SECURE=true`, serve the public site over HTTPS, and proxy management access only through a controlled local administration path.
+The management listener is hard-bound to loopback by the application and must not be exposed by a reverse proxy. The management area is now also served on the public listener for the IT admin, the Principal and office staff — never for root authority — so the loopback listener is the boundary that keeps `/admin/roles` off the network. In production set `COOKIE_SECURE=true`, serve the public site over HTTPS, and proxy management access only through a controlled local administration path.
 
 ## Tests
 
@@ -253,7 +257,9 @@ Keep the colours and fonts in `tailwind.config.js` and `styles.html` identical.
                     0029 notifications (a per-user actionable feed), 0030 content scheduling
                     (`unpublish_at` on notices/news/events/documents/pages, `pages.published_at`),
                     0031 super admin (the `super_admin` account role, one live and one pending
-                    Principal appointment)
+                    Principal appointment), 0032 timetable teacher TBD, 0033 audit correlation
+                    ids, 0034 `events.published_at`, 0035 result-import names (the student-name
+                    label a file may carry) and the course-wise import
 
 ## Layers
 
@@ -305,7 +311,10 @@ the evidence (a test name, or "by inspection" where the code already handled it)
 2. **Marks and exams** — **the "no UI" half is fixed**: `/admin/marks` is the entry grid, `/admin/exams`
    the timetable, and results arrive through the guided sheet, the staged import
    (`/admin/exams/results/*`) or the CSV/Excel push, with the pickers resolving an offering course through
-   `academics::applicable_course`. What remains is structural: `exams.programme_id` is still `NOT NULL`
+   `academics::applicable_course`. A bulk upload may be written either as one row per result or as a
+   course-wise sheet (one line per student, one column per course); both stage into a review where each
+   course's maximum marks is set, and the course-wise blank form is downloadable from `/admin/marks` for
+   the whole semester or one course. What remains is structural: `exams.programme_id` is still `NOT NULL`
    (migration 0002), so an exam row belongs to a programme and semester rather than to the course version
    an offering ran as.
 3. ~~**Substitutions skip offering periods**~~ **Fixed** (by inspection): `attendance::teacher_day`, which

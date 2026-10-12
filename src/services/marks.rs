@@ -82,6 +82,85 @@ pub async fn roster(
     .await
 }
 
+// ---------- Course-wise blank form ----------
+
+/// One student line on a course-wise blank form.
+pub struct FormRow {
+    /// The PRN, or the admission number, whichever the sheet is keyed on.
+    pub key: String,
+    pub name: String,
+}
+
+/// The students a course-wise blank form is drawn for: the programme's active
+/// students sitting in that semester, or enrolled in one of its courses. The
+/// same rule the entry grid's roster uses, widened from one course to the whole
+/// semester.
+pub async fn form_roster(
+    db: &PgPool,
+    programme_id: i64,
+    semester: i32,
+    key_is_prn: bool,
+) -> Res<Vec<FormRow>> {
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        r#"SELECT st.name,
+                  COALESCE(st.admission_no, ''),
+                  COALESCE(st.prn, '')
+             FROM students st
+            WHERE st.programme_id = $1
+              AND st.is_active
+              AND (st.semester = $2
+                   OR EXISTS (SELECT 1
+                                FROM enrollments e
+                                JOIN courses c ON c.id = e.course_id
+                               WHERE e.student_id = st.id
+                                 AND e.status = 'active'
+                                 AND COALESCE(e.semester, c.semester) = $2))
+            ORDER BY COALESCE(NULLIF(st.admission_no, ''), st.name), st.name"#,
+    )
+    .bind(programme_id)
+    .bind(semester)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(name, admission_no, prn)| {
+            // The key column the sheet is read back on, with the other number
+            // standing in when the student does not have it yet.
+            let (preferred, fallback) = if key_is_prn {
+                (prn, admission_no)
+            } else {
+                (admission_no, prn)
+            };
+            FormRow {
+                key: if preferred.is_empty() { fallback } else { preferred },
+                name,
+            }
+        })
+        .collect())
+}
+
+/// The course-wise blank form: a header naming the key, the student's name and
+/// every course, then one line per student with the key and name filled in and
+/// the mark columns left blank. A blank cell files nothing, so the head fills
+/// in only the marks they have and the review leaves the rest untouched.
+pub fn course_form_csv(
+    key_column: &str,
+    courses: &[String],
+    rows: &[FormRow],
+) -> csv::Result<Vec<u8>> {
+    let mut w = csv::Writer::from_writer(Vec::new());
+    let mut header: Vec<String> = vec![key_column.to_string(), "name".to_string()];
+    header.extend(courses.iter().cloned());
+    w.write_record(&header)?;
+    for r in rows {
+        let mut record: Vec<String> = vec![r.key.clone(), r.name.clone()];
+        record.extend(std::iter::repeat(String::new()).take(courses.len()));
+        w.write_record(&record)?;
+    }
+    w.into_inner()
+        .map_err(|e| csv::Error::from(e.into_error()))
+}
+
 /// One cell of the sheet that was typed in.
 pub struct Cell {
     pub student_id: i64,

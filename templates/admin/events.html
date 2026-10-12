@@ -5,8 +5,8 @@
 <p class="mt-3 max-w-2xl text-ink/80">Events are listed by start time. Drafts stay hidden until you publish them.</p>
 
 <div class="mt-8 flex flex-wrap items-center gap-3">
-  <a href="/admin/events/new" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Add event</a>
-  <form method="get" action="/admin/events" class="flex items-end gap-3">
+  <a href="{{ shell.base }}/events/new" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Add event</a>
+  <form method="get" action="{{ shell.base }}/events" class="flex items-end gap-3">
     <div>
       <label for="status" class="block text-sm font-semibold">Show</label>
       <select id="status" name="status" class="mt-1 rounded border border-ink/40 bg-white px-3 py-2">
@@ -38,16 +38,16 @@
         <td class="py-3 pr-4 text-sm">{{ e.status_badge()|safe }}</td>
         <td class="py-3 text-right">
           <div class="flex flex-wrap items-center justify-end gap-3">
-            <a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="/admin/events/{{ e.id }}">Edit<span class="sr-only"> {{ e.title }}</span></a>
-            <form method="post" action="/admin/events/{{ e.id }}/status" class="inline">
+            <a class="font-semibold text-brand underline underline-offset-4 hover:text-ink" href="{{ shell.base }}/events/{{ e.id }}">Edit<span class="sr-only"> {{ e.title }}</span></a>
+            <form method="post" action="{{ shell.base }}/events/{{ e.id }}/status" class="inline">
               <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
-              <input type="hidden" name="back" value="/admin/events{% if filter != "" %}?status={{ filter }}{% endif %}">
+              <input type="hidden" name="back" value="{{ shell.base }}/events{% if filter != "" %}?status={{ filter }}{% endif %}">
               <input type="hidden" name="status" value="{% if e.status == "published" %}archived{% else %}published{% endif %}">
               <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">{% if e.status == "published" %}Archive{% else %}Publish{% endif %}<span class="sr-only"> {{ e.title }}</span></button>
             </form>
-            <form method="post" action="/admin/events/{{ e.id }}/delete" class="inline" data-confirm="Permanently delete &quot;{{ e.title }}&quot;? This cannot be undone.">
+            <form method="post" action="{{ shell.base }}/events/{{ e.id }}/delete" class="inline" data-confirm="Permanently delete &quot;{{ e.title }}&quot;? This cannot be undone.">
               <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
-              <input type="hidden" name="back" value="/admin/events{% if filter != "" %}?status={{ filter }}{% endif %}">
+              <input type="hidden" name="back" value="{{ shell.base }}/events{% if filter != "" %}?status={{ filter }}{% endif %}">
               <button type="submit" class="font-semibold text-brand underline underline-offset-4 hover:text-ink">Delete<span class="sr-only"> {{ e.title }} forever</span></button>
             </form>
           </div>

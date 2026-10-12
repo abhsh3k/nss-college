@@ -5,14 +5,20 @@
 //!
 //! * [`routes`] — the technical administration pages (people, publishing,
 //!   settings, appointments, root authority). They are absolute `/admin/...`
-//!   paths and are served on the loopback management listener only, and their
-//!   handlers take `AdminOnly`/`OfficeOrAdmin`/`SuperAdminOnly`.
+//!   paths, and their handlers take `AdminOnly`/`OfficeOrAdmin`/
+//!   `SuperAdminOnly`. They are served on both listeners for the IT
+//!   administrator, the Principal and office staff; the public mount is wrapped
+//!   by [`crate::auth::management_area_on_public`], which keeps root authority
+//!   loopback-only.
 //! * [`manager_routes`] — the department pages, whose handlers take `Manager`
 //!   (plus the per-user notification feed and the section index). They are
 //!   written with *relative* paths and mounted twice: at `/admin` (where the IT
 //!   administrator and the Principal work) and at `/hod`. The `/hod` mount is
 //!   what makes the head of department's tools work: an HOD is a teacher, they
-//!   sign in on the *public* listener, and `/admin` is not served there.
+//!   sign in on the *public* listener, and the `/admin` form is refused there.
+//! * [`content_routes`] — notices, news and events, also relative, mounted at
+//!   `/admin` for the IT administrator and at `/staff` (see [`staff_routes`])
+//!   for office staff.
 //!
 //! Mounting the same handlers under a second prefix grants nothing: the guards
 //! run per request and are identical, so a caller who is not a manager is
@@ -137,6 +143,9 @@ pub fn manager_routes() -> Router<AppState> {
         // Marks entry grid and the management of filed results.
         .route("/marks", get(marks::page))
         .route("/marks/save", post(marks::save))
+        // The course-wise blank form a head downloads for the semester (or one
+        // course of it) and fills in before uploading it again.
+        .route("/marks/template.csv", get(marks::template_csv))
         // Finalize a course's published marks, then correct them through a
         // reasoned, separately-approved correction.
         .route("/marks/finalize", post(marks::finalize))
@@ -151,6 +160,12 @@ pub fn manager_routes() -> Router<AppState> {
     let marks_import = Router::new()
         .route("/marks/import", post(marks::import_csv))
         .route("/marks/import/preview", post(marks::import_preview))
+        // One line per student, one column per course, expanded into the same
+        // staged batch as the one-row-per-result import.
+        .route(
+            "/marks/import/courses/preview",
+            post(marks::import_courses_preview),
+        )
         .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
 
     // Staged result import: paste or CSV upload stages a preview, then a
@@ -223,26 +238,6 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/academics/programmes/:id/courses", post(academics::add_course))
         .route("/admin/academics/courses/:id", get(academics::course_form).post(academics::course_update))
         .route("/admin/academics/courses/:id/delete", post(academics::course_delete));
-
-    // Notices, news and events take multipart bodies, so they need a body limit
-    // well above axum's 2 MB default.
-    let publishing = Router::new()
-        .route("/admin/notices", get(notices::index).post(notices::create))
-        .route("/admin/notices/new", get(notices::new_form).post(notices::create))
-        .route("/admin/notices/:id", get(notices::edit_form).post(notices::update))
-        .route("/admin/notices/:id/status", post(notices::set_status))
-        .route("/admin/notices/:id/delete", post(notices::destroy))
-        .route("/admin/news", get(news::index).post(news::create))
-        .route("/admin/news/new", get(news::new_form).post(news::create))
-        .route("/admin/news/:id", get(news::edit_form).post(news::update))
-        .route("/admin/news/:id/status", post(news::set_status))
-        .route("/admin/news/:id/delete", post(news::destroy))
-        .route("/admin/events", get(events::index).post(events::create))
-        .route("/admin/events/new", get(events::new_form).post(events::create))
-        .route("/admin/events/:id", get(events::edit_form).post(events::update))
-        .route("/admin/events/:id/status", post(events::set_status))
-        .route("/admin/events/:id/delete", post(events::destroy))
-        .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
 
     // Documents take an uploaded file, so they need the same body limit.
     let documents = Router::new()
@@ -341,15 +336,61 @@ pub fn routes() -> Router<AppState> {
         .merge(academics_admin)
         .merge(attendance_report)
         .merge(appointments)
-        .merge(publishing)
         .merge(documents)
         .merge(rank_holders)
         .merge(pages)
         .merge(settings)
-        // The department tools in their `/admin` form, for the two roles that
-        // work in this workspace. A head of department reaches the same set
-        // under `/hod` (see `manager_routes`).
-        .nest("/admin", manager_routes())
+        // The department tools and the content tools in their `/admin` form,
+        // for the roles that work in this workspace. A head of department
+        // reaches the department set under `/hod` (see `manager_routes`) and
+        // office staff reach the content set under `/staff` (see
+        // [`staff_routes`]).
+        .nest("/admin", manager_routes().merge(content_routes()))
+}
+
+/// The public-facing content tools: notices, news and events.
+///
+/// They are written with *relative* paths and mounted inside the caller's own
+/// workspace — `/admin` for the IT administrator, `/staff` for office staff —
+/// so every list, form action and redirect is built from
+/// [`sections::base_for`]. Both roles take `OfficeOrAdmin` on every handler, so
+/// office staff may create, edit, publish, archive and delete.
+pub fn content_routes() -> Router<AppState> {
+    Router::new()
+        .route("/notices", get(notices::index).post(notices::create))
+        .route("/notices/new", get(notices::new_form).post(notices::create))
+        .route("/notices/:id", get(notices::edit_form).post(notices::update))
+        .route("/notices/:id/status", post(notices::set_status))
+        .route("/notices/:id/delete", post(notices::destroy))
+        .route("/news", get(news::index).post(news::create))
+        .route("/news/new", get(news::new_form).post(news::create))
+        .route("/news/:id", get(news::edit_form).post(news::update))
+        .route("/news/:id/status", post(news::set_status))
+        .route("/news/:id/delete", post(news::destroy))
+        .route("/events", get(events::index).post(events::create))
+        .route("/events/new", get(events::new_form).post(events::create))
+        .route("/events/:id", get(events::edit_form).post(events::update))
+        .route("/events/:id/status", post(events::set_status))
+        .route("/events/:id/delete", post(events::destroy))
+        // These forms take multipart bodies, so they need a body limit well
+        // above axum's 2 MB default.
+        .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT))
+}
+
+/// The office-staff workspace, mounted at `/staff` on both listeners.
+///
+/// It is a dashboard plus the content tools and the per-user notification
+/// feed. Mounting it grants nothing: every handler keeps its own guard, so a
+/// caller who is not office staff (or the IT admin) is refused here exactly as
+/// they are at `/admin`.
+pub fn staff_routes() -> Router<AppState> {
+    Router::new()
+        .route("/", get(crate::routes::dashboards::staff))
+        .route("/manage/:key", get(manage::page))
+        .route("/notifications", get(notifications::page))
+        .route("/notifications/:id/read", post(notifications::mark_read))
+        .route("/notifications/read-all", post(notifications::mark_all))
+        .merge(content_routes())
 }
 
 // ---------- small form helpers shared by the admin handlers ----------
@@ -460,13 +501,22 @@ pub(super) struct TokenForm {
 /// management workspaces: `/admin` (the IT administrator) or `/hod` (a head of
 /// department, whose pages live on the public listener).
 pub(super) fn safe_back(value: &str, fallback: &str) -> String {
-    if (value.starts_with(sections::ADMIN_BASE) || value.starts_with(sections::HOD_BASE))
+    if (value.starts_with(sections::ADMIN_BASE)
+        || value.starts_with(sections::HOD_BASE)
+        || value.starts_with(sections::STAFF_BASE))
         && !value.starts_with("//")
     {
         value.to_string()
     } else {
         fallback.to_string()
     }
+}
+
+/// The list page of a content tool (`/notices`, `/news`, `/events`) in the
+/// caller's own workspace, so a redirect lands under `/staff` for office staff
+/// and `/admin` for the IT administrator.
+pub(super) fn content_list(user: &crate::auth::AuthUser, path: &str) -> String {
+    format!("{}{}", sections::base_for(user), path)
 }
 
 #[cfg(test)]

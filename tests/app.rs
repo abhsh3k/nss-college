@@ -216,6 +216,17 @@ fn extract_csrf(body: &str) -> String {
 }
 
 async fn get_with(app: axum::Router, uri: &str, cookie: &str) -> (StatusCode, String) {
+    let (status, _, body) = get_with_headers(app, uri, cookie).await;
+    (status, body)
+}
+
+/// The same GET, keeping the headers so a download's `Content-Disposition` and
+/// a redirect's `Location` can be read.
+async fn get_with_headers(
+    app: axum::Router,
+    uri: &str,
+    cookie: &str,
+) -> (StatusCode, axum::http::HeaderMap, String) {
     let response = app
         .oneshot(
             Request::builder()
@@ -227,8 +238,9 @@ async fn get_with(app: axum::Router, uri: &str, cookie: &str) -> (StatusCode, St
         .await
         .unwrap();
     let status = response.status();
+    let headers = response.headers().clone();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    (status, String::from_utf8_lossy(&bytes).to_string())
+    (status, headers, String::from_utf8_lossy(&bytes).to_string())
 }
 
 async fn post_form(
@@ -342,6 +354,21 @@ async fn student(pool: &PgPool, user_id: i64, admission_no: &str, programme_id: 
     .unwrap()
 }
 
+/// A course of a programme, in one semester, as the exam and marks pickers
+/// offer it. Returns the `courses.id`.
+async fn course_row(pool: &PgPool, programme_id: i64, code: &str, semester: i32) -> i64 {
+    sqlx::query_scalar(
+        "INSERT INTO courses (programme_id, code, title, semester, credits)
+         VALUES ($1, $2, $2, $3, 4) RETURNING id",
+    )
+    .bind(programme_id)
+    .bind(code)
+    .bind(semester)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
 /// A faculty row, returning its id (the value `timetable_entries.faculty_id`
 /// and `faculty.id` both use).
 async fn faculty_row(pool: &PgPool, user_id: i64, department_id: i64) -> i64 {
@@ -441,6 +468,249 @@ async fn the_it_admin_may_act_for_any_programme(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn a_course_wise_sheet_files_through_the_review_with_its_own_maximum(pool: PgPool) {
+    init_session_store(&pool).await;
+    let dept = department(&pool, "alpha").await;
+    let prog = programme(&pool, dept, "alpha-ug").await;
+    let bca101 = course_row(&pool, prog, "BCA101", 1).await;
+    let bca102 = course_row(&pool, prog, "BCA102", 1).await;
+    let s1 = make_user(&pool, "s1@example.com", "student", "Password123!").await;
+    let s2 = make_user(&pool, "s2@example.com", "student", "Password123!").await;
+    let st1 = student(&pool, s1, "2501", prog).await;
+    sqlx::query("UPDATE students SET prn = 'PRN2501' WHERE id = $1")
+        .bind(st1)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let _st2 = student(&pool, s2, "2502", prog).await;
+    let _admin = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+
+    let app = management_app(&pool);
+    let cookie = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+
+    // The blank form: the key, the name and every course of the semester, one
+    // line per student, with the mark cells empty.
+    let template = format!("/admin/marks/template.csv?programme={prog}&semester=1&kind=internal");
+    let (status, headers, body) = get_with_headers(app.clone(), &template, &cookie).await;
+    assert_eq!(status, StatusCode::OK);
+    let disposition = headers
+        .get("content-disposition")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        disposition.contains("attachment"),
+        "the form should download, got: {disposition:?}"
+    );
+    assert_eq!(
+        body.lines().next().unwrap_or("").trim_end(),
+        "admission_no,name,BCA101,BCA102"
+    );
+    assert!(
+        body.contains("2501,Student 2501,,"),
+        "the form should pre-fill the class with blank marks, got: {body}"
+    );
+    assert!(body.contains("2502,Student 2502,,"), "got: {body}");
+
+    // With a course open, the same download covers just that course.
+    let (status, _, body) =
+        get_with_headers(app.clone(), &format!("{template}&course={bca101}"), &cookie).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body.lines().next().unwrap_or("").trim_end(),
+        "admission_no,name,BCA101"
+    );
+
+    // Upload the filled-in sheet: it stages for review, it does not file.
+    let (_, page) = get_with(
+        app.clone(),
+        &format!(
+            "/admin/marks?programme={prog}&semester=1&course={bca101}&kind=internal&assessment=internal&exam_name=&max="
+        ),
+        &cookie,
+    )
+    .await;
+    let csrf = extract_csrf(&page);
+
+    // The marks window itself offers both upload shapes, and the blank form for
+    // the whole semester or — since a course is open — for that course alone.
+    assert!(
+        page.contains("/marks/import/preview"),
+        "the marks window should still offer the one-row shape"
+    );
+    assert!(
+        page.contains("/marks/import/courses/preview"),
+        "the marks window should offer the course-wise shape"
+    );
+    assert!(
+        page.contains(&format!(
+            "/marks/template.csv?programme={prog}&amp;semester=1&amp;kind=internal\""
+        )),
+        "the marks window should offer the blank form for the semester"
+    );
+    assert!(
+        page.contains(&format!(
+            "/marks/template.csv?programme={prog}&amp;semester=1&amp;kind=internal&amp;course={bca101}"
+        )),
+        "with a course open, the blank form should be offered for that course alone"
+    );
+
+    let programme = prog.to_string();
+    let sheet = "admission_no,name,BCA101,BCA102\n2501,Asha Rao,42,38\n2502,Bhavna,,36\n";
+    let (status, headers, _) = post_multipart_file(
+        app.clone(),
+        "/admin/marks/import/courses/preview",
+        &cookie,
+        &[
+            ("csrf_token", &csrf),
+            ("programme", &programme),
+            ("semester", "1"),
+            ("kind", "internal"),
+            ("assessment", "internal"),
+            ("exam_name", ""),
+            ("max", ""),
+        ],
+        "coursewise.csv",
+        sheet,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::SEE_OTHER,
+        "the upload should stage for review, not file"
+    );
+    let preview = headers
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        preview.contains("/admin/exams/results/preview?batch="),
+        "unexpected redirect: {preview}"
+    );
+    let batch: i64 = preview
+        .split("batch=")
+        .nth(1)
+        .unwrap_or("")
+        .parse()
+        .unwrap_or(0);
+    assert!(batch > 0, "no batch was staged: {preview}");
+
+    let (status, page) = get_with(app.clone(), &preview, &cookie).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        page.contains("Asha Rao"),
+        "the review should show the name the file carried"
+    );
+    for course in [bca101, bca102] {
+        assert!(
+            page.contains(&format!("name=\"max_{course}\"")),
+            "the review should offer a maximum for every course"
+        );
+    }
+
+    // Committing an import asks for the password again, like every other
+    // critical write.
+    let (status, page) = get_with(app.clone(), "/account/reauth", &cookie).await;
+    assert_eq!(status, StatusCode::OK, "the re-entry page should render");
+    let (_, _, _) = post_form_with_headers(
+        app.clone(),
+        "/account/reauth",
+        &cookie,
+        format!(
+            "csrf_token={}&password=Password123!&next=%2Fadmin%2Fmarks",
+            extract_csrf(&page)
+        ),
+    )
+    .await;
+
+    // Committing files the rows, each course out of the maximum reviewed.
+    let commit = format!("csrf_token={csrf}&batch={batch}&max_{bca101}=50&max_{bca102}=40");
+    let (status, _, _) = post_form_with_headers(app, "/admin/exams/results/commit", &cookie, commit).await;
+    assert!(status.is_redirection(), "committing redirects, got {status}");
+
+    let filed: Vec<(String, String, f64, f64)> = sqlx::query_as(
+        r#"SELECT st.admission_no, c.code, m.marks_obtained::float8, m.max_marks::float8
+             FROM marks m
+             JOIN students st ON st.id = m.student_id
+             JOIN courses  c  ON c.id  = m.course_id
+            WHERE m.semester = 1 AND m.exam_kind = 'internal'
+            ORDER BY st.admission_no, c.code"#,
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        filed,
+        vec![
+            ("2501".to_string(), "BCA101".to_string(), 42.0, 50.0),
+            ("2501".to_string(), "BCA102".to_string(), 38.0, 40.0),
+            ("2502".to_string(), "BCA102".to_string(), 36.0, 40.0),
+        ],
+        "a blank cell files nothing, and every row takes the reviewed maximum"
+    );
+}
+
+#[sqlx::test]
+async fn a_one_row_per_result_sheet_carries_its_name_and_maximum_into_the_review(pool: PgPool) {
+    init_session_store(&pool).await;
+    let dept = department(&pool, "alpha").await;
+    let prog = programme(&pool, dept, "alpha-ug").await;
+    let bca101 = course_row(&pool, prog, "BCA101", 1).await;
+    let s1 = make_user(&pool, "s1@example.com", "student", "Password123!").await;
+    student(&pool, s1, "2501", prog).await;
+    let _admin = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+
+    let app = management_app(&pool);
+    let cookie = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+    let (_, page) = get_with(
+        app.clone(),
+        &format!("/admin/marks?programme={prog}&semester=1&course={bca101}&kind=internal&assessment=internal&exam_name=&max="),
+        &cookie,
+    )
+    .await;
+    let csrf = extract_csrf(&page);
+    let programme = prog.to_string();
+
+    // The name column is a label beside the key; the row still files on the
+    // admission number. The file's own maximum travels into the review box.
+    let csv = "admission_no,name,course_code,marks_obtained,maxmarks\n2501,Asha Rao,BCA101,42,50\n";
+    let (status, headers, _) = post_multipart_file(
+        app.clone(),
+        "/admin/marks/import/preview",
+        &cookie,
+        &[
+            ("csrf_token", &csrf),
+            ("programme", &programme),
+            ("semester", "1"),
+            ("kind", "internal"),
+            ("assessment", "internal"),
+            ("exam_name", ""),
+        ],
+        "results.csv",
+        csv,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "the upload should stage for review");
+    let preview = headers
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    let (status, page) = get_with(app, &preview, &cookie).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("Asha Rao"), "the review should show the name label");
+    assert!(
+        page.contains(&format!("name=\"max_{bca101}\"")),
+        "the review should offer a maximum for the course"
+    );
+    assert!(
+        page.contains("value=\"50\""),
+        "the maximum box should start from the file's own value"
+    );
+}
+
+#[sqlx::test]
 async fn root_authority_belongs_to_the_super_admin_alone(pool: PgPool) {
     init_session_store(&pool).await;
     let it = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
@@ -510,6 +780,49 @@ async fn root_authority_belongs_to_the_super_admin_alone(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(role, "admin");
+}
+
+/// Post a `multipart/form-data` body carrying one uploaded file, the shape the
+/// import forms use. Returns the headers too, so a redirect can be followed.
+async fn post_multipart_file(
+    app: axum::Router,
+    uri: &str,
+    cookie: &str,
+    fields: &[(&str, &str)],
+    filename: &str,
+    contents: &str,
+) -> (StatusCode, axum::http::HeaderMap, String) {
+    const BOUNDARY: &str = "----nssTestBoundary";
+    let mut body = String::new();
+    for (name, value) in fields {
+        body.push_str(&format!(
+            "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+        ));
+    }
+    body.push_str(&format!(
+        "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"csv_file\"; filename=\"{filename}\"\r\nContent-Type: text/csv\r\n\r\n{contents}\r\n"
+    ));
+    body.push_str(&format!("--{BOUNDARY}--\r\n"));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={BOUNDARY}"),
+                )
+                .header("cookie", cookie)
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, headers, String::from_utf8_lossy(&bytes).to_string())
 }
 
 /// Post a `multipart/form-data` body, the shape the content forms use.
@@ -949,11 +1262,13 @@ async fn a_teacher_cannot_mark_attendance_for_another_teachers_class(pool: PgPoo
     );
 }
 
+/// Office staff manage the CMS from their own `/staff` workspace: create,
+/// edit, publish, archive and delete. A student may do none of it.
 #[sqlx::test]
-async fn only_the_it_admin_publishes_or_deletes_cms_content(pool: PgPool) {
+async fn office_staff_publish_and_delete_cms_content_from_the_staff_workspace(pool: PgPool) {
     init_session_store(&pool).await;
     let _staff = make_user(&pool, "staff@example.com", "staff", "Password123!").await;
-    let _admin = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+    let _student = make_user(&pool, "student@example.com", "student", "Password123!").await;
     let notice: i64 = sqlx::query_scalar(
         "INSERT INTO notices (title, category, body, audience, status)
          VALUES ('Authz notice', 'Notice', 'Body', 'public', 'draft') RETURNING id",
@@ -963,34 +1278,70 @@ async fn only_the_it_admin_publishes_or_deletes_cms_content(pool: PgPool) {
     .unwrap();
 
     let app = management_app(&pool);
-    // Office staff may author, but publishing and deleting are the IT admin's.
+
+    // Office staff reach their list at `/staff/notices` and may publish.
     let staff = sign_in(app.clone(), "staff@example.com", "Password123!").await;
-    let (_, body) = get_with(app.clone(), "/admin/notices", &staff).await;
+    let (status, body) = get_with(app.clone(), "/staff/notices", &staff).await;
+    assert_eq!(status, StatusCode::OK, "office staff must reach their notices list");
     let csrf = extract_csrf(&body);
     let (status, _) = post_form(
         app.clone(),
-        &format!("/admin/notices/{notice}/status"),
+        &format!("/staff/notices/{notice}/status"),
         &staff,
-        format!("csrf_token={csrf}&status=published&back=/admin/notices"),
+        format!("csrf_token={csrf}&status=published&back=/staff/notices"),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "staff must not publish");
-    let (status, _) = post_form(
-        app.clone(),
-        &format!("/admin/notices/{notice}/delete"),
-        &staff,
-        format!("csrf_token={csrf}&back=/admin/notices"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "staff must not delete");
-    let untouched: String = sqlx::query_scalar("SELECT status FROM notices WHERE id = $1")
+    assert!(status.is_redirection(), "a staff publish should redirect, got {status}");
+    let published: String = sqlx::query_scalar("SELECT status FROM notices WHERE id = $1")
         .bind(notice)
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(untouched, "draft", "the failed publish must not have changed the row");
+    assert_eq!(published, "published", "the staff publish must have changed the row");
 
-    // The IT admin's publish is real.
+    // ...and may delete.
+    let (_, body) = get_with(app.clone(), "/staff/notices", &staff).await;
+    let csrf = extract_csrf(&body);
+    let (status, _) = post_form(
+        app.clone(),
+        &format!("/staff/notices/{notice}/delete"),
+        &staff,
+        format!("csrf_token={csrf}&back=/staff/notices"),
+    )
+    .await;
+    assert!(status.is_redirection(), "a staff delete should redirect, got {status}");
+    let remaining: i64 = sqlx::query_scalar("SELECT count(*) FROM notices WHERE id = $1")
+        .bind(notice)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(remaining, 0, "the staff delete must have removed the row");
+
+    // A student is refused before the CSRF token is even read.
+    let student = sign_in(app.clone(), "student@example.com", "Password123!").await;
+    let (status, _) = post_form(
+        app,
+        "/staff/notices/1/status",
+        &student,
+        "csrf_token=x&status=published&back=/staff/notices".to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "a student must not publish content");
+}
+
+#[sqlx::test]
+async fn the_it_admin_still_publishes_cms_content_from_admin(pool: PgPool) {
+    init_session_store(&pool).await;
+    let _admin = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+    let notice: i64 = sqlx::query_scalar(
+        "INSERT INTO notices (title, category, body, audience, status)
+         VALUES ('Admin notice', 'Notice', 'Body', 'public', 'draft') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let app = management_app(&pool);
     let admin = sign_in(app.clone(), "admin@example.com", "Password123!").await;
     let (_, body) = get_with(app.clone(), "/admin/notices", &admin).await;
     let csrf = extract_csrf(&body);
@@ -1010,9 +1361,11 @@ async fn only_the_it_admin_publishes_or_deletes_cms_content(pool: PgPool) {
     assert_eq!(published, "published");
 }
 
-/// An HOD is a teacher: they sign in on the public listener, where the `/admin`
-/// management area is deliberately not served. Their department pages are
-/// therefore mounted at `/hod` — the same handlers, with the same guards.
+/// An HOD is a teacher: they sign in on the public listener, where the
+/// department pages are mounted at `/hod` — the same handlers, with the same
+/// guards. The `/admin` form of the management area is served on this listener
+/// for the IT administrator, the Principal and office staff, but not for a
+/// `faculty` account: a head of department always works under `/hod`.
 #[sqlx::test]
 async fn an_hod_works_from_the_public_listener_under_hod(pool: PgPool) {
     init_session_store(&pool).await;
@@ -1071,13 +1424,13 @@ async fn an_hod_works_from_the_public_listener_under_hod(pool: PgPool) {
     assert!(body.contains("href=\"/hod/marks\""));
     assert!(!body.contains("href=\"/admin"));
 
-    // The reason the second mount exists at all: `/admin` is not on this
-    // listener, so every one of those links used to be a 404.
+    // The reason the second mount exists at all: a teacher works under `/hod`,
+    // so the `/admin` form of the same page is refused on this listener.
     let (status, _) = get_with(app, "/admin/marks", &cookie).await;
     assert_eq!(
         status,
-        StatusCode::NOT_FOUND,
-        "the management area is served on the loopback listener only"
+        StatusCode::FORBIDDEN,
+        "a head of department must use /hod on the public listener"
     );
 }
 
@@ -1187,3 +1540,87 @@ async fn the_management_router_builds_and_serves_the_login_page(pool: PgPool) {
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("csrf_token"));
 }
+
+/// The appointments screen renders even when the starter faculty list contains
+/// rows with no account: such a row cannot be appointed and must be skipped,
+/// never decoded as an error (a NULL `user_id` used to make the page a 500).
+#[sqlx::test]
+async fn the_appointments_screen_skips_faculty_without_an_account(pool: PgPool) {
+    init_session_store(&pool).await;
+    let dept = department(&pool, "alpha").await;
+    let _admin = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+    sqlx::query(
+        "INSERT INTO faculty (user_id, department_id, name, is_hod, status)
+         VALUES (NULL, $1, 'Starter Teacher', false, 'published')",
+    )
+    .bind(dept)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let app = management_app(&pool);
+    let cookie = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+    let (status, body) = get_with(app, "/admin/appointments", &cookie).await;
+    assert_eq!(status, StatusCode::OK, "the appointments screen must render");
+    assert!(
+        body.contains("Request a head appointment"),
+        "the appointments form is missing"
+    );
+    // The account-less row is not offered as an appointee.
+    assert!(
+        !body.contains("Starter Teacher"),
+        "a faculty row with no account must not be listed"
+    );
+}
+
+/// On the public listener the IT administrator reaches the management area; root
+/// authority does not, because it is loopback-only.
+#[sqlx::test]
+async fn an_it_admin_works_on_the_public_listener_but_root_authority_does_not(pool: PgPool) {
+    init_session_store(&pool).await;
+    let _admin = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+    let _root = make_user(&pool, "root@example.com", "super_admin", "Password123!").await;
+
+    let app = public_app(&pool, false);
+    let admin = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+    let (status, _) = get_with(app.clone(), "/admin", &admin).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the IT admin must reach /admin on the public listener"
+    );
+    let (status, _) = get_with(app.clone(), "/admin/people", &admin).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the IT admin's tools are served on the public listener"
+    );
+
+    let root = sign_in(app.clone(), "root@example.com", "Password123!").await;
+    let (status, _) = get_with(app.clone(), "/admin", &root).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "root authority is loopback-only");
+    let (status, _) = get_with(app, "/admin/roles", &root).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "root authority is loopback-only");
+}
+
+/// Office staff work from `/staff` on the public listener, where they manage
+/// content; `/admin` is not their workspace.
+#[sqlx::test]
+async fn office_staff_work_from_the_staff_workspace_on_the_public_listener(pool: PgPool) {
+    init_session_store(&pool).await;
+    let _staff = make_user(&pool, "staff@example.com", "staff", "Password123!").await;
+
+    let app = public_app(&pool, false);
+    let cookie = sign_in(app.clone(), "staff@example.com", "Password123!").await;
+    for page in [
+        "/staff",
+        "/staff/manage/website",
+        "/staff/notices",
+        "/staff/news",
+        "/staff/events",
+    ] {
+        let (status, _) = get_with(app.clone(), page, &cookie).await;
+        assert_eq!(status, StatusCode::OK, "{page} did not load for office staff");
+    }
+}
+

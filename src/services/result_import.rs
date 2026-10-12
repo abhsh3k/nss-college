@@ -8,11 +8,26 @@
 //! a finalized result is surfaced as a conflict and blocks the commit rather
 //! than erroring halfway through.
 
+use std::collections::HashMap;
+
 use sqlx::{FromRow, PgPool};
 
-use super::exams::{self, PushKind, PushRow};
+use super::exams::{self, PushKind, PushProblem, PushRow};
 
 type Res<T> = Result<T, sqlx::Error>;
+
+/// The maximum a staged row falls back to when its own file carried none and
+/// the head has not set one on the review page.
+pub const DEFAULT_MAX: f64 = 100.0;
+
+/// A mark as a person writes it: whole numbers without a decimal point.
+fn label(v: f64) -> String {
+    if v.fract() == 0.0 {
+        format!("{}", v as i64)
+    } else {
+        format!("{v:.2}")
+    }
+}
 
 /// The `exam_kind` stored on a batch row from the push kind and assessment.
 fn exam_kind_of(kind: PushKind, assessment: &str) -> &'static str {
@@ -60,6 +75,9 @@ pub async fn batch(db: &PgPool, id: i64) -> Res<Option<BatchRow>> {
 pub struct PreviewRow {
     pub line_no: i32,
     pub identity_key: String,
+    /// The name the file carried beside the key — a label for the reviewer,
+    /// never an identity (`identity_key` is what the row is matched on).
+    pub student_name: String,
     pub course_code: String,
     pub marks_label: String,
     pub state: String,
@@ -68,13 +86,53 @@ pub struct PreviewRow {
 
 pub async fn rows(db: &PgPool, batch_id: i64) -> Res<Vec<PreviewRow>> {
     sqlx::query_as::<_, PreviewRow>(
-        r#"SELECT line_no, identity_key, course_code,
+        r#"SELECT line_no, identity_key, student_name, course_code,
                   CASE WHEN obtained IS NULL OR maximum IS NULL THEN ''
                        ELSE obtained::text || ' / ' || maximum::text END AS marks_label,
                   state, error_message
              FROM result_import_rows
             WHERE batch_id = $1
             ORDER BY line_no, id"#,
+    )
+    .bind(batch_id)
+    .fetch_all(db)
+    .await
+}
+
+/// One course a staged batch would file under, with the maximum its rows
+/// carry. The review page shows one maximum box per course: a course-wise
+/// sheet carries no maximum of its own, so `max` is `None` there and the box
+/// starts at [`DEFAULT_MAX`].
+#[derive(Debug, FromRow)]
+pub struct PreviewCourse {
+    pub course_id: i64,
+    pub course_code: String,
+    pub course_title: String,
+    pub max: Option<f64>,
+    pub valid_rows: i64,
+}
+
+impl PreviewCourse {
+    /// What the maximum box shows before the head edits it.
+    pub fn max_label(&self) -> String {
+        label(self.max.unwrap_or(DEFAULT_MAX))
+    }
+}
+
+/// The distinct courses a staged batch touches, so the review can set one
+/// maximum per course before the commit files them.
+pub async fn courses(db: &PgPool, batch_id: i64) -> Res<Vec<PreviewCourse>> {
+    sqlx::query_as::<_, PreviewCourse>(
+        r#"SELECT r.course_id,
+                  r.course_code,
+                  COALESCE(c.title, '')                       AS course_title,
+                  max(r.maximum)::float8                      AS max,
+                  count(*) FILTER (WHERE r.state = 'valid')   AS valid_rows
+             FROM result_import_rows r
+             LEFT JOIN courses c ON c.id = r.course_id
+            WHERE r.batch_id = $1 AND r.course_id IS NOT NULL
+            GROUP BY r.course_id, r.course_code, c.title
+            ORDER BY r.course_code"#,
     )
     .bind(batch_id)
     .fetch_all(db)
@@ -156,6 +214,7 @@ pub async fn stage(
     exam_name: &str,
     source_name: &str,
     text: &str,
+    extra_problems: &[PushProblem],
 ) -> Res<i64> {
     let kind = if exam_kind == "internal" { PushKind::Internal } else { PushKind::University };
     let guided = !assessment.is_empty();
@@ -195,13 +254,14 @@ pub async fn stage(
         };
         sqlx::query(
             r#"INSERT INTO result_import_rows
-                   (batch_id, line_no, identity_key, course_code, course_id, student_id,
-                    obtained, maximum, state, error_message)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"#,
+                   (batch_id, line_no, identity_key, student_name, course_code,
+                    course_id, student_id, obtained, maximum, state, error_message)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#,
         )
         .bind(batch_id)
         .bind(if row.line > 0 { row.line as i32 } else { 0 })
         .bind(&row.key)
+        .bind(&row.name)
         .bind(&row.course)
         .bind(cand.course_id)
         .bind(cand.student_id)
@@ -213,7 +273,11 @@ pub async fn stage(
         .await?;
     }
 
-    for p in parse_problems.iter().chain(validate_problems.iter()) {
+    for p in parse_problems
+        .iter()
+        .chain(validate_problems.iter())
+        .chain(extra_problems.iter())
+    {
         sqlx::query(
             r#"INSERT INTO result_import_rows
                    (batch_id, line_no, identity_key, course_code, state, error_message)
@@ -243,6 +307,7 @@ pub async fn commit(
     db: &PgPool,
     batch_id: i64,
     department: Option<i64>,
+    max_by_course: &HashMap<i64, f64>,
 ) -> Res<Committed> {
     let batch = batch(db, batch_id).await?.ok_or(sqlx::Error::RowNotFound)?;
     if batch.state != "preview" {
@@ -258,7 +323,25 @@ pub async fn commit(
     let guided = !batch.assessment.is_empty();
 
     let (parsed, _) = exams::parse_push(&batch.payload, kind);
-    let (good, _) = exams::validate_push(db, department, kind, &parsed).await?;
+    let (mut good, _) = exams::validate_push(db, department, kind, &parsed).await?;
+
+    // The review page sets each course's maximum, which replaces whatever the
+    // file carried. A maximum that cannot hold the marks it would file stops
+    // the commit rather than writing a mark above its own total.
+    for (row, cand) in good.iter_mut() {
+        if let Some(m) = max_by_course.get(&cand.course_id) {
+            row.max = *m;
+        }
+    }
+    for (row, _) in &good {
+        if row.max <= 0.0 || row.obtained < 0.0 || row.obtained > row.max {
+            return Err(sqlx::Error::Protocol(format!(
+                "the maximum set for {} cannot hold a mark of {}",
+                row.course,
+                label(row.obtained)
+            )));
+        }
+    }
 
     // Any conflict blocks the whole commit, so a routine import can never
     // silently overwrite a finalized result.

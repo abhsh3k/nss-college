@@ -6,7 +6,7 @@
 
 {% include "partials/form_errors.html" %}
 
-<form method="post" enctype="multipart/form-data" action="{% if form.id == 0 %}/admin/notices{% else %}/admin/notices/{{ form.id }}{% endif %}" class="mt-8 max-w-2xl space-y-5">
+<form method="post" enctype="multipart/form-data" action="{% if form.id == 0 %}{{ shell.base }}/notices{% else %}{{ shell.base }}/notices/{{ form.id }}{% endif %}" class="mt-8 max-w-2xl space-y-5">
   <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
 
   <div>
@@ -68,7 +68,7 @@
 
   <div class="flex flex-wrap gap-3 pt-2">
     <button type="submit" class="rounded bg-brand px-5 py-2 font-semibold text-chalk hover:bg-ink">Save notice</button>
-    <a href="/admin/notices" class="rounded border border-ink/40 px-5 py-2 font-semibold hover:bg-mist">Cancel</a>
+    <a href="{{ shell.base }}/notices" class="rounded border border-ink/40 px-5 py-2 font-semibold hover:bg-mist">Cancel</a>
   </div>
 </form>
 {% endblock %}

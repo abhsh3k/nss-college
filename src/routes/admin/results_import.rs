@@ -4,6 +4,8 @@
 //! (per-line problems, duplicates, conflicts with finalized results), and only
 //! a second, explicit confirmation files them.
 
+use std::collections::HashMap;
+
 use askama::Template;
 use axum::{
     extract::{Multipart, Query, State},
@@ -20,12 +22,24 @@ use crate::{
     error::{internal, AppError},
     services::{
         exams::PushKind,
-        result_import::{self, PreviewRow},
+        result_import::{self, PreviewCourse, PreviewRow},
         users,
     },
     shell::{self, Shell},
     state::AppState,
 };
+
+/// A mark can never exceed `NUMERIC(6,2)`'s ceiling.
+const MAX_IMPORT_MARK: f64 = 9999.99;
+
+/// One `name=value` pair from a urlencoded body.
+fn field<'a>(pairs: &'a [(String, String)], key: &str) -> &'a str {
+    pairs
+        .iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("")
+}
 
 /// A path in the workspace this manager is working in: `/admin` for the IT
 /// administrator, `/hod` for a head of department, who signs in on the public
@@ -67,6 +81,9 @@ pub struct PreviewTemplate {
     duplicate: usize,
     conflict: usize,
     rows: Vec<PreviewRow>,
+    /// One maximum box per course, so the head can set what each course is out
+    /// of before the rows are filed.
+    courses: Vec<PreviewCourse>,
 }
 
 fn semester_of(raw: &str) -> i32 {
@@ -103,6 +120,7 @@ pub async fn preview_paste(
         "",
         "pasted rows",
         &f.rows,
+        &[],
     )
     .await?;
     Ok(Redirect::to(&format!("{}/exams/results/preview?batch={id}", ws(&manager, ""))).into_response())
@@ -145,6 +163,7 @@ pub async fn upload(
         "",
         &source,
         &text,
+        &[],
     )
     .await?;
     Ok(Redirect::to(&format!("{}/exams/results/preview?batch={id}", ws(&manager, ""))).into_response())
@@ -161,6 +180,7 @@ pub async fn preview_page(
     };
     let batch = result_import::batch(&s.db, id).await?.ok_or(AppError::NotFound)?;
     let rows = result_import::rows(&s.db, id).await?;
+    let courses = result_import::courses(&s.db, id).await?;
     let (valid, error, duplicate, conflict) = result_import::counts(&rows);
     Ok(PreviewTemplate {
         shell: Shell::build(&manager.user, &session, &s.db).await?,
@@ -173,33 +193,65 @@ pub async fn preview_page(
         duplicate,
         conflict,
         rows,
+        courses,
     })
 }
 
-/// File the staged rows. Refuses when any row would overwrite a finalized
-/// result; the message says so and nothing is written.
+/// File the staged rows, each course out of the maximum the review set.
+/// Refuses when any row would overwrite a finalized result; the message says so
+/// and nothing is written.
 pub async fn commit(
     State(s): State<AppState>,
     session: Session,
     manager: Manager,
-    Form(f): Form<BatchForm>,
+    Form(pairs): Form<Vec<(String, String)>>,
 ) -> Result<Response, AppError> {
-    csrf::verify(&session, &f.csrf_token).await?;
+    csrf::verify(&session, field(&pairs, "csrf_token")).await?;
     if let Err(redirect) = require_reauth(&session, &ws(&manager, "/marks")).await {
         shell::flash(&session, "Re-enter your password to commit an import.").await?;
         return Ok(redirect.into_response());
     }
-    let Some(id) = parse_i64(&f.batch) else {
+    let Some(id) = parse_i64(field(&pairs, "batch")) else {
         return Err(AppError::NotFound);
     };
     let batch = result_import::batch(&s.db, id).await?.ok_or(AppError::NotFound)?;
+    let review = format!("{}/exams/results/preview?batch={id}", ws(&manager, ""));
+
+    // One `max_<course_id>` box per course. A box left blank keeps whatever the
+    // file carried; anything else must be a usable maximum.
+    let mut max_by_course: HashMap<i64, f64> = HashMap::new();
+    for (key, raw) in &pairs {
+        let Some(course) = key.strip_prefix("max_").and_then(parse_i64) else {
+            continue;
+        };
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        match raw.parse::<f64>() {
+            Ok(m) if m > 0.0 && m <= MAX_IMPORT_MARK => {
+                max_by_course.insert(course, m);
+            }
+            _ => {
+                shell::flash(
+                    &session,
+                    format!(
+                        "Each course's maximum must be a number above 0 and at most {MAX_IMPORT_MARK}."
+                    ),
+                )
+                .await?;
+                return Ok(Redirect::to(&review).into_response());
+            }
+        }
+    }
+
     let back = format!(
         "{}/exams?programme={}&semester={}",
         ws(&manager, ""),
         batch.programme_id.unwrap_or(0),
         batch.semester
     );
-    match result_import::commit(&s.db, id, manager.department()).await {
+    match result_import::commit(&s.db, id, manager.department(), &max_by_course).await {
         Ok(done) => {
             users::audit(&s.db, Some(manager.user.id), "results_import_committed", "import_batch", Some(id)).await?;
             shell::flash(&session, format!("Filed {} result row(s).", done.filed)).await?;
@@ -207,7 +259,7 @@ pub async fn commit(
         }
         Err(sqlx::Error::Protocol(msg)) => {
             shell::flash(&session, msg).await?;
-            Ok(Redirect::to(&format!("{}/exams/results/preview?batch={id}", ws(&manager, ""))).into_response())
+            Ok(Redirect::to(&review).into_response())
         }
         Err(e) => Err(internal(e)),
     }

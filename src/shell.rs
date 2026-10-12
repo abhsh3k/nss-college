@@ -467,6 +467,30 @@ mod tests {
         );
     }
 
+    /// Office staff read every content link under `/staff`, their own workspace.
+    #[test]
+    fn the_staff_sidebar_renders_in_the_staff_workspace() {
+        let nav = nav_for(&user(Role::Staff, false));
+        let urls: Vec<String> = nav
+            .iter()
+            .flat_map(|g| g.items.iter())
+            .map(|i| i.url(crate::sections::STAFF_BASE))
+            .collect();
+        for moved in [
+            "/staff",
+            "/staff/notifications",
+            "/staff/notices",
+            "/staff/news",
+            "/staff/events",
+        ] {
+            assert!(urls.iter().any(|u| u == moved), "the staff sidebar lost {moved}");
+        }
+        assert!(
+            !urls.iter().any(|u| u.starts_with("/admin")),
+            "office staff must not see /admin links"
+        );
+    }
+
     #[test]
     fn the_hod_nav_keeps_its_department_tools_and_gains_nothing_college_wide() {
         let links = hrefs(&nav_for(&user(Role::Faculty, true)));

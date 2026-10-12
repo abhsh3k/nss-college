@@ -10,7 +10,7 @@ use tower_sessions::Session;
 
 use super::{normalise_datetime, statuses, TokenForm};
 use crate::{
-    auth::{csrf, AdminOnly, AuthUser, OfficeOrAdmin},
+    auth::{csrf, AuthUser, OfficeOrAdmin},
     error::AppError,
     services::{
         content_admin::{self, NewsInput, NewsRow},
@@ -22,7 +22,6 @@ use crate::{
 };
 
 const FOLDER: &str = "news";
-const LIST: &str = "/admin/news";
 
 // ---------- List page ----------
 
@@ -45,7 +44,7 @@ pub struct IndexPage {
 pub async fn index(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    OfficeOrAdmin(user): OfficeOrAdmin,
     Query(q): Query<ListQuery>,
 ) -> Result<IndexPage, AppError> {
     let filter = match q.status.as_deref() {
@@ -123,7 +122,7 @@ fn form_page(form: NewsFormValues, shell: Shell) -> FormPage {
 pub async fn new_form(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    OfficeOrAdmin(user): OfficeOrAdmin,
 ) -> Result<FormPage, AppError> {
     Ok(form_page(NewsFormValues::blank(), Shell::build(&user, &session, &s.db).await?))
 }
@@ -246,7 +245,7 @@ pub async fn create(
     let id = content_admin::create_news(&s.db, &values.to_input(), Some(user.id)).await?;
     users::audit(&s.db, Some(user.id), "news_created", "news", Some(id)).await?;
     flash(&session, "News item saved.").await?;
-    Ok(Redirect::to(LIST).into_response())
+    Ok(Redirect::to(&super::content_list(&user, "/news")).into_response())
 }
 
 pub async fn update(
@@ -286,7 +285,7 @@ pub async fn update(
     }
     users::audit(&s.db, Some(user.id), "news_updated", "news", Some(id)).await?;
     flash(&session, "News item updated.").await?;
-    Ok(Redirect::to(LIST).into_response())
+    Ok(Redirect::to(&super::content_list(&user, "/news")).into_response())
 }
 
 // ---------- Archive, restore and permanent delete ----------
@@ -294,12 +293,12 @@ pub async fn update(
 pub async fn set_status(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    OfficeOrAdmin(user): OfficeOrAdmin,
     Path(id): Path<i64>,
     Form(f): Form<TokenForm>,
 ) -> Result<Redirect, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
-    let back = super::safe_back(&f.back, LIST);
+    let back = super::safe_back(&f.back, &super::content_list(&user, "/news"));
 
     if content_admin::news_for_edit(&s.db, id).await?.is_none() {
         return Err(AppError::NotFound);
@@ -335,12 +334,12 @@ pub async fn set_status(
 pub async fn destroy(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    OfficeOrAdmin(user): OfficeOrAdmin,
     Path(id): Path<i64>,
     Form(f): Form<TokenForm>,
 ) -> Result<Redirect, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
-    let back = super::safe_back(&f.back, LIST);
+    let back = super::safe_back(&f.back, &super::content_list(&user, "/news"));
 
     if content_admin::news_for_edit(&s.db, id).await?.is_none() {
         return Err(AppError::NotFound);

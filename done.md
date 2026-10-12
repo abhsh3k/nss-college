@@ -10,7 +10,7 @@ Test commands referenced throughout:
 
     docker compose up -d
     DATABASE_URL=postgres://nss:nss@localhost:5432/nss_college cargo test
-    # 74 unit + 40 database + 25 end-to-end + 1 Node hook test, currently all passing
+    # 83 unit + 40 database + 31 end-to-end + 1 Node hook test, currently all passing
     # (the Node test shells out to `node --test tests/js/app_hooks.test.mjs`; it skips
     #  with a note if Node is not installed)
 
@@ -41,7 +41,7 @@ Test commands referenced throughout:
 | §7 Timetable/course relationship validation | Done (a period is taught or explicitly `teacher_tbd`, migration `0032`) / Partial (no broader validation) |
 | §7 Internal vs university results kept separately | Done |
 | §7 1–3 internal assessments without a schema change | Done |
-| §7 CSV/Excel import with preview, validation, confirmation | Done (CSV and Excel) |
+| §7 CSV/Excel import with preview, validation, confirmation | Done (CSV and Excel, one row per result and a course-wise sheet) |
 | §7 Correction of finalized results | Done |
 | §7 Versioned migrations, history preserved | Done |
 | §8 Role-specific workspaces, HTMX, responsive UI | Done / Partial (shared status badge, empty state and form error; per-row fragments cannot be partials under Askama 0.12) |
@@ -125,7 +125,18 @@ Test commands referenced throughout:
   exists.
 - **Staged result import.** Upload (or the guided marks sheet) becomes a preview batch with row-level
   outcomes; the raw text is kept in `payload` so the commit re-validates exactly what was previewed, and
-  students are never matched by name alone.
+  students are never matched by name alone. Two shapes of upload are accepted from the marks sheet and
+  both stage into the same review: **one row per result**, and a **course-wise sheet** — one line per
+  student against a course per column, expanded by `exams::expand_course_sheet` into the same rows. Either
+  may carry a `name` column beside the key: it is a label for the reviewer and is never matched against the
+  database, and the commit's identity is the PRN/admission number. The review page sets **one maximum per
+  course** (`result_import::courses`), which the commit applies to every row of that course, and the
+  course-wise blank form itself is downloadable (`/admin/marks/template.csv` — every course of the
+  semester, or one) pre-filled with the class list. Evidence: unit tests
+  `a_name_column_is_read_as_a_label_and_never_as_an_identity`,
+  `a_course_wise_sheet_expands_into_one_row_per_filled_cell`; e2e
+  `a_course_wise_sheet_files_through_the_review_with_its_own_maximum`,
+  `a_one_row_per_result_sheet_carries_its_name_and_maximum_into_the_review`.
 - **Internal vs university results** are separate rows keyed by kind (`exam_kind`) and name
   (`exam_name`), with the semester stored on the row rather than read from the student's current semester,
   so advancing a student never deletes or moves past results. Several internal exams per course need no
@@ -156,8 +167,10 @@ Test commands referenced throughout:
 
 ### 2.4 CMS and content (§6 P1.1, P1.3)
 
-- Publishing authority is with the IT admin: `set_status` (publish/unpublish/archive) and `destroy` are
-  `AdminOnly`; office staff can author and edit but not publish or delete.
+- Content is authored in the workspace the author signs in to: notices, news and events are mounted at
+  `/admin` for the IT administrator and at `/staff` for office staff, and both share the same
+  `OfficeOrAdmin` handlers, so office staff may create, edit, publish, archive and delete. Root authority
+  (roles, recovery, reopening a finalized record) stays loopback-only.
 - Uploads are transactional: a file is written only once the metadata is known good, and a rejected write
   never leaves bytes behind. Staged import batches and their payloads are purged on a schedule.
 - Audience-specific content (`public`/`students`/`faculty`) is enforced at read and at the download
@@ -190,7 +203,7 @@ Test commands referenced throughout:
 - `main.rs` is only process setup and the listeners; the application is `src/lib.rs`, which is what the
   tests build against. `apply_layers`, `connect`, `migrator` and `init_session_store` are library
   functions.
-- **Suite**: 70 unit, 40 database (`#[sqlx::test]`, a freshly migrated database per test), 22 end-to-end
+- **Suite**: 83 unit, 40 database (`#[sqlx::test]`, a freshly migrated database per test), 31 end-to-end
   (`tower::oneshot` through the real layered router), and one Node hook test (`tests/js/app_hooks.test.mjs`,
   run by `tests/js_hooks.rs`). Currently all passing; the only build warning is the pre-existing
   `sqlx-postgres v0.7.4` future-incompatibility notice.

@@ -18,16 +18,17 @@
 //! Settings. That difference is a UX mirror of the guards in `src/auth`, not a
 //! replacement for them.
 //!
-//! # Two workspaces, one catalogue
+//! # Three workspaces, one catalogue
 //!
-//! The department tools are served in two places. The IT administrator (and the
-//! Principal) work in the management workspace on the loopback listener, under
-//! `/admin`. A head of department is a *teacher*: they sign in on the public
-//! listener, where `/admin` does not exist, so the same pages are also mounted
-//! under [`HOD_BASE`] (`/hod`) on both listeners. Every `href` below is written
-//! once, in its `/admin` form, and rendered through [`Link::url`] /
+//! The management tools are served in more than one place. The IT administrator
+//! (and the Principal) work under `/admin`. A head of department is a *teacher*
+//! and office staff publish content: both sign in on the public listener, so the
+//! department pages are also mounted under [`HOD_BASE`] (`/hod`) and the CMS
+//! tools under [`STAFF_BASE`] (`/staff`), on both listeners. Every `href` below
+//! is written once, in its `/admin` form, and rendered through [`Link::url`] /
 //! [`crate::shell::NavItem::url`], which swap that prefix for the caller's
-//! workspace — so an HOD never sees an `/admin` URL that would 404 for them.
+//! workspace — so an HOD or a staff member never sees an `/admin` URL that is
+//! not their workspace.
 
 use crate::auth::{AuthUser, Role};
 
@@ -39,14 +40,20 @@ pub const ADMIN_BASE: &str = "/admin";
 /// served on the public listener where teachers sign in.
 pub const HOD_BASE: &str = "/hod";
 
-/// The workspace a signed-in user's department pages belong to.
+/// The office-staff workspace: the content tools, served on both listeners so
+/// office staff can work from the public one.
+pub const STAFF_BASE: &str = "/staff";
+
+/// The workspace a signed-in user's pages belong to.
 ///
 /// A teacher — the only role that holds an HOD appointment or a delegation —
-/// reads their department tools under `/hod`; everyone else works under
-/// `/admin`. Roles that never see these pages at all resolve to `/admin`.
+/// reads their department tools under `/hod`; office staff read the content
+/// tools under `/staff`; everyone else works under `/admin`. Roles that never
+/// see these pages at all resolve to `/admin`.
 pub fn base_for(user: &AuthUser) -> &'static str {
     match user.role {
         Role::Faculty => HOD_BASE,
+        Role::Staff => STAFF_BASE,
         _ => ADMIN_BASE,
     }
 }
@@ -552,6 +559,43 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Office staff read the content links under `/staff`, their own workspace
+    /// on the public listener.
+    #[test]
+    fn office_staff_read_the_content_links_under_staff() {
+        for a in STAFF {
+            assert_eq!(a.key, "website");
+            for l in a.items {
+                assert!(
+                    l.url(STAFF_BASE).starts_with("/staff/"),
+                    "{} was not moved into the staff workspace",
+                    l.href
+                );
+            }
+        }
+        assert_eq!(in_workspace(STAFF_BASE, "/admin/events"), "/staff/events");
+    }
+
+    /// Each role resolves to its own workspace base.
+    #[test]
+    fn each_role_resolves_to_its_own_workspace() {
+        let base = |role: Role| {
+            base_for(&AuthUser {
+                id: 1,
+                full_name: "User".into(),
+                role,
+                must_change_password: false,
+                is_hod: false,
+                can_manage: false,
+            })
+        };
+        assert_eq!(base(Role::Admin), ADMIN_BASE);
+        assert_eq!(base(Role::SuperAdmin), ADMIN_BASE);
+        assert_eq!(base(Role::Principal), ADMIN_BASE);
+        assert_eq!(base(Role::Staff), STAFF_BASE);
+        assert_eq!(base(Role::Faculty), HOD_BASE);
     }
 
     /// Office staff are `OfficeOrAdmin`: content pages and nothing else.

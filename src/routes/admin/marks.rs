@@ -15,6 +15,7 @@ use std::collections::{HashMap, HashSet};
 use askama::Template;
 use axum::{
     extract::{Multipart, Path, Query, State},
+    http::header,
     response::{IntoResponse, Redirect, Response},
     Form,
 };
@@ -28,7 +29,7 @@ use crate::{
     sections,
     services::{
         academics::{self, ProgrammeOption},
-        exams::{self, ExamCourseOption},
+        exams::{self, ExamCourseOption, PushKind},
         marks::{self, CorrectionOutcome, FiledRow, HistoryRow, PendingCorrection},
         notifications,
         result_import,
@@ -542,6 +543,7 @@ pub async fn import_preview(
         &exam_name,
         if file.filename.is_empty() { "upload.csv" } else { &file.filename },
         &text,
+        &[],
     )
     .await?;
     Ok(Redirect::to(&ws(&manager, &format!("/exams/results/preview?batch={id}"))).into_response())
@@ -688,6 +690,181 @@ pub async fn import_csv(
 
     Ok(render(&s, &session, &manager, sel, &HashMap::new(), problems, notice)
         .await?
+        .into_response())
+}
+
+/// Stage a course-wise sheet — one line per student, one column per course —
+/// through the same review and commit as the one-row-per-result import. The
+/// file is expanded into the rows the import already speaks, so the review
+/// page, the per-course maximum and the commit are all shared.
+pub async fn import_courses_preview(
+    State(s): State<AppState>,
+    session: Session,
+    manager: Manager,
+    multipart: Multipart,
+) -> Result<Response, AppError> {
+    let form = crate::uploads::read(multipart).await?;
+    csrf::verify(&session, form.field("csrf_token")).await?;
+
+    let back = ws(&manager, "/marks");
+    let sel = Sel::from_fields(|k| form.field(k));
+    if sel.programme == 0 || sel.semester == 0 {
+        shell::flash(&session, "Choose a programme and semester first.").await?;
+        return Ok(Redirect::to(&back).into_response());
+    }
+    if !academics::may_manage_programme(&s.db, sel.programme, manager.department()).await? {
+        return Err(AppError::Forbidden);
+    }
+    let Some(file) = form.file("csv_file") else {
+        shell::flash(&session, "Choose a CSV file to upload.").await?;
+        return Ok(Redirect::to(&back).into_response());
+    };
+    if file.bytes.len() > 5 * 1024 * 1024 {
+        shell::flash(
+            &session,
+            "That CSV file is larger than 5 MB — split it into smaller batches.",
+        )
+        .await?;
+        return Ok(Redirect::to(&back).into_response());
+    }
+    let text = match crate::services::import_students::to_csv_text(&file.bytes, &file.filename) {
+        Ok(text) => text,
+        Err(msg) => {
+            shell::flash(&session, msg).await?;
+            return Ok(Redirect::to(&back).into_response());
+        }
+    };
+
+    let (assessment, exam_kind, exam_name) = sel.sheet_key();
+    let kind = if exam_kind == "university" {
+        PushKind::University
+    } else {
+        PushKind::Internal
+    };
+    let sheet = match exams::expand_course_sheet(
+        &text,
+        kind.key_column(),
+        sel.max_value().unwrap_or(100.0),
+    ) {
+        Ok(sheet) => sheet,
+        Err(msg) => {
+            shell::flash(&session, msg).await?;
+            return Ok(Redirect::to(&back).into_response());
+        }
+    };
+
+    // Every column must be a course taught in this semester: the same rule the
+    // picker offers and the write accepts.
+    let offered = exams::course_options_for_semester(&s.db, sel.programme, sel.semester).await?;
+    let allowed: HashSet<String> = offered.iter().map(|c| c.code.to_ascii_uppercase()).collect();
+    let unknown: Vec<String> = sheet
+        .codes
+        .iter()
+        .filter(|c| !allowed.contains(&c.to_ascii_uppercase()))
+        .cloned()
+        .collect();
+    if !unknown.is_empty() {
+        shell::flash(
+            &session,
+            format!(
+                "{} {} not taught in Semester {} — check the column names.",
+                unknown.join(", "),
+                if unknown.len() == 1 { "is" } else { "are" },
+                sel.semester
+            ),
+        )
+        .await?;
+        return Ok(Redirect::to(&back).into_response());
+    }
+
+    let id = result_import::stage(
+        &s.db,
+        manager.user.id,
+        manager.department(),
+        sel.programme,
+        sel.semester,
+        exam_kind,
+        assessment,
+        &exam_name,
+        if file.filename.is_empty() {
+            "coursewise.csv"
+        } else {
+            &file.filename
+        },
+        &sheet.text,
+        &sheet.problems,
+    )
+    .await?;
+    Ok(Redirect::to(&ws(&manager, &format!("/exams/results/preview?batch={id}"))).into_response())
+}
+
+#[derive(Deserialize, Default)]
+pub struct TemplateQuery {
+    programme: Option<String>,
+    semester: Option<String>,
+    course: Option<String>,
+    kind: Option<String>,
+}
+
+/// The course-wise blank form: `prn/admission_no, name, BCA101, BCA102, …`,
+/// one line per student of the semester with the mark columns left blank. With
+/// `course` set the form covers that one course; without it, every course
+/// taught in the semester.
+pub async fn template_csv(
+    State(s): State<AppState>,
+    manager: Manager,
+    Query(q): Query<TemplateQuery>,
+) -> Result<Response, AppError> {
+    let programme = parse_i64(q.programme.as_deref().unwrap_or("")).unwrap_or(0);
+    let semester = parse_i32(q.semester.as_deref().unwrap_or("")).unwrap_or(0);
+    if programme == 0 || !(1..=12).contains(&semester) {
+        return Err(AppError::BadRequest(
+            "Choose a programme and semester first.".into(),
+        ));
+    }
+    if !academics::may_manage_programme(&s.db, programme, manager.department()).await? {
+        return Err(AppError::Forbidden);
+    }
+
+    let kind = PushKind::parse(q.kind.as_deref().unwrap_or(""));
+    let offered = exams::course_options_for_semester(&s.db, programme, semester).await?;
+    let courses: Vec<String> = match q.course.as_deref().and_then(parse_i64) {
+        Some(id) if id > 0 => {
+            let Some(course) = offered.iter().find(|c| c.id == id) else {
+                return Err(AppError::BadRequest(
+                    "That course is not taught in the semester you picked.".into(),
+                ));
+            };
+            vec![course.code.clone()]
+        }
+        _ => offered.iter().map(|c| c.code.clone()).collect(),
+    };
+    if courses.is_empty() {
+        return Err(AppError::BadRequest(
+            "No courses are taught in that semester yet.".into(),
+        ));
+    }
+
+    let roster =
+        marks::form_roster(&s.db, programme, semester, kind == PushKind::University).await?;
+    let bytes = marks::course_form_csv(kind.key_column(), &courses, &roster)
+        .map_err(|e| crate::error::internal(format!("Could not build the course-wise form: {e}")))?;
+    let scope = if courses.len() == 1 {
+        courses[0].to_ascii_lowercase()
+    } else {
+        format!("semester-{semester}")
+    };
+    let name = format!("marks-{}-{scope}.csv", kind.key_column());
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8"),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{name}\"").as_str(),
+            ),
+        ],
+        bytes,
+    )
         .into_response())
 }
 

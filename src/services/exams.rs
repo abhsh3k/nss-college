@@ -531,6 +531,17 @@ impl PushKind {
     fn default_exam_name(self) -> &'static str {
         "Internal exam"
     }
+
+    /// The canonical name of a rewritten sheet's first column. A course-wise
+    /// sheet is expanded into the one-row-per-result text this module parses,
+    /// and that header must be one [`is_header_row`] recognises, or the parser
+    /// would read the column names as a student.
+    pub fn key_column(self) -> &'static str {
+        match self {
+            PushKind::University => "prn",
+            PushKind::Internal => "admission_no",
+        }
+    }
 }
 
 /// One parsed line of the paste box.
@@ -545,6 +556,10 @@ impl PushKind {
 pub struct PushRow {
     /// The student's PRN or admission number, depending on [`PushKind`].
     pub key: String,
+    /// The student's name, when the file carried one beside the key. It is a
+    /// label for the person filing the marks and is never matched against the
+    /// database — [`PushRow::key`] is the identity.
+    pub name: String,
     pub course: String,
     pub assessment: String,
     /// The internal exam's own name; empty for every other kind.
@@ -596,22 +611,26 @@ fn split_fields(line: &str) -> Vec<String> {
 
 /// Parse a CSV byte slice into result rows. The CSV must have columns:
 /// `key,course,assessment,obtained,max` (university) or
-/// `key,course,exam_name,obtained,max` (internal).
-/// The first row may be a header row (which is skipped).
+/// `key,course,exam_name,obtained,max` (internal), with an optional `name`
+/// column after the key (`key,name,course,…`).
+/// The first row may be a header row (which is skipped, and which decides
+/// whether a name column is read — the name is a label, never an identity).
 pub fn parse_csv(bytes: &[u8], kind: PushKind) -> Result<Vec<PushRow>, String> {
     let text = String::from_utf8(bytes.to_vec())
         .map_err(|e| format!("CSV file is not valid UTF-8: {e}"))?;
+    let name_col = header_name_column(&text);
     let mut rows = Vec::new();
-    for (i, line) in text.lines().enumerate() {
-        let line = line.trim();
+    for (i, raw) in text.lines().enumerate() {
+        let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let fields = split_fields(line);
+        let raw_fields = split_fields(line);
         // Skip header rows like "prn,course,marks" or "key,course,obtained,max"
-        if i == 0 && is_header_row(&fields) {
+        if is_header_row(&raw_fields) {
             continue;
         }
+        let (name, fields) = take_name(&raw_fields, name_col);
         let built = if fields.len() < 2 {
             Err(format!(
                 "Line {}: expected at least 2 fields (key, course, ...), got {}",
@@ -625,7 +644,10 @@ pub fn parse_csv(bytes: &[u8], kind: PushKind) -> Result<Vec<PushRow>, String> {
             }
         };
         match built {
-            Ok(row) => rows.push(row),
+            Ok(mut row) => {
+                row.name = name;
+                rows.push(row)
+            }
             Err(e) => return Err(e),
         }
     }
@@ -639,25 +661,69 @@ fn ratio(part: &str) -> Option<(f64, f64)> {
     Some((obtained, max))
 }
 
+/// A header cell down to its letters and digits, so `admission_no`,
+/// `Admission No` and `ADMISSIONNO` all read the same.
+fn norm_label(field: &str) -> String {
+    field
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase()
+}
+
 /// The first column is a header like `prn` or `admission_no`, not a student.
 fn is_header_row(fields: &[String]) -> bool {
     fields
         .first()
-        .map(|f| {
-            let norm: String = f
-                .chars()
-                .filter(|c| c.is_alphanumeric())
-                .collect::<String>()
-                .to_ascii_lowercase();
-            matches!(norm.as_str(), "prn" | "admissionno" | "admno" | "admission" | "key")
-        })
+        .map(|f| matches!(norm_label(f).as_str(), "prn" | "admissionno" | "admno" | "admission" | "key"))
         .unwrap_or(false)
+}
+
+/// A header cell that names the student's own name.
+fn is_name_field(field: &str) -> bool {
+    matches!(norm_label(field).as_str(), "name" | "studentname" | "student")
+}
+
+/// The column that carries the student's name, when the first line spells out
+/// its columns (`admission_no,name,course,obtained,max`). The name is only a
+/// label — the key is what is matched against the database — so a file without
+/// a header, or with a header that names no `name` column, simply carries no
+/// names.
+fn header_name_column(text: &str) -> Option<usize> {
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields = split_fields(line);
+        // The first real line is either the header or already a student.
+        return if is_header_row(&fields) {
+            fields.iter().position(|f| is_name_field(f))
+        } else {
+            None
+        };
+    }
+    None
+}
+
+/// Pull the name out of a parsed line when its header named a name column,
+/// leaving the other fields in the positions the row builders expect.
+fn take_name(fields: &[String], name_col: Option<usize>) -> (String, Vec<String>) {
+    match name_col {
+        Some(i) if i < fields.len() => {
+            let mut rest = fields.to_vec();
+            let name = rest.remove(i);
+            (name.trim().to_string(), rest)
+        }
+        _ => (String::new(), fields.to_vec()),
+    }
 }
 
 /// A university semester-exam row, or the reason the line is unusable.
 fn university_row(fields: &[String], line: usize) -> Result<PushRow, String> {
     let row = |assessment: String, obtained: f64, max: f64| PushRow {
         key: fields[0].clone(),
+        name: String::new(),
         course: fields[1].clone(),
         assessment,
         exam_name: String::new(),
@@ -703,6 +769,7 @@ fn internal_row(fields: &[String], line: usize) -> Result<PushRow, String> {
         };
         PushRow {
             key: fields[0].clone(),
+            name: String::new(),
             course: fields[1].clone(),
             assessment: "exam".into(),
             exam_name,
@@ -742,6 +809,7 @@ fn internal_row(fields: &[String], line: usize) -> Result<PushRow, String> {
 /// Parse the paste box for one kind of exam, collecting a per-line problem
 /// for anything malformed.
 pub fn parse_push(text: &str, kind: PushKind) -> (Vec<PushRow>, Vec<PushProblem>) {
+    let name_col = header_name_column(text);
     let mut rows = Vec::new();
     let mut problems = Vec::new();
     for (i, raw) in text.lines().enumerate() {
@@ -750,11 +818,12 @@ pub fn parse_push(text: &str, kind: PushKind) -> (Vec<PushRow>, Vec<PushProblem>
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let fields = split_fields(line);
+        let raw_fields = split_fields(line);
         // A header row like `prn,course,marks` is common in exports.
-        if is_header_row(&fields) {
+        if is_header_row(&raw_fields) {
             continue;
         }
+        let (name, fields) = take_name(&raw_fields, name_col);
         let built = if fields.len() < 2 {
             Err(format!(
                 "expected 3, 4 or 5 fields ({}, course, [exam name], obtained, max)",
@@ -767,7 +836,10 @@ pub fn parse_push(text: &str, kind: PushKind) -> (Vec<PushRow>, Vec<PushProblem>
             }
         };
         match built {
-            Ok(row) => rows.push(row),
+            Ok(mut row) => {
+                row.name = name;
+                rows.push(row)
+            }
             Err(problem) => problems.push(PushProblem {
                 line: line_no,
                 text: line.to_string(),
@@ -776,6 +848,135 @@ pub fn parse_push(text: &str, kind: PushKind) -> (Vec<PushRow>, Vec<PushProblem>
         }
     }
     (rows, problems)
+}
+
+/// A mark can never exceed `NUMERIC(6,2)`'s ceiling.
+const MAX_MARK: f64 = 9999.99;
+
+/// Quote a rewritten cell so a name with a comma or a quote survives the round
+/// trip through [`split_fields`].
+fn csv_cell(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\t') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+/// A course-wise sheet expanded into the one-row-per-result text the rest of
+/// the import already speaks.
+pub struct CourseSheet {
+    /// The course codes the first row names, in column order.
+    pub codes: Vec<String>,
+    /// The sheet rewritten as `key,name,course,obtained,max` lines, one per
+    /// cell that carried a mark.
+    pub text: String,
+    /// Everything that could not be read, addressed to the line the teacher
+    /// wrote rather than to a line of the rewritten text.
+    pub problems: Vec<PushProblem>,
+}
+
+/// Expand a course-wise sheet — one line per student, one column per course —
+/// into the rows the one-row-per-result import files.
+///
+/// The first row names the columns: the key, the student's name, then a course
+/// code per column (`prn,name,BCA101,BCA102`). Every later line is a student:
+/// their key, their name (a label only — the key is the identity) and one mark
+/// per course. A blank cell files nothing; a cell that is not a number, or a
+/// line that the first row cannot cover, becomes a problem rather than a
+/// guessed mark.
+///
+/// The name column is required by this shape: without it a line of marks under
+/// course codes has nothing to tell a name from a mark.
+pub fn expand_course_sheet(
+    text: &str,
+    key_column: &str,
+    default_max: f64,
+) -> Result<CourseSheet, String> {
+    let mut codes: Vec<String> = Vec::new();
+    let mut lines: Vec<(usize, Vec<String>)> = Vec::new();
+    for (i, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields = split_fields(line);
+        if codes.is_empty() {
+            if fields.len() < 3 {
+                return Err(
+                    "The first row must name the student's key, their name and at least one course."
+                        .to_string(),
+                );
+            }
+            for code in &fields[2..] {
+                let code = code.trim();
+                if code.is_empty() {
+                    return Err(
+                        "Every course column needs a course code in the first row.".to_string(),
+                    );
+                }
+                if codes.iter().any(|c| c.eq_ignore_ascii_case(code)) {
+                    return Err(format!("The first row names {code} more than once."));
+                }
+                codes.push(code.to_string());
+            }
+            continue;
+        }
+        lines.push((i + 1, fields));
+    }
+    if codes.is_empty() {
+        return Err(
+            "That file has no header row — its first row must name the courses.".to_string(),
+        );
+    }
+
+    let mut problems: Vec<PushProblem> = Vec::new();
+    let mut out = format!("{key_column},name,course_code,obtained,max\n");
+    for (line_no, fields) in &lines {
+        let key = fields.first().map(|s| s.trim()).unwrap_or("");
+        let name = fields.get(1).map(|s| s.trim()).unwrap_or("");
+        if key.is_empty() {
+            problems.push(PushProblem {
+                line: *line_no,
+                text: String::new(),
+                problem: format!("the first column must carry the {key_column}"),
+            });
+            continue;
+        }
+        if fields.len() > codes.len() + 2 {
+            problems.push(PushProblem {
+                line: *line_no,
+                text: key.to_string(),
+                problem: format!("{key}: the line has more columns than the first row names"),
+            });
+        }
+        for (j, code) in codes.iter().enumerate() {
+            let cell = fields.get(j + 2).map(|s| s.trim()).unwrap_or("");
+            if cell.is_empty() {
+                continue;
+            }
+            match cell.parse::<f64>() {
+                Ok(v) if (0.0..=MAX_MARK).contains(&v) => out.push_str(&format!(
+                    "{},{},{},{},{}\n",
+                    csv_cell(key),
+                    csv_cell(name),
+                    csv_cell(code),
+                    label(v),
+                    label(default_max),
+                )),
+                _ => problems.push(PushProblem {
+                    line: *line_no,
+                    text: format!("{key} {code} {cell}"),
+                    problem: format!("{key}: “{cell}” under {code} is not a number"),
+                }),
+            }
+        }
+    }
+    Ok(CourseSheet {
+        codes,
+        text: out,
+        problems,
+    })
 }
 
 /// A student found by the push's key, plus what the push needs to check and
@@ -1169,5 +1370,76 @@ mod tests {
         let csv = vec![0xFF, 0xFE, 0xFD];
         let result = parse_csv(&csv, PushKind::University);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_name_column_is_read_as_a_label_and_never_as_an_identity() {
+        let (rows, problems) = parse_push(
+            "admission_no,name,course,obtained,max\n2501,Asha Rao,BCA101,42,50",
+            PushKind::Internal,
+        );
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key, "2501");
+        assert_eq!(rows[0].name, "Asha Rao");
+        assert_eq!(rows[0].course, "BCA101");
+        assert_eq!((rows[0].obtained, rows[0].max), (42.0, 50.0));
+
+        // No header, no name column: the old shape still parses unchanged.
+        let row = one("2501 BCA101 42/50", PushKind::Internal);
+        assert_eq!(row.name, "");
+    }
+
+    #[test]
+    fn a_name_column_keeps_the_rest_of_a_university_row_in_place() {
+        let csv = b"prn,name,course,assessment,obtained,max\n2025BCA0001,Asha Rao,BCA101,exam,42,50";
+        let rows = parse_csv(csv, PushKind::University).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Asha Rao");
+        assert_eq!(rows[0].assessment, "exam");
+        assert_eq!((rows[0].obtained, rows[0].max), (42.0, 50.0));
+    }
+
+    #[test]
+    fn a_course_wise_sheet_expands_into_one_row_per_filled_cell() {
+        let sheet = expand_course_sheet(
+            "admission_no,name,BCA101,BCA102\n2501,Asha Rao,42,38\n2502,Bhavna,,\n",
+            PushKind::Internal.key_column(),
+            50.0,
+        )
+        .expect("a well-formed sheet");
+        assert_eq!(sheet.codes, vec!["BCA101", "BCA102"]);
+        assert!(sheet.problems.is_empty(), "{:?}", sheet.problems);
+
+        let (rows, problems) = parse_push(&sheet.text, PushKind::Internal);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(rows.len(), 2, "a blank cell files nothing");
+        assert_eq!(rows[0].key, "2501");
+        assert_eq!(rows[0].name, "Asha Rao");
+        assert_eq!(rows[0].course, "BCA101");
+        assert_eq!((rows[0].obtained, rows[0].max), (42.0, 50.0));
+        assert_eq!(rows[1].course, "BCA102");
+        assert_eq!((rows[1].obtained, rows[1].max), (38.0, 50.0));
+    }
+
+    #[test]
+    fn a_course_wise_sheet_reports_what_it_cannot_read() {
+        let sheet = expand_course_sheet("prn,name,BCA101,BCA102\n2501,Asha Rao,42,AB\n,,30", "prn", 100.0)
+            .expect("the header is well formed");
+        assert_eq!(sheet.problems.len(), 2, "{:?}", sheet.problems);
+        assert_eq!(sheet.problems[0].line, 2);
+        assert_eq!(sheet.problems[1].line, 3);
+
+        let (rows, problems) = parse_push(&sheet.text, PushKind::University);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].course, "BCA101");
+    }
+
+    #[test]
+    fn a_course_wise_sheet_needs_a_header_that_names_its_courses() {
+        assert!(expand_course_sheet("2501,42", "prn", 100.0).is_err());
+        assert!(expand_course_sheet("prn,name,BCA101,BCA101", "prn", 100.0).is_err());
+        assert!(expand_course_sheet("", "prn", 100.0).is_err());
     }
 }

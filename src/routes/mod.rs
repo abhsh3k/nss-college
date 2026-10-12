@@ -91,8 +91,35 @@ fn signed_in_public_routes() -> Router<AppState> {
         ))
 }
 
+/// The `/admin` management area: the landing dashboard and the technical and
+/// content tools. It is mounted on both listeners; the public mount is wrapped
+/// by [`crate::auth::management_area_on_public`], which keeps root authority
+/// loopback-only.
+fn management_area_routes() -> Router<AppState> {
+    Router::new()
+        .route("/admin", get(dashboards::admin))
+        .merge(admin::routes())
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ))
+}
+
+/// The `/staff` office-staff workspace, mounted on both listeners so office
+/// staff can work from the public one.
+fn staff_routes() -> Router<AppState> {
+    Router::new()
+        .nest("/staff", admin::staff_routes())
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ))
+}
+
 /// Routes reachable on the public listener. The administrative management
-/// router is bound separately to loopback by `main`.
+/// router is bound separately to loopback by `main`, but its pages are also
+/// served here for the roles that work on the public listener — root authority
+/// excepted.
 pub fn public_router() -> Router<AppState> {
     let site = Router::new()
         .route("/", get(public::home))
@@ -122,6 +149,17 @@ pub fn public_router() -> Router<AppState> {
 
     site.merge(auth_routes())
         .merge(signed_in_public_routes())
+        // The management area is served here too, for the roles whose home is
+        // `/admin` (the IT administrator and the Principal) and for office
+        // staff in `/staff`. The layer refuses root authority and a head of
+        // department on this listener; an HOD keeps `/hod`, mounted below.
+        .merge(
+            management_area_routes()
+                .merge(staff_routes())
+                .layer(axum::middleware::from_fn(
+                    crate::auth::management_area_on_public,
+                )),
+        )
         // The head of department's pages, on the listener they sign in to.
         .merge(Router::new().nest("/hod", department_routes()))
 }
@@ -132,10 +170,11 @@ pub fn public_router() -> Router<AppState> {
 pub fn management_router() -> Router<AppState> {
     auth_routes()
         // The role landing page for IT admin and office staff (`Role::home`).
-        // It is `OfficeOrAdmin`, so both roles reach it; the cards it lists are
-        // narrowed to the content area for office staff.
-        .route("/admin", get(dashboards::admin))
-        .merge(admin::routes())
+        // It is `AdminDashboard`, so all four management roles reach it; the
+        // cards it lists are narrowed to the content area for office staff.
+        .merge(management_area_routes())
+        // Office staff work in `/staff`, on both listeners.
+        .merge(staff_routes())
         // The department workspace is also offered here, so a head of
         // department who is at the server itself lands somewhere that works.
         .merge(Router::new().nest("/hod", department_routes()))

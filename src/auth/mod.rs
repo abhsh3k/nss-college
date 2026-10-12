@@ -2,8 +2,9 @@ pub mod csrf;
 pub mod password;
 
 use axum::{
-    extract::FromRequestParts,
+    extract::{FromRequestParts, Request},
     http::{request::Parts, StatusCode},
+    middleware::Next,
     response::{IntoResponse, Redirect, Response},
 };
 use tower_sessions::Session;
@@ -11,6 +12,10 @@ use tower_sessions::Session;
 use crate::{error::{internal, AppError}, services::users, state::AppState};
 
 pub const SESSION_USER: &str = "user_id";
+/// The role recorded at sign-in, so the listener boundary can be judged without
+/// a database round-trip. It is only a fast path: every handler still resolves
+/// the caller through [`AuthUser`], and a role change revokes the session.
+pub const SESSION_ROLE: &str = "role";
 pub const SESSION_VERSION: &str = "session_version";
 /// When the user last re-entered their password, as a Unix timestamp.
 pub const SESSION_REAUTH: &str = "reauth_at";
@@ -107,7 +112,9 @@ impl Role {
     /// Where this role lands after signing in.
     pub fn home(&self) -> &'static str {
         match self {
-            Role::SuperAdmin | Role::Admin | Role::Principal | Role::Staff => "/admin",
+            Role::SuperAdmin | Role::Admin | Role::Principal => "/admin",
+            // Office staff work in their own workspace, on both listeners.
+            Role::Staff => crate::sections::STAFF_BASE,
             Role::Faculty => "/teacher",
             Role::Student => "/hub",
             Role::Alumni => "/",
@@ -270,6 +277,9 @@ mod guards {
     role_guard!(AdminDashboard, &[Role::Admin, Role::SuperAdmin, Role::Principal, Role::Staff]);
     role_guard!(PrincipalOnly, &[Role::Principal]);
     role_guard!(OfficeOrAdmin, &[Role::Admin, Role::SuperAdmin, Role::Staff]);
+    // The office-staff workspace at `/staff`; the IT admin reaches the same
+    // content tools under `/admin` through `OfficeOrAdmin`.
+    role_guard!(StaffOnly, &[Role::Staff]);
     role_guard!(TeacherOnly, &[Role::Faculty]);
     role_guard!(StudentOnly, &[Role::Student]);
     // Root authority: account roles, emergency recovery, and the audited
@@ -277,8 +287,8 @@ mod guards {
     role_guard!(SuperAdminOnly, &[Role::SuperAdmin]);
 }
 pub use guards::{
-    AdminDashboard, AdminOnly, AdminOrPrincipal, OfficeOrAdmin, PrincipalOnly, StudentOnly,
-    SuperAdminOnly, TeacherOnly,
+    AdminDashboard, AdminOnly, AdminOrPrincipal, OfficeOrAdmin, PrincipalOnly, StaffOnly,
+    StudentOnly, SuperAdminOnly, TeacherOnly,
 };
 
 /// How far across the college a manager may reach.
@@ -364,6 +374,34 @@ impl FromRequestParts<AppState> for Manager {
     }
 }
 
+/// Refuse root authority (and teachers) on the public listener's management
+/// area.
+///
+/// The Super Admin is loopback-only: root authority must not be reachable from
+/// the network, so on the public listener its management requests are refused
+/// here. A head of department works in `/hod` (mounted on both listeners), so
+/// the `/admin` form of the management area is not offered to a `faculty`
+/// account on the public listener either. The IT administrator, the Principal
+/// and office staff may use either listener. This layer is mounted only on the
+/// public listener's management mount, so the boundary is a property of the
+/// listener rather than of a navigation link.
+pub async fn management_area_on_public(request: Request, next: Next) -> Response {
+    let (mut parts, body) = request.into_parts();
+    if let Ok(session) = Session::from_request_parts(&mut parts, &()).await {
+        let role: Option<String> = session.get(SESSION_ROLE).await.unwrap_or(None);
+        if let Some(role) = role {
+            let allowed = matches!(
+                Role::parse(&role),
+                Some(Role::Admin | Role::Principal | Role::Staff)
+            );
+            if !allowed {
+                return AppError::Forbidden.into_response();
+            }
+        }
+    }
+    next.run(Request::from_parts(parts, body)).await
+}
+
 /// Accept only same-site relative paths for the post-login redirect.
 pub fn safe_next(next: &str) -> Option<&str> {
     if next.starts_with('/') && !next.starts_with("//") && !next.contains('\\') && !next.contains("://") {
@@ -376,8 +414,15 @@ pub fn safe_next(next: &str) -> Option<&str> {
 pub fn safe_next_for_role(next: &str, role: Role) -> Option<&str> {
     let next = safe_next(next)?;
     let allowed = match role {
-        Role::SuperAdmin | Role::Admin | Role::Principal | Role::Staff => {
+        Role::SuperAdmin | Role::Admin | Role::Principal => {
             next.starts_with("/admin") || next.starts_with("/account/")
+        }
+        // Office staff work in `/staff`; `/admin` is kept so a staff member
+        // bounced to the sign-in page from there is not sent somewhere else.
+        Role::Staff => {
+            next.starts_with(crate::sections::STAFF_BASE)
+                || next.starts_with("/admin/")
+                || next.starts_with("/account/")
         }
         // A teacher's own pages, plus the department workspace an appointed head
         // of department works in (`/hod`). `/admin` is kept so an HOD who was
@@ -433,6 +478,18 @@ mod tests {
             safe_next_for_role("/admin/roles", Role::SuperAdmin),
             Some("/admin/roles")
         );
+    }
+
+    #[test]
+    fn office_staff_land_in_their_own_workspace() {
+        assert_eq!(Role::Staff.home(), "/staff");
+        assert_eq!(
+            safe_next_for_role("/staff/notices", Role::Staff),
+            Some("/staff/notices")
+        );
+        // A staff member is not sent into a student's or teacher's pages.
+        assert_eq!(safe_next_for_role("/hub", Role::Staff), None);
+        assert_eq!(safe_next_for_role("/teacher", Role::Staff), None);
     }
 
     #[test]

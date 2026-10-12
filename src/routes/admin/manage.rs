@@ -32,7 +32,8 @@ pub struct ManageTemplate {
 ///
 /// This mirrors — it does not replace — the guards on the target pages:
 ///
-/// * IT administrator: everything (each target is `AdminOnly` or `Manager`),
+/// * IT administrator (and the Super Admin, its superset): everything (each
+///   target is `AdminOnly` or `Manager`),
 /// * office staff: content only (their targets are `OfficeOrAdmin`),
 /// * a head of department or an approved delegate: department-scoped tools
 ///   (their targets take `Manager`, which confines every query to
@@ -40,7 +41,10 @@ pub struct ManageTemplate {
 /// * anyone else: refused, exactly as the target pages refuse them.
 fn catalogue(user: &AuthUser) -> Option<&'static [Area]> {
     match user.role {
-        Role::Admin => Some(sections::ADMIN),
+        // Root authority is a superset of the IT admin, so it sees the same
+        // management areas — including the User & Account Management section
+        // that holds the Appointments link.
+        Role::Admin | Role::SuperAdmin => Some(sections::ADMIN),
         Role::Principal => Some(sections::HOD),
         Role::Staff => Some(sections::STAFF),
         Role::Faculty if user.manages_department() => Some(sections::HOD),
@@ -135,12 +139,17 @@ mod tests {
     #[test]
     fn a_role_gets_its_own_area_and_nothing_else() {
         let admin = user(Role::Admin, false);
+        let super_admin = user(Role::SuperAdmin, false);
         let staff = user(Role::Staff, false);
         let hod = user(Role::Faculty, true);
         let teacher = user(Role::Faculty, false);
         let student = user(Role::Student, false);
 
         assert!(lookup(&admin, "users").is_ok());
+        // Root authority is a superset of the IT admin: it opens the same
+        // areas, including the section that holds the Appointments link.
+        assert!(lookup(&super_admin, "users").is_ok());
+        assert!(lookup(&super_admin, "settings").is_ok());
         assert!(lookup(&staff, "website").is_ok());
         assert!(lookup(&hod, "students").is_ok());
 

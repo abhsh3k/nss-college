@@ -6,7 +6,7 @@ use sqlx::FromRow;
 use tower_sessions::Session;
 
 use crate::{
-    auth::{AdminDashboard, Role, StudentOnly, TeacherOnly},
+    auth::{AdminDashboard, Role, StaffOnly, StudentOnly, TeacherOnly},
     error::AppError,
     models::Notice,
     sections::{self, Area},
@@ -49,6 +49,24 @@ pub async fn admin(
             Role::Principal => sections::HOD,
             _ => sections::STAFF,
         },
+    })
+}
+
+/// The office-staff workspace overview at `/staff`.
+///
+/// Office staff publish content and nothing else, so the overview renders with
+/// only the content area. It is a distinct route from `/admin` so their work is
+/// theirs to find, and it is served on both listeners.
+pub async fn staff(
+    State(s): State<AppState>,
+    session: Session,
+    StaffOnly(user): StaffOnly,
+) -> Result<AdminTemplate, AppError> {
+    Ok(AdminTemplate {
+        shell: Shell::build(&user, &session, &s.db).await?,
+        is_admin: false,
+        counts: users::overview_counts(&s.db).await?,
+        areas: sections::STAFF,
     })
 }
 

@@ -11,8 +11,8 @@ use tower_sessions::Session;
 
 use crate::{
     auth::{
-        csrf, password, reauth_recent, safe_next_for_role, AuthUser, SESSION_REAUTH, SESSION_USER,
-        SESSION_VERSION,
+        csrf, password, reauth_recent, safe_next_for_role, AuthUser, SESSION_REAUTH, SESSION_ROLE,
+        SESSION_USER, SESSION_VERSION,
     },
     error::{internal, AppError},
     services::users,
@@ -141,6 +141,12 @@ pub async fn login_submit(
 
     let user = users::find_active(&s.db, row.id).await?.ok_or(AppError::Forbidden)?;
     session.insert(SESSION_VERSION, user.session_version).await.map_err(internal)?;
+    // Recorded so the public listener can refuse root authority without a
+    // database round-trip (see `auth::management_area_on_public`).
+    session
+        .insert(SESSION_ROLE, user.role.clone())
+        .await
+        .map_err(internal)?;
     let home = crate::auth::Role::parse(&user.role)
         .map(|r| r.home())
         .unwrap_or("/");

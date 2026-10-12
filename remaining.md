@@ -17,7 +17,7 @@ Companion documents, and what each one is for:
 | `README.md` | how to run it, the feature tour, and the known limitations list |
 | `remaining.md` | this file: architecture, what is left, how to implement it, how to operate |
 
-Current state: **`cargo test --no-fail-fast` → exit 0**; 74 unit + 40 database + 25 end-to-end + 1 Node
+Current state: **`cargo test --no-fail-fast` → exit 0**; 83 unit + 40 database + 31 end-to-end + 1 Node
 test, 0 failures.
 
 ---
@@ -31,13 +31,15 @@ maintenance/backup task → two routers → two listeners.
 
 | listener | address (default) | serves |
 | --- | --- | --- |
-| public | `HOST`/`PORT` → `127.0.0.1:3000` | the public site, `/login`, `/logout`, `/account/*`, the teacher pages `/teacher*`, the student hub `/hub*`, `/dashboard/teacher/*`, and the **department workspace `/hod/*`** |
-| management | `MANAGEMENT_HOST`/`MANAGEMENT_PORT` → `127.0.0.1:3001` | `/login`, `/logout`, `/account/*`, the admin dashboard `/admin`, the technical tools `/admin/*`, and `/hod/*` again |
+| public | `HOST`/`PORT` → `127.0.0.1:3000` | the public site, `/login`, `/logout`, `/account/*`, the teacher pages `/teacher*`, the student hub `/hub*`, `/dashboard/teacher/*`, the **management area `/admin/*`** (for the IT admin, the Principal and office staff), the **office-staff workspace `/staff/*`**, and the **department workspace `/hod/*`** |
+| management | `MANAGEMENT_HOST`/`MANAGEMENT_PORT` → `127.0.0.1:3001` | `/login`, `/logout`, `/account/*`, `/admin/*` including root authority, `/staff/*`, and `/hod/*` |
 
 The management address is validated at startup and the process **panics** on a non-loopback bind
 (`src/config.rs`), so the boundary is a network fact rather than a navigation convention. Because a head of
-department is a `faculty` account and signs in on the *public* listener, the department pages are mounted on
-both listeners (see 1.3).
+department is a `faculty` account, office staff and the IT admin sign in on the *public* listener, the
+management and department pages are mounted on both listeners (see 1.3). The one role that stays
+loopback-only is the **Super Admin**: the public mounts are wrapped by
+`auth::management_area_on_public`, which refuses a `faculty` account and root authority there.
 
 ### 1.2 Middleware and configuration
 
@@ -59,34 +61,41 @@ route sets:
 `src/config.rs` reads the environment once. `src/site.rs` caches `site_settings` in memory (the error pages
 and the dashboard chrome have no database handle of their own) and refreshes it on a timer.
 
-### 1.3 Routers: one handler set, two workspaces
+### 1.3 Routers: one handler set, three workspaces
 
 ```
-public_router()            management_router()
-├── public site pages      ├── /admin dashboard (AdminDashboard)
-├── auth_routes()          ├── admin::routes()
-├── signed_in_public_…     │   ├── technical routes   /admin/…      (AdminOnly, OfficeOrAdmin, …)
-│   /teacher* /hub* …      │   └── .nest("/admin", admin::manager_routes())
-└── .nest("/hod", …)       └── .nest("/hod", …)
+public_router()                    management_router()
+├── public site pages              ├── /admin dashboard (AdminDashboard)
+├── auth_routes()                  ├── admin::routes()
+├── signed_in_public_…             │   ├── technical routes   /admin/…      (AdminOnly, OfficeOrAdmin, …)
+│   /teacher* /hub* …              │   └── .nest("/admin", manager_routes().merge(content_routes()))
+├── /admin + /staff                ├── /staff  (admin::staff_routes())
+│   + /hod  (from `routes/mod.rs`) └── /hod    (department_routes())
+└── wrapped by `auth::management_area_on_public`
 ```
 
 - `admin::routes()` (`src/routes/admin/mod.rs`) holds the **technical** pages — People, Settings, the
-  college-wide attendance report, the CMS, appointments, root authority — at their absolute `/admin/...`
-  paths, plus `.nest("/admin", manager_routes())`.
+  college-wide attendance report, appointments, root authority — at their absolute `/admin/...` paths, plus
+  `.nest("/admin", manager_routes().merge(content_routes()))`.
 - `admin::manager_routes()` holds every **department** page whose handler takes `Manager` — the work queue,
   the section index (`/manage/:key`), departments + attendance, academics/enrol, timetable, substitutions,
   courses/offerings/external/selections, exams, marks + corrections + imports, materials — plus the
-  per-user notification feed, written with **relative** paths. It is mounted twice: at `/admin` and, via
+  per-user notification feed, written with **relative** paths. It is mounted at `/admin` and, via
   `routes::department_routes()`, at `/hod` on both listeners.
-- Mounting a second time grants nothing: the guards run per request and are identical, so a teacher without
-  an appointment is refused at `/hod` exactly as at `/admin`.
+- `admin::content_routes()` holds the CMS tools (notices, news, events), also with **relative** paths, so
+  the same handlers serve `/admin/notices` for the IT admin and `/staff/notices` for office staff.
+- `admin::staff_routes()` is the `/staff` office-staff workspace: the dashboard, the section index, the
+  notification feed and `content_routes()`. It is mounted on both listeners by `routes::staff_routes()`.
+- Mounting a second time grants nothing: the guards run per request and are identical, so a caller who is
+  not allowed is refused wherever they try. The public `/admin` and `/staff` mounts are additionally
+  wrapped by `auth::management_area_on_public`, which refuses a `faculty` account and a Super Admin there.
 
-**The workspace is one value, not a duplicated URL table.** Every department link is written once in its
+**The workspace is one value, not a duplicated URL table.** Every management link is written once in its
 canonical `/admin…` form and rewritten on render:
 
 | piece | file | rules |
 | --- | --- | --- |
-| `ADMIN_BASE` / `HOD_BASE`, `base_for(user)` | `src/sections.rs` | `/hod` for a `faculty` account, `/admin` otherwise |
+| `ADMIN_BASE` / `HOD_BASE` / `STAFF_BASE`, `base_for(user)` | `src/sections.rs` | `/hod` for a `faculty` account, `/staff` for office staff, `/admin` otherwise |
 | `in_workspace(base, path)` | `src/sections.rs` | swaps a leading `/admin`; anything else (`/teacher/reports`) is untouched |
 | `Link::url(base)` | `src/sections.rs` | the area catalogue's links, absolute hrefs kept canonical |
 | `NavItem::url(base)` | `src/shell.rs` | the sidebar, rendered in `layouts/app.html` |
@@ -111,9 +120,11 @@ guard is impossible to forget on a handler that takes it:
 | `AdminOnly` | `admin`, `super_admin` | the IT admin's technical powers |
 | `AdminOrPrincipal` | + `principal` | the appointments screen |
 | `AdminDashboard` | + `staff` | the `/admin` overview |
-| `OfficeOrAdmin` | `admin`, `super_admin`, `staff` | CMS authoring |
+| `OfficeOrAdmin` | `admin`, `super_admin`, `staff` | CMS authoring (notices, news, events) — create, edit, publish, archive, delete |
+| `StaffOnly` | `staff` | the `/staff` workspace overview |
 | `PrincipalOnly`, `TeacherOnly`, `StudentOnly`, `SuperAdminOnly` | one role each | `SuperAdminOnly` is root authority: `/admin/roles`, recovery, reopening finalized marks |
 | `Manager` | `admin`, `super_admin`, `principal` → `Scope::All`; a `faculty` account with an **effective** HOD appointment or delegation → `Scope::Department(id)` | resolved per request from `services::appointments`, not from a session flag; no appointment (or no department) is a denial |
+| `management_area_on_public` (middleware) | `admin`, `principal`, `staff` | mounted only on the public `/admin` and `/staff` mounts; refuses a `faculty` account and root authority, using the role recorded in the session at sign-in |
 
 Rules that hold everywhere: authorization is server-side and derived from the session, never from a
 form field; a department-scoped write re-checks that the row belongs to the guard's department (the id in
@@ -207,17 +218,16 @@ redirect) or a new `home_for(&AuthUser)` helper next to `Role::home()` in `src/a
 account with `manages_department()` goes to `/hod/work-queue`. *Verify:* a `tests/app.rs` test that signs in
 through `/login` and asserts the redirect `Location`.
 
-**3. A management role that signs in on the public listener lands on a 404.** `Role::home()` is `/admin`
-for `admin`/`super_admin`/`principal`/`staff`, but `/admin` is not served on the public listener. The
-documented entry point is `:3001`, and this behaviour predates the `/hod` work — but it is a trap.
-*Two options:* (a) keep the boundary and make the landing page honest — redirect to a page that exists on
-that listener, or render a short "this account works on the management listener" notice on `/login`;
-(b) serve the `/admin` **dashboard** (guarded by `AdminDashboard`) and the manager nest on the public
-listener as well, while the technical tools (`AdminOnly`) stay loopback-only, so an admin on a laptop can
-reach the academic half but not People/Settings/root authority. *Where:* `src/auth/mod.rs`
-(`Role::home`, `safe_next_for_role`), `src/routes/auth.rs`, `src/routes/mod.rs`. *Verify:* an e2e test per
-chosen behaviour; the listener boundary test (`/admin/marks` → 404 on `:3000`) must keep passing unless
-option (b) is chosen deliberately.
+**3. ~~A management role that signs in on the public listener lands on a 404.~~ Resolved.** The
+management area (`/admin`, including the technical tools) and the office-staff workspace (`/staff`) are now
+served on both listeners, so an IT admin, Principal or staff member reaches them from `:3000`. Office staff
+have their own workspace (`/staff`, `sections::STAFF_BASE`) rather than `/admin`, and `Role::home()` sends
+them there. Root authority is the deliberate exception: `auth::management_area_on_public` reads the role
+recorded in the session at sign-in and refuses both a `faculty` account and a Super Admin on the public
+mounts, so `/admin/roles`, recovery and the emergency reopening of a finalized result remain loopback-only.
+*Verify:* e2e `an_it_admin_works_on_the_public_listener_but_root_authority_does_not`,
+`office_staff_work_from_the_staff_workspace_on_the_public_listener`, and
+`an_hod_works_from_the_public_listener_under_hod` (which now asserts `/admin/marks` → 403 on `:3000`).
 
 **4. The scheduled backup fails on a host without `pg_dump` on PATH** (pre-existing; unrelated to the
 redesign work). Today the maintenance task logs an error every interval and nothing surfaces it.

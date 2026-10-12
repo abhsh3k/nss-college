@@ -10,7 +10,7 @@ use tower_sessions::Session;
 
 use super::{audiences, normalise_datetime, statuses, TokenForm};
 use crate::{
-    auth::{csrf, AdminOnly, AuthUser, OfficeOrAdmin},
+    auth::{csrf, AuthUser, OfficeOrAdmin},
     error::AppError,
     services::{
         content_admin::{self, EventInput, EventRow},
@@ -22,7 +22,6 @@ use crate::{
 };
 
 const FOLDER: &str = "events";
-const LIST: &str = "/admin/events";
 
 // ---------- List page ----------
 
@@ -45,7 +44,7 @@ pub struct IndexPage {
 pub async fn index(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    OfficeOrAdmin(user): OfficeOrAdmin,
     Query(q): Query<ListQuery>,
 ) -> Result<IndexPage, AppError> {
     let filter = match q.status.as_deref() {
@@ -124,7 +123,7 @@ fn form_page(form: EventFormValues, shell: Shell) -> FormPage {
 pub async fn new_form(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    OfficeOrAdmin(user): OfficeOrAdmin,
 ) -> Result<FormPage, AppError> {
     Ok(form_page(EventFormValues::blank(), Shell::build(&user, &session, &s.db).await?))
 }
@@ -295,7 +294,7 @@ pub async fn create(
     let id = content_admin::create_event(&s.db, &input, Some(user.id)).await?;
     users::audit(&s.db, Some(user.id), "event_created", "event", Some(id)).await?;
     flash(&session, "Event saved.").await?;
-    Ok(Redirect::to(LIST).into_response())
+    Ok(Redirect::to(&super::content_list(&user, "/events")).into_response())
 }
 
 pub async fn update(
@@ -340,7 +339,7 @@ pub async fn update(
     }
     users::audit(&s.db, Some(user.id), "event_updated", "event", Some(id)).await?;
     flash(&session, "Event updated.").await?;
-    Ok(Redirect::to(LIST).into_response())
+    Ok(Redirect::to(&super::content_list(&user, "/events")).into_response())
 }
 
 // ---------- Archive, restore and permanent delete ----------
@@ -348,12 +347,12 @@ pub async fn update(
 pub async fn set_status(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    OfficeOrAdmin(user): OfficeOrAdmin,
     Path(id): Path<i64>,
     Form(f): Form<TokenForm>,
 ) -> Result<Redirect, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
-    let back = super::safe_back(&f.back, LIST);
+    let back = super::safe_back(&f.back, &super::content_list(&user, "/events"));
 
     if content_admin::event_for_edit(&s.db, id).await?.is_none() {
         return Err(AppError::NotFound);
@@ -389,12 +388,12 @@ pub async fn set_status(
 pub async fn destroy(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    OfficeOrAdmin(user): OfficeOrAdmin,
     Path(id): Path<i64>,
     Form(f): Form<TokenForm>,
 ) -> Result<Redirect, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
-    let back = super::safe_back(&f.back, LIST);
+    let back = super::safe_back(&f.back, &super::content_list(&user, "/events"));
 
     if content_admin::event_for_edit(&s.db, id).await?.is_none() {
         return Err(AppError::NotFound);

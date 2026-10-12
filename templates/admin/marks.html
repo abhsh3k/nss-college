@@ -204,18 +204,22 @@
 </section>
 {% endif %}
 
-<!-- Whole batches at once: one CSV row per result -->
+<!-- Whole batches at once: two shapes of CSV, both reviewed before they file -->
 <section class="mt-8 max-w-5xl border border-ink/15 bg-mist p-5" aria-labelledby="import-csv">
   <h2 id="import-csv" class="font-display text-2xl font-semibold">Import marks from a CSV file</h2>
   <p class="mt-2 max-w-3xl text-sm text-ink/70">
-    One row per result, keyed by <strong>{% if sel.kind == "university" %}PRN{% else %}admission number{% endif %}</strong>
-    and filed under <strong>Semester {{ sel.semester }}</strong> as
-    {% if sel.kind == "university" %}the university exam{% else if sel.kind == "internal" %}the internal exam{% if !sel.exam_name.is_empty() %} — {{ sel.exam_name }}{% endif %}{% else %}{{ sel.assessment }} coursework{% endif %}.
-    Only this semester's courses are accepted, and every row carries its own max marks.
+    Every upload is filed under <strong>Semester {{ sel.semester }}</strong> as
+    {% if sel.kind == "university" %}the university exam{% else if sel.kind == "internal" %}the internal exam{% if !sel.exam_name.is_empty() %} — {{ sel.exam_name }}{% endif %}{% else %}{{ sel.assessment }} coursework{% endif %},
+    keyed by <strong>{% if sel.kind == "university" %}PRN{% else %}admission number{% endif %}</strong>, and only this semester's courses are accepted.
+    Nothing is filed straight away: both shapes land on a review page first, where each course's maximum marks is set.
+    The <strong>Name</strong> column is only a label to read back — the PRN/admission number is what is matched against the database.
   </p>
-  <pre class="mt-3 overflow-x-auto rounded border border-ink/15 bg-white p-3 font-mono text-xs text-ink/80">{% if sel.kind == "university" %}prn,course_code,marks_obtained,maxmarks
-2025BCA0001,BCA101,42,50{% else %}admission_no,course_code,marks_obtained,maxmarks
-2501,BCA101,42,50{% endif %}</pre>
+
+  <h3 class="mt-6 font-display text-xl font-semibold">One row per result</h3>
+  <p class="mt-2 max-w-3xl text-sm text-ink/70">The shape used so far: a row for every course a student sat, carrying its own marks and maximum.</p>
+  <pre class="mt-3 overflow-x-auto rounded border border-ink/15 bg-white p-3 font-mono text-xs text-ink/80">{% if sel.kind == "university" %}prn,name,course_code,marks_obtained,maxmarks
+2025BCA0001,Asha Rao,BCA101,42,50{% else %}admission_no,name,course_code,marks_obtained,maxmarks
+2501,Asha Rao,BCA101,42,50{% endif %}</pre>
   <form method="post" action="{{ shell.base }}/marks/import/preview" enctype="multipart/form-data" class="mt-4 flex flex-wrap items-end gap-4">
     <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
     <input type="hidden" name="programme" value="{{ sel.programme }}">
@@ -230,6 +234,42 @@
     </div>
     <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Import CSV</button>
   </form>
+
+  <h3 class="mt-8 font-display text-xl font-semibold">One column per course</h3>
+  <p class="mt-2 max-w-3xl text-sm text-ink/70">A whole semester on one line per student: the first row names the courses, and every later row carries one mark per course in the same order. A blank cell files nothing, and each course's maximum is set on the review page.</p>
+  <pre class="mt-3 overflow-x-auto rounded border border-ink/15 bg-white p-3 font-mono text-xs text-ink/80">{% if sel.kind == "university" %}prn,name,BCA101,BCA102,BCA103
+2025BCA0001,Asha Rao,42,38,45{% else %}admission_no,name,BCA101,BCA102,BCA103
+2501,Asha Rao,42,38,45{% endif %}</pre>
+  <form method="post" action="{{ shell.base }}/marks/import/courses/preview" enctype="multipart/form-data" class="mt-4 flex flex-wrap items-end gap-4">
+    <input type="hidden" name="csrf_token" value="{{ shell.csrf_token }}">
+    <input type="hidden" name="programme" value="{{ sel.programme }}">
+    <input type="hidden" name="semester" value="{{ sel.semester }}">
+    <input type="hidden" name="kind" value="{{ sel.kind }}">
+    <input type="hidden" name="assessment" value="{{ sel.assessment }}">
+    <input type="hidden" name="exam_name" value="{{ sel.exam_name }}">
+    <input type="hidden" name="max" value="{{ sel.max }}">
+    <div class="min-w-72 flex-1">
+      <label for="courses_csv_file" class="block text-sm font-semibold">CSV file</label>
+      <input id="courses_csv_file" name="csv_file" type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls,.ods" required
+             class="mt-2 block w-full text-sm text-ink/70 file:mr-4 file:rounded file:border-0 file:bg-brand file:px-4 file:py-2 file:text-sm file:font-semibold file:text-chalk hover:file:bg-ink">
+    </div>
+    <button type="submit" class="rounded bg-brand px-4 py-2 font-semibold text-chalk hover:bg-ink">Import course-wise CSV</button>
+  </form>
+
+  <h3 class="mt-8 font-display text-xl font-semibold">Download the blank course-wise form</h3>
+  <p class="mt-2 max-w-3xl text-sm text-ink/70">The class list with one column per course and the mark cells empty — fill it in and upload it back above. Each course's maximum is set on the review page, not in the file.</p>
+  <ul class="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm">
+    <li>
+      <a class="font-semibold text-brand underline underline-offset-4 hover:text-ink"
+         href="{{ shell.base }}/marks/template.csv?programme={{ sel.programme }}&amp;semester={{ sel.semester }}&amp;kind={{ sel.kind }}">All Semester {{ sel.semester }} courses</a>
+    </li>
+    {% if sel.course > 0 %}
+    <li>
+      <a class="font-semibold text-brand underline underline-offset-4 hover:text-ink"
+         href="{{ shell.base }}/marks/template.csv?programme={{ sel.programme }}&amp;semester={{ sel.semester }}&amp;kind={{ sel.kind }}&amp;course={{ sel.course }}">Just the open course</a>
+    </li>
+    {% endif %}
+  </ul>
 </section>
 
 <!-- Everything already filed for this semester -->

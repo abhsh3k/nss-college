@@ -255,7 +255,7 @@ pub async fn faculty_options(db: &PgPool) -> Res<Vec<FacultyOption>> {
                   COALESCE(d.name, 'No department') AS department
              FROM faculty f
              LEFT JOIN departments d ON d.id = f.department_id
-            WHERE f.status = 'published'
+            WHERE f.status = 'published' AND f.user_id IS NOT NULL
             ORDER BY d.sort_order, d.name, f.name"#,
     )
     .fetch_all(db)
