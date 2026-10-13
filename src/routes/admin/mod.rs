@@ -3,15 +3,19 @@
 //!
 //! The routes come in two sets:
 //!
-//! * [`routes`] — the technical administration pages (people, publishing,
-//!   settings, appointments, root authority). They are absolute `/admin/...`
-//!   paths, and their handlers take `AdminOnly`/`OfficeOrAdmin`/
-//!   `SuperAdminOnly`. They are served on both listeners for the IT
-//!   administrator, the Principal and office staff; the public mount is wrapped
-//!   by [`crate::auth::management_area_on_public`], which keeps root authority
+//! * [`routes`] — the site-administration pages (people, faculty structure,
+//!   publishing, settings, appointments, root authority). They are absolute
+//!   `/admin/...` paths, and their handlers take `AdminOnly`/`AcademicOnly`/
+//!   `AcademicOrAdmin`/`OfficeOrAdmin`/`SuperAdminOnly`. They are served on both
+//!   listeners for the IT administrator, the Principal and office staff; the
+//!   public mount is wrapped by
+//!   [`crate::auth::management_area_on_public`], which keeps root authority
 //!   loopback-only.
 //! * [`manager_routes`] — the department pages, whose handlers take `Manager`
-//!   (plus the per-user notification feed and the section index). They are
+//!   (plus the per-user notification feed and the section index). The timetable
+//!   is the one exception: its handlers take `Scheduler`, which also admits the
+//!   IT administrator, so a clash between two departments has one hand to
+//!   untangle it. They are
 //!   written with *relative* paths and mounted twice: at `/admin` (where the IT
 //!   administrator and the Principal work) and at `/hod`. The `/hod` mount is
 //!   what makes the head of department's tools work: an HOD is a teacher, they
@@ -110,7 +114,8 @@ pub fn manager_routes() -> Router<AppState> {
         .route("/academics", get(academics::index))
         .route("/academics/programmes/:id", get(academics::programme))
         .route("/academics/programmes/:id/enroll", post(academics::enroll))
-        // Timetable
+        // Timetable — `Scheduler`, so the IT administrator may keep the grid
+        // clash-free alongside the Principal and the department heads.
         .route("/timetable", get(timetable::page))
         .route("/timetable/slots", post(timetable::add_slot))
         .route("/timetable/slots/:id/delete", post(timetable::delete_slot))
@@ -199,8 +204,9 @@ pub fn manager_routes() -> Router<AppState> {
         .merge(materials)
 }
 
-/// Everything the IT administrator's own workspace serves: the technical tools
-/// at their `/admin/...` paths, and the department set mounted underneath them.
+/// Everything the management workspace serves at its absolute `/admin/...`
+/// paths: the site-administration tools, and the department set mounted
+/// underneath them (the department pages are the Principal's and the HODs').
 pub fn routes() -> Router<AppState> {
     let people = Router::new()
         // People
@@ -224,15 +230,17 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/people/import/finished", post(people::import_finished))
         .layer(DefaultBodyLimit::max(CONTENT_BODY_LIMIT));
 
-    // The college-wide attendance report is `AdminOnly`, so it stays in this
-    // workspace; a head of department corrects their own department's register
-    // at `/departments/attendance` instead.
+    // The college-wide attendance report is `AcademicOrAdmin`: the Principal and
+    // the Super Admin, and the IT administrator, which reads the figures and
+    // exports the CSV. A head of department corrects their own department's
+    // register at `/departments/attendance` instead — a write neither of the
+    // other two shares.
     let attendance_report = Router::new()
         .route("/admin/attendance", get(attendance::report))
         .route("/admin/attendance.csv", get(attendance::csv));
 
     // Adding courses to a programme, and editing or deleting a course, is
-    // `AdminOnly`: a head of department enrols students into a semester's
+    // `AcademicOnly`: a head of department enrols students into a semester's
     // courses, but does not change the programme's structure.
     let academics_admin = Router::new()
         .route("/admin/academics/programmes/:id/courses", post(academics::add_course))

@@ -23,33 +23,30 @@ use crate::{
 #[template(path = "admin/manage.html")]
 pub struct ManageTemplate {
     shell: Shell,
-    area: &'static Area,
+    area: Area,
     /// Every area this caller may reach, for the "other areas" strip.
-    siblings: &'static [Area],
+    siblings: Vec<Area>,
 }
 
 /// The catalogue that matches what this user is already allowed to open.
 ///
 /// This mirrors — it does not replace — the guards on the target pages:
 ///
-/// * IT administrator (and the Super Admin, its superset): everything (each
-///   target is `AdminOnly` or `Manager`),
+/// * Super Admin: everything (each target is `AdminOnly`, `AcademicOnly` or
+///   `Manager`);
+/// * IT administrator: its own [`sections::areas_for`] view — accounts, the CMS,
+///   settings, and the two academic tools whose guards admit it (the timetable
+///   and the attendance report);
 /// * office staff: content only (their targets are `OfficeOrAdmin`),
-/// * a head of department or an approved delegate: department-scoped tools
-///   (their targets take `Manager`, which confines every query to
-///   `faculty.department_id`),
+/// * the Principal, and a head of department or an approved delegate:
+///   department-scoped tools (their targets take `Manager`),
 /// * anyone else: refused, exactly as the target pages refuse them.
-fn catalogue(user: &AuthUser) -> Option<&'static [Area]> {
-    match user.role {
-        // Root authority is a superset of the IT admin, so it sees the same
-        // management areas — including the User & Account Management section
-        // that holds the Appointments link.
-        Role::Admin | Role::SuperAdmin => Some(sections::ADMIN),
-        Role::Principal => Some(sections::HOD),
-        Role::Staff => Some(sections::STAFF),
-        Role::Faculty if user.manages_department() => Some(sections::HOD),
-        _ => None,
+fn catalogue(user: &AuthUser) -> Option<Vec<Area>> {
+    if user.role == Role::Faculty && user.manages_department() {
+        return Some(sections::HOD.to_vec());
     }
+    let areas = sections::areas_for(user.role);
+    (!areas.is_empty()).then_some(areas)
 }
 
 /// Which area, if any, this caller may open — and with what error if not.
@@ -59,10 +56,10 @@ fn catalogue(user: &AuthUser) -> Option<&'static [Area]> {
 /// * a slug that belongs to another role's catalogue → `403`, so a boundary is
 ///   reported as a boundary rather than as a missing page,
 /// * anything else → `404`.
-fn lookup(user: &AuthUser, key: &str) -> Result<(&'static Area, &'static [Area]), AppError> {
+fn lookup(user: &AuthUser, key: &str) -> Result<(Area, Vec<Area>), AppError> {
     let all = catalogue(user).ok_or(AppError::Forbidden)?;
-    match sections::find(all, key) {
-        Some(area) => Ok((area, all)),
+    match all.iter().find(|a| a.key == key) {
+        Some(area) => Ok((area.clone(), all)),
         None if sections::exists_any(key) => Err(AppError::Forbidden),
         None => Err(AppError::NotFound),
     }
@@ -89,11 +86,17 @@ mod tests {
 
     #[test]
     fn a_section_page_lists_its_operations_and_the_other_areas() {
-        let area = sections::find(sections::ADMIN, "exams").expect("the exams area");
+        // The Super Admin keeps the academic areas; the IT admin does not.
+        let all = sections::areas_for(Role::SuperAdmin);
+        let area = all
+            .iter()
+            .find(|a| a.key == "exams")
+            .cloned()
+            .expect("the exams area");
         let html = ManageTemplate {
-            shell: crate::sections::test_shell("IT administrator"),
+            shell: crate::sections::test_shell("Super Admin"),
             area,
-            siblings: sections::ADMIN,
+            siblings: all,
         }
         .render()
         .expect("the section page renders");
@@ -104,16 +107,47 @@ mod tests {
         assert!(html.contains("Other management areas"));
     }
 
+    /// The IT administrator's two academic cards list only what its own guards
+    /// open: the grid and the report, never the substitution or the register
+    /// correction that a head of department owns.
+    #[test]
+    fn the_it_admins_timetable_section_offers_no_substitutions() {
+        let all = sections::areas_for(Role::Admin);
+        let area = all
+            .iter()
+            .find(|a| a.key == "timetable")
+            .cloned()
+            .expect("the IT admin's timetable area");
+        let html = ManageTemplate {
+            shell: crate::sections::test_shell("IT administrator"),
+            area,
+            siblings: all,
+        }
+        .render()
+        .expect("the section page renders");
+
+        assert!(html.contains("href=\"/admin/timetable\""));
+        assert!(
+            !html.contains("/admin/substitutions"),
+            "the IT admin was offered the substitution page, which would refuse it"
+        );
+    }
+
     /// The same catalogue rendered for a head of department links into the
     /// department workspace, not into `/admin` — which is not served on the
     /// listener they sign in to.
     #[test]
     fn a_section_page_for_an_hod_links_into_the_department_workspace() {
-        let area = sections::find(sections::HOD, "exams").expect("the exams area");
+        let all = sections::HOD.to_vec();
+        let area = all
+            .iter()
+            .find(|a| a.key == "exams")
+            .cloned()
+            .expect("the exams area");
         let html = ManageTemplate {
             shell: crate::sections::test_shell_in("Head of department", sections::HOD_BASE),
             area,
-            siblings: sections::HOD,
+            siblings: all,
         }
         .render()
         .expect("the section page renders");
@@ -158,6 +192,14 @@ mod tests {
         assert!(matches!(lookup(&hod, "users"), Err(AppError::Forbidden)));
         assert!(matches!(lookup(&hod, "settings"), Err(AppError::Forbidden)));
         assert!(matches!(lookup(&teacher, "students"), Err(AppError::Forbidden)));
+        // The IT admin is offered the timetable and the attendance report, and
+        // none of the rest of the academic set; the Super Admin, as the
+        // superset, still is.
+        assert!(lookup(&admin, "timetable").is_ok());
+        assert!(lookup(&admin, "attendance").is_ok());
+        assert!(matches!(lookup(&admin, "exams"), Err(AppError::Forbidden)));
+        assert!(matches!(lookup(&admin, "offerings"), Err(AppError::Forbidden)));
+        assert!(lookup(&super_admin, "exams").is_ok());
 
         // Roles with no catalogue at all are refused outright, and a typo is a
         // 404 for everyone.

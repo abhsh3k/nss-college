@@ -213,7 +213,8 @@ pub fn decorate(rows: Vec<StudentSummary>, leave_counts: bool, low_percent: f64)
     out
 }
 
-/// The per-student report as CSV, for the IT admin to hand to the office.
+/// The per-student report as CSV, for the academic authority or the IT
+/// administrator to hand to the office.
 pub fn students_csv(rows: &[StudentRow]) -> csv::Result<Vec<u8>> {
     let mut w = csv::Writer::from_writer(Vec::new());
     w.write_record([

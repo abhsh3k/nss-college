@@ -1,8 +1,8 @@
 //! Study materials: the files a head of department shares with the students of
 //! a course.
 //!
-//! Every handler takes `Manager`, so the IT admin manages every course and an
-//! HOD only the courses owned by their own department. The course id that
+//! Every handler takes `Manager`, so the Principal and the Super Admin manage
+//! every course and an HOD only the courses owned by their own department. The course id that
 //! arrives in the form is never trusted on its own: the owning department is
 //! looked up server-side and compared with the manager's scope.
 
@@ -27,7 +27,7 @@ use crate::{
 const FOLDER: &str = "materials";
 
 /// The materials list in the caller's own workspace: `/admin/materials` for the
-/// IT administrator, `/hod/materials` for a head of department.
+/// Principal, `/hod/materials` for a head of department.
 fn list(manager: &Manager) -> String {
     format!("{}/materials", sections::base_for(&manager.user))
 }

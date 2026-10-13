@@ -11,7 +11,7 @@ use axum::extract::State;
 use tower_sessions::Session;
 
 use crate::{
-    auth::Manager,
+    auth::{Manager, Role},
     error::AppError,
     sections::{self, Area},
     services::{academics, courses},
@@ -28,7 +28,7 @@ pub struct WorkQueueTemplate {
     areas_title: &'static str,
     /// The management areas this caller may open. Links only — the page behind
     /// each one keeps its own guard.
-    areas: &'static [Area],
+    areas: Vec<Area>,
     /// External offerings still waiting for this department's decision.
     approvals: Vec<courses::Approval>,
     /// Students asking to move between confirmed courses.
@@ -61,12 +61,13 @@ pub async fn page(
 ) -> Result<WorkQueueTemplate, AppError> {
     let department = manager.department();
 
-    // The IT admin reaches the college-wide areas; a head of department gets
-    // the department-scoped ones. Same rule as the links they can open.
-    let (areas_title, areas) = if manager.is_admin() {
-        ("Management areas", sections::ADMIN)
+    // The Super Admin reaches every area; the Principal and a head of
+    // department get the department-scoped set. (The IT admin never reaches
+    // this page at all — `Manager` refuses it.)
+    let (areas_title, areas) = if manager.user.role == Role::SuperAdmin {
+        ("Management areas", sections::ADMIN.to_vec())
     } else {
-        ("Department management", sections::HOD)
+        ("Department management", sections::HOD.to_vec())
     };
 
     // Approvals arrive with every status; only the undecided ones are work.
@@ -94,7 +95,7 @@ pub async fn page(
 mod tests {
     use super::*;
 
-    fn render(areas_title: &'static str, areas: &'static [crate::sections::Area]) -> String {
+    fn render(areas_title: &'static str, areas: Vec<crate::sections::Area>) -> String {
         WorkQueueTemplate {
             shell: crate::sections::test_shell("Head of department"),
             department_name: "Computer Science".into(),
@@ -113,7 +114,7 @@ mod tests {
 
     #[test]
     fn the_queue_keeps_its_pending_lists_and_gains_the_department_areas() {
-        let html = render("Department management", crate::sections::HOD);
+        let html = render("Department management", crate::sections::HOD.to_vec());
 
         // The pending work stays on the page; the cards are added, not swapped in.
         for heading in [
@@ -136,8 +137,8 @@ mod tests {
     }
 
     #[test]
-    fn the_it_admin_sees_the_college_wide_areas_on_the_same_page() {
-        let html = render("Management areas", crate::sections::ADMIN);
+    fn the_super_admin_sees_the_college_wide_areas_on_the_same_page() {
+        let html = render("Management areas", crate::sections::ADMIN.to_vec());
         assert!(html.contains("Management areas"));
         assert!(html.contains("/admin/manage/users"));
         assert!(!html.contains("/admin/manage/students"));

@@ -10,7 +10,7 @@ Test commands referenced throughout:
 
     docker compose up -d
     DATABASE_URL=postgres://nss:nss@localhost:5432/nss_college cargo test
-    # 83 unit + 40 database + 31 end-to-end + 1 Node hook test, currently all passing
+    # 84 unit + 40 database + 32 end-to-end + 1 Node hook test, currently all passing
     # (the Node test shells out to `node --test tests/js/app_hooks.test.mjs`; it skips
     #  with a note if Node is not installed)
 
@@ -58,16 +58,18 @@ Test commands referenced throughout:
 
 - Two listeners: `/` on `HOST`/`PORT`, management on `MANAGEMENT_HOST`/`MANAGEMENT_PORT`. The management
   address is validated at startup and the process **panics** on a non-loopback bind, so the boundary is
-  network-level, not navigation-level. `public_router()` and `management_router()` register disjoint route
-  sets.
-- **The department workspace `/hod`** fixes the consequence of that split: an HOD is a teacher, so they
-  sign in on the public listener, where `/admin` is not served at all — every department link was a 404.
-  `admin::manager_routes()` (every `Manager`-guarded handler, plus the per-user notification feed and the
-  section index) is written with relative paths and mounted twice, at `/admin` (management listener) and at
-  `/hod` (both listeners; the same handlers, so the same guards — a teacher without an appointment is
-  refused at `/hod` exactly as at `/admin`). The mount adds no authority; it makes the pages reachable
-  from the listener the HOD is actually on. College-wide pages (People, Settings, the attendance report,
-  the CMS, root authority) stay `AdminOnly` at `/admin` and off the public listener.
+  network-level, not navigation-level. The management area (`/admin`, `/staff`) and the department
+  workspace (`/hod`) are now mounted on **both** listeners for the roles that work on the public one; the
+  routes kept loopback-only are root authority (`/admin/roles`, recovery, reopening a finalized record),
+  refused on the public mount by `auth::management_area_on_public`.
+- **The department workspace `/hod`** fixes the consequence of that split for an HOD: an HOD is a teacher,
+  so they sign in on the public listener, and the public `/admin` mount refuses a `faculty` account. Every
+  department link would be a 404, so `admin::manager_routes()` — every `Manager`-guarded handler, plus the
+  per-user notification feed and the section index — is written with relative paths and mounted a second
+  time at `/hod` (on both listeners; the same handlers, so the same guards — a teacher without an
+  appointment is refused at `/hod` exactly as at `/admin`). The mount adds no authority; it makes the
+  pages reachable from the listener the HOD is actually on. The IT admin, the Principal and office staff
+  reach the management area on either listener; root authority is the deliberate exception.
 - The workspace is a single value, not a duplicated URL table: `sections::base_for(user)` is `/hod` for a
   teacher and `/admin` for every other role, `Shell::base` carries it into every template, and
   `sections::Link::url` / `shell::NavItem::url` / `notifications::Notification::href_in` rewrite the one
@@ -109,6 +111,19 @@ Test commands referenced throughout:
   served on the loopback management listener, it is the only role that reaches `/admin/roles`, and the
   last active Super Admin can be neither demoted nor deactivated. See §3.A.2.
 - `safe_next_for_role` allowlists the post-login redirect per role.
+- **The IT admin is a site role with two academic tools, not an academic one.** `Manager` deliberately
+  excludes `Role::Admin`, and the course structure sits behind `AcademicOnly` (`SuperAdmin`/`Principal`).
+  Two tools are widened to the IT admin by their own guards instead: the **timetable** (`Scheduler` — one
+  hand that reaches every department is what keeps the grid clash-free) and the **attendance report and its
+  CSV** (`AcademicOrAdmin`, a read; correcting a register stays with a head of department). It keeps
+  `AdminOnly` (accounts, settings, the CMS) as well, and its dashboard catalogue (`sections::areas_for`) and
+  sidebar offer those two in a reduced form — no substitution, no department register — so it is offered no
+  link that would answer 403. The Super Admin, as the superset, keeps everything. Evidence: e2e
+  `the_it_admin_keeps_the_timetable_and_the_attendance_report`, `the_it_admin_can_schedule_a_period`,
+  `the_principal_may_act_for_any_programme_but_the_it_admin_may_not`; unit
+  `the_it_admin_is_offered_the_site_and_the_two_areas_it_keeps`,
+  `the_it_admin_nav_is_the_site_the_schedule_and_the_attendance_report`,
+  `the_it_admins_timetable_section_offers_no_substitutions`.
 
 ### 2.3 Academic integrity (P0.8–P0.12, P1.1–P1.5)
 
@@ -203,7 +218,7 @@ Test commands referenced throughout:
 - `main.rs` is only process setup and the listeners; the application is `src/lib.rs`, which is what the
   tests build against. `apply_layers`, `connect`, `migrator` and `init_session_store` are library
   functions.
-- **Suite**: 83 unit, 40 database (`#[sqlx::test]`, a freshly migrated database per test), 31 end-to-end
+- **Suite**: 84 unit, 40 database (`#[sqlx::test]`, a freshly migrated database per test), 32 end-to-end
   (`tower::oneshot` through the real layered router), and one Node hook test (`tests/js/app_hooks.test.mjs`,
   run by `tests/js_hooks.rs`). Currently all passing; the only build warning is the pre-existing
   `sqlx-postgres v0.7.4` future-incompatibility notice.
@@ -225,8 +240,11 @@ architecture, the recipe for adding a page, and the CLI/operations cookbook.
 
 1. ~~**Principal / Academic Admin role** (brief §5).~~ **Done.** `Role::Principal` (migration `0028`
    widens the `users.role` CHECK) lands on `/admin`, gets `Scope::All` *academic* authority through
-   `Manager` (cross-department, but no technical powers), and its own sidebar. The IT admin now
-   **requests** an HOD appointment (`appointments::request_head`, status `pending`, grants nothing) and the
+   `Manager` (cross-department, but no site/account powers), and its own sidebar. That authority is the
+   Principal's alone: `Manager` no longer includes the IT admin (`AcademicOnly` and `Manager` guard the
+   course structure, marks and results; the timetable and the attendance *report* are the two tools widened
+   back to the IT admin under their own `Scheduler`/`AcademicOrAdmin` guards). The IT admin now **requests** an HOD
+   appointment (`appointments::request_head`, status `pending`, grants nothing) and the
    Principal **approves** it (`appointments::approve_head`), with self-approval refused. Evidence:
    `tests/database.rs` — `a_head_appointment_is_pending_until_the_principal_approves`,
    `a_rejected_head_appointment_never_activates`; unit test `the_principal_is_a_distinct_role_with_an_academic_workspace`.
@@ -424,3 +442,26 @@ Dependency-aware, highest value first:
    authorization-matrix (§3.B.18) and JS-coverage (§3.B.19) items from the same pass are also now done or
    bounded, leaving only the items this document records as still partial. The one structural limit left in
    §3.B.17 is Askama's: per-row fragments cannot be partials without a template-macro upgrade.
+
+---
+
+## 5. This pass: website content and staff profiles
+
+- **Photo placement per section** — migration `0036` adds `photo_position` (`above` / `below` / `left` /
+  `right` / `inline`) to `page_sections`, `home_sections` and `section_display_defaults`. `layout::DisplayOptions`
+  carries it, the editor offers it, and `partials/page_section.html` honours every value — including the
+  `[photo]` line an author writes to place the picture inside the text. Verified by a unit test for the
+  cleaning and round trip, and an e2e test that a new section stores the placement it was given.
+- **Pages screen** — `/about/staff` and `/academics/rank-holders` are dropped from the admin Pages list
+  (`site_admin::MANAGED_ELSEWHERE`), so the faculty and rank-holder screens stay the single place to manage
+  them. Verified by an e2e test.
+- **The website on the loopback port** — `management_router()` now merges `site_routes()` as well as the
+  management area, so the whole public site is browsable on `:3001`. The loopback bind is unchanged and
+  management stays reachable on both listeners (root authority excepted). Verified by an e2e test that
+  `/`, `/academics`, `/departments`, `/notices` and `/about/staff` answer through the management router.
+- **Staff profiles** — migration `0037` adds `staff_profiles`. At `/profile`, a teacher edits their own
+  `faculty` row (name, designation, qualification, contact, biography, optional photo) while the Principal
+  and office staff keep theirs in `staff_profiles`, keyed by account. It appears on `/about/staff` under a
+  **Principal** or **Office staff** heading, and the photo is served through the authorization-aware
+  `/uploads` route. Verified by e2e tests for the Principal and office-staff path, the teacher path, the
+  group headings, and the `403` for a role with no profile.

@@ -8,7 +8,7 @@ use tower_sessions::Session;
 
 use super::{checkbox, normalise_time, parse_i32, parse_i64};
 use crate::{
-    auth::{csrf, Manager},
+    auth::{csrf, Scheduler},
     error::AppError,
     sections,
     services::{
@@ -157,25 +157,26 @@ impl OfferingPanel {
     }
 }
 
-/// Whether this manager may schedule periods for this offering: it must be
-/// published, and belong to their department (the IT admin reaches all).
-async fn may_manage_offering(s: &AppState, manager: &Manager, offering_id: i64) -> Result<bool, AppError> {
+/// Whether this scheduler may schedule periods for this offering: it must be
+/// published, and belong to their department — the college-wide scheduler (the
+/// IT admin, the Principal and the Super Admin) reaches every one.
+async fn may_manage_offering(s: &AppState, scheduler: &Scheduler, offering_id: i64) -> Result<bool, AppError> {
     let Some(o) = courses::offering(&s.db, offering_id).await? else {
         return Ok(false);
     };
     Ok(o.status == "published"
-        && (manager.is_admin() || manager.department() == Some(o.offering_department_id)))
+        && (scheduler.reaches_all() || scheduler.department() == Some(o.offering_department_id)))
 }
 
 async fn build_offering_panel(
     s: &AppState,
-    manager: &Manager,
+    scheduler: &Scheduler,
     csrf_token: String,
     offering_id: i64,
     notice: Option<String>,
     error: Option<String>,
 ) -> Result<OfferingPanel, AppError> {
-    if !may_manage_offering(s, manager, offering_id).await? {
+    if !may_manage_offering(s, scheduler, offering_id).await? {
         return Err(AppError::Forbidden);
     }
     let o = courses::offering(&s.db, offering_id).await?.ok_or(AppError::NotFound)?;
@@ -190,7 +191,7 @@ async fn build_offering_panel(
         }
     }
     Ok(OfferingPanel {
-        base: sections::base_for(&manager.user),
+        base: sections::base_for(&scheduler.user),
         csrf_token,
         offering_id,
         code: o.code,
@@ -199,7 +200,7 @@ async fn build_offering_panel(
         semester: o.semester,
         department: o.department,
         days,
-        teachers: academics::teacher_options_for(&s.db, manager.department()).await?,
+        teachers: academics::teacher_options_for(&s.db, scheduler.department()).await?,
         notice,
         error,
     })
@@ -219,7 +220,7 @@ pub struct PageQuery {
 pub struct TimetablePage {
     shell: Shell,
     programmes: Vec<ProgrammeOption>,
-    /// Published offerings this manager may schedule, for the offering picker.
+    /// Published offerings this scheduler may schedule, for the offering picker.
     offerings: Vec<courses::SchedulableOffering>,
     sel_programme: i64,
     sel_semester: i32,
@@ -230,11 +231,11 @@ pub struct TimetablePage {
 pub async fn page(
     State(s): State<AppState>,
     session: Session,
-    manager: Manager,
+    scheduler: Scheduler,
     Query(q): Query<PageQuery>,
 ) -> Result<TimetablePage, AppError> {
-    let shell = Shell::build(&manager.user, &session, &s.db).await?;
-    let department = manager.department();
+    let shell = Shell::build(&scheduler.user, &session, &s.db).await?;
+    let department = scheduler.department();
     let sel_programme = q.programme.as_deref().and_then(parse_i64).unwrap_or(0);
     let sel_semester = q
         .semester
@@ -255,7 +256,7 @@ pub async fn page(
     let offering_panel = match sel_offering {
         0 => OfferingPanel::empty(),
         id => {
-            match build_offering_panel(&s, &manager, shell.csrf_token.clone(), id, None, None).await {
+            match build_offering_panel(&s, &scheduler, shell.csrf_token.clone(), id, None, None).await {
                 Ok(p) => p,
                 Err(AppError::NotFound) | Err(AppError::Forbidden) => OfferingPanel::empty(),
                 Err(e) => return Err(e),
@@ -310,24 +311,25 @@ pub struct SlotForm {
 pub async fn add_slot(
     State(s): State<AppState>,
     session: Session,
-    manager: Manager,
+    scheduler: Scheduler,
     Form(f): Form<SlotForm>,
 ) -> Result<PanelTemplate, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
     let programme_id = parse_i64(&f.programme_id).ok_or(AppError::NotFound)?;
-    // HODs may only build a timetable for their own department.
-    if !academics::may_manage_programme(&s.db, programme_id, manager.department()).await? {
+    // An HOD may only build a timetable for their own department; the
+    // college-wide scheduler keeps the whole grid.
+    if !academics::may_manage_programme(&s.db, programme_id, scheduler.department()).await? {
         return Err(AppError::Forbidden);
     }
     let semester = parse_i32(&f.semester).filter(|v| (1..=8).contains(v)).ok_or(AppError::NotFound)?;
     let token = f.csrf_token.clone();
 
-    let base = sections::base_for(&manager.user);
+    let base = sections::base_for(&scheduler.user);
     let fail = |msg: &str| {
         build_panel(
             &s,
             base,
-            manager.department(),
+            scheduler.department(),
             token.clone(),
             programme_id,
             semester,
@@ -374,7 +376,7 @@ pub async fn add_slot(
     };
     if !teacher_tbd
         && (faculty_id <= 0
-            || !academics::may_manage_teacher(&s.db, faculty_id, manager.department()).await?
+            || !academics::may_manage_teacher(&s.db, faculty_id, scheduler.department()).await?
             || !sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS (SELECT 1 FROM faculty WHERE id = $1 AND status = 'published')",
             )
@@ -420,10 +422,10 @@ pub async fn add_slot(
     }
 
     let id = academics::add_slot(&s.db, &slot).await?;
-    users::audit(&s.db, Some(manager.user.id), "timetable_slot_added", "timetable_entry", Some(id)).await?;
+    users::audit(&s.db, Some(scheduler.user.id), "timetable_slot_added", "timetable_entry", Some(id)).await?;
     let notice = format!("Added {start_at}–{end_at}.");
     Ok(PanelTemplate {
-        panel: build_panel(&s, sections::base_for(&manager.user), manager.department(), token, programme_id, semester, Some(notice), None).await?,
+        panel: build_panel(&s, sections::base_for(&scheduler.user), scheduler.department(), token, programme_id, semester, Some(notice), None).await?,
     })
 }
 
@@ -437,14 +439,14 @@ pub struct DeleteForm {
 pub async fn delete_slot(
     State(s): State<AppState>,
     session: Session,
-    manager: Manager,
+    scheduler: Scheduler,
     Path(id): Path<i64>,
     Form(f): Form<DeleteForm>,
 ) -> Result<PanelTemplate, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
     let programme_id = parse_i64(&f.programme_id).ok_or(AppError::NotFound)?;
-    // The period being removed must belong to a programme this manager owns.
-    if !academics::may_manage_programme(&s.db, programme_id, manager.department()).await? {
+    // The period being removed must belong to a programme this scheduler owns.
+    if !academics::may_manage_programme(&s.db, programme_id, scheduler.department()).await? {
         return Err(AppError::Forbidden);
     }
     let slot_programme: Option<i64> =
@@ -459,16 +461,16 @@ pub async fn delete_slot(
     let semester = parse_i32(&f.semester).filter(|v| (1..=8).contains(v)).ok_or(AppError::NotFound)?;
     match academics::delete_slot(&s.db, id).await {
         Ok(()) => {
-            users::audit(&s.db, Some(manager.user.id), "timetable_slot_removed", "timetable_entry", Some(id)).await?;
+            users::audit(&s.db, Some(scheduler.user.id), "timetable_slot_removed", "timetable_entry", Some(id)).await?;
             Ok(PanelTemplate {
-                panel: build_panel(&s, sections::base_for(&manager.user), manager.department(), f.csrf_token, programme_id, semester, Some("Period removed.".into()), None).await?,
+                panel: build_panel(&s, sections::base_for(&scheduler.user), scheduler.department(), f.csrf_token, programme_id, semester, Some("Period removed.".into()), None).await?,
             })
         }
         Err(e) if crate::error::is_foreign_key_violation(&e) => Ok(PanelTemplate {
             panel: build_panel(
                 &s,
-                sections::base_for(&manager.user),
-                manager.department(),
+                sections::base_for(&scheduler.user),
+                scheduler.department(),
                 f.csrf_token,
                 programme_id,
                 semester,
@@ -506,17 +508,17 @@ pub struct OfferingSlotForm {
 pub async fn add_offering_slot(
     State(s): State<AppState>,
     session: Session,
-    manager: Manager,
+    scheduler: Scheduler,
     Form(f): Form<OfferingSlotForm>,
 ) -> Result<OfferingPanelTemplate, AppError> {
     csrf::verify(&session, &f.csrf_token).await?;
     let offering_id = parse_i64(&f.offering_id).ok_or(AppError::NotFound)?;
-    if !may_manage_offering(&s, &manager, offering_id).await? {
+    if !may_manage_offering(&s, &scheduler, offering_id).await? {
         return Err(AppError::Forbidden);
     }
     let token = f.csrf_token.clone();
     let fail = |msg: &str| {
-        build_offering_panel(&s, &manager, token.clone(), offering_id, None, Some(msg.to_string()))
+        build_offering_panel(&s, &scheduler, token.clone(), offering_id, None, Some(msg.to_string()))
     };
 
     let weekday = parse_i32(&f.weekday).filter(|d| (1..=6).contains(d)).map(|d| d as i16);
@@ -557,7 +559,7 @@ pub async fn add_offering_slot(
     };
     if !teacher_tbd
         && (faculty_id <= 0
-            || !academics::may_manage_teacher(&s.db, faculty_id, manager.department()).await?
+            || !academics::may_manage_teacher(&s.db, faculty_id, scheduler.department()).await?
             || !sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS (SELECT 1 FROM faculty WHERE id = $1 AND status = 'published')",
             )
@@ -603,7 +605,7 @@ pub async fn add_offering_slot(
     let id = academics::add_offering_slot(&s.db, &slot).await?;
     users::audit(
         &s.db,
-        Some(manager.user.id),
+        Some(scheduler.user.id),
         "offering_period_added",
         "timetable_entry",
         Some(id),
@@ -611,14 +613,14 @@ pub async fn add_offering_slot(
     .await?;
     let notice = format!("Added {start_at}–{end_at}.");
     Ok(OfferingPanelTemplate {
-        offering_panel: build_offering_panel(&s, &manager, token, offering_id, Some(notice), None).await?,
+        offering_panel: build_offering_panel(&s, &scheduler, token, offering_id, Some(notice), None).await?,
     })
 }
 
 pub async fn delete_offering_slot(
     State(s): State<AppState>,
     session: Session,
-    manager: Manager,
+    scheduler: Scheduler,
     Path(id): Path<i64>,
     Form(f): Form<OfferingSlotForm>,
 ) -> Result<OfferingPanelTemplate, AppError> {
@@ -632,7 +634,7 @@ pub async fn delete_offering_slot(
     let Some(offering_id) = offering_id else {
         return Err(AppError::NotFound);
     };
-    if !may_manage_offering(&s, &manager, offering_id).await? {
+    if !may_manage_offering(&s, &scheduler, offering_id).await? {
         return Err(AppError::Forbidden);
     }
     let deleted = match sqlx::query(
@@ -650,7 +652,7 @@ pub async fn delete_offering_slot(
             return Ok(OfferingPanelTemplate {
                 offering_panel: build_offering_panel(
                     &s,
-                    &manager,
+                    &scheduler,
                     f.csrf_token,
                     offering_id,
                     None,
@@ -667,7 +669,7 @@ pub async fn delete_offering_slot(
     if deleted.rows_affected() > 0 {
         users::audit(
             &s.db,
-            Some(manager.user.id),
+            Some(scheduler.user.id),
             "offering_period_removed",
             "timetable_entry",
             Some(id),
@@ -677,7 +679,7 @@ pub async fn delete_offering_slot(
     Ok(OfferingPanelTemplate {
         offering_panel: build_offering_panel(
             &s,
-            &manager,
+            &scheduler,
             f.csrf_token,
             offering_id,
             Some("Period removed.".into()),

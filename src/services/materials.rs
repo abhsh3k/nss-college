@@ -6,7 +6,7 @@
 //!
 //! Access is scoped, not merely role-based:
 //!
-//! * an IT admin (`department` is `None`) manages every course;
+//! * the college-wide manager (`department` is `None`) manages every course;
 //! * a head of department only manages courses owned by their department,
 //!   whether the course carries the department itself or inherits it from its
 //!   programme;
@@ -45,7 +45,8 @@ pub struct CourseChoice {
 }
 
 /// Whether a manager scoped to `scope` may act on a course owned by
-/// `course_department`. `None` is the IT admin, who may act on anything.
+/// `course_department`. `None` is the college-wide manager, who may act on
+/// anything.
 ///
 /// Kept as a pure function so the scope rule itself can be unit-tested without
 /// a database.
@@ -199,7 +200,7 @@ mod tests {
     use super::scope_allows;
 
     #[test]
-    fn the_it_admin_may_manage_any_course() {
+    fn the_college_wide_manager_may_manage_any_course() {
         assert!(scope_allows(None, None));
         assert!(scope_allows(None, Some(4)));
     }

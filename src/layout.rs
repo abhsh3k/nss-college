@@ -61,7 +61,24 @@ pub enum Size {
     Large,
 }
 
-/// The six display choices for one section.
+/// Where the photo sits relative to the heading and the text.
+///
+/// This is what lets an editor place the photo freely rather than always having
+/// it above the heading: `Above` and `Below` are block placements (the photo on
+/// its own, before or after the copy), `Left` and `Right` float it beside the
+/// text, and `Inline` puts it exactly where the author writes a `[photo]` line
+/// in the body.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PhotoPosition {
+    #[default]
+    Above,
+    Below,
+    Left,
+    Right,
+    Inline,
+}
+
+/// The seven display choices for one section.
 ///
 /// The `columns` count is a plain number rather than an enum because the
 /// templates ask "is this exactly 3?" and a number reads better than a variant
@@ -74,6 +91,9 @@ pub struct DisplayOptions {
     pub text_align: Align,
     pub photo_shape: Shape,
     pub photo_size: Size,
+    /// Where the photo sits. Orthogonal to `image_align`, which only nudges the
+    /// photo left, centre or right when it is drawn as a block above or below.
+    pub photo_position: PhotoPosition,
 }
 
 impl DisplayOptions {
@@ -90,6 +110,7 @@ impl DisplayOptions {
             text_align: Align::Left,
             photo_shape: Shape::Circle,
             photo_size: Size::Medium,
+            photo_position: PhotoPosition::Above,
         }
     }
 
@@ -148,6 +169,36 @@ impl DisplayOptions {
         self.photo_size == Size::Large
     }
 
+    // ---- Photo placement ----
+
+    pub fn position_is_above(&self) -> bool {
+        self.photo_position == PhotoPosition::Above
+    }
+
+    pub fn position_is_below(&self) -> bool {
+        self.photo_position == PhotoPosition::Below
+    }
+
+    pub fn position_is_left(&self) -> bool {
+        self.photo_position == PhotoPosition::Left
+    }
+
+    pub fn position_is_right(&self) -> bool {
+        self.photo_position == PhotoPosition::Right
+    }
+
+    /// True when the photo is drawn inside the body at the author's `[photo]`
+    /// line, rather than as a block or a float.
+    pub fn position_is_inline(&self) -> bool {
+        self.photo_position == PhotoPosition::Inline
+    }
+
+    /// True for the two block placements, where the horizontal alignment still
+    /// applies. A floated or inline photo is positioned by the placement itself.
+    pub fn position_is_block(&self) -> bool {
+        matches!(self.photo_position, PhotoPosition::Above | PhotoPosition::Below)
+    }
+
     /// The photo's edge length in pixels, for the `width`/`height` attributes so
     /// the browser reserves the right box before the file arrives.
     pub fn photo_px(&self) -> u32 {
@@ -166,6 +217,7 @@ impl DisplayOptions {
         text_align: &str,
         photo_shape: &str,
         photo_size: &str,
+        photo_position: &str,
     ) -> DisplayOptions {
         DisplayOptions {
             layout: clean_layout(layout),
@@ -176,12 +228,31 @@ impl DisplayOptions {
             text_align: clean_align(text_align),
             photo_shape: clean_shape(photo_shape),
             photo_size: clean_size(photo_size),
+            photo_position: clean_photo_position(photo_position),
         }
     }
 
-    /// The six values ready to bind to a query.
-    pub fn to_row(&self) -> (&'static str, i32, &'static str, &'static str, &'static str, &'static str) {
-        (layout_str(self.layout), self.columns, align_str(self.image_align), align_str(self.text_align), shape_str(self.photo_shape), size_str(self.photo_size))
+    /// The seven values ready to bind to a query.
+    pub fn to_row(
+        &self,
+    ) -> (
+        &'static str,
+        i32,
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+    ) {
+        (
+            layout_str(self.layout),
+            self.columns,
+            align_str(self.image_align),
+            align_str(self.text_align),
+            shape_str(self.photo_shape),
+            size_str(self.photo_size),
+            position_str(self.photo_position),
+        )
     }
 }
 
@@ -213,6 +284,16 @@ fn size_str(size: Size) -> &'static str {
         Size::Small => "sm",
         Size::Medium => "md",
         Size::Large => "lg",
+    }
+}
+
+fn position_str(position: PhotoPosition) -> &'static str {
+    match position {
+        PhotoPosition::Above => "above",
+        PhotoPosition::Below => "below",
+        PhotoPosition::Left => "left",
+        PhotoPosition::Right => "right",
+        PhotoPosition::Inline => "inline",
     }
 }
 
@@ -265,7 +346,19 @@ pub fn clean_size(value: &str) -> Size {
     }
 }
 
-/// Read the six choices out of a parsed form body.
+/// Accepts a photo placement from a form, falling back to "above" (the way
+/// every section was drawn before the placement existed).
+pub fn clean_photo_position(value: &str) -> PhotoPosition {
+    match value.trim() {
+        "below" => PhotoPosition::Below,
+        "left" => PhotoPosition::Left,
+        "right" => PhotoPosition::Right,
+        "inline" => PhotoPosition::Inline,
+        _ => PhotoPosition::Above,
+    }
+}
+
+/// Read the seven choices out of a parsed form body.
 pub fn from_form(body: &crate::uploads::ParsedForm) -> DisplayOptions {
     DisplayOptions {
         layout: clean_layout(body.field("layout")),
@@ -274,6 +367,7 @@ pub fn from_form(body: &crate::uploads::ParsedForm) -> DisplayOptions {
         text_align: clean_align(body.field("text_align")),
         photo_shape: clean_shape(body.field("photo_shape")),
         photo_size: clean_size(body.field("photo_size")),
+        photo_position: clean_photo_position(body.field("photo_position")),
     }
 }
 
@@ -284,16 +378,16 @@ pub fn from_form(body: &crate::uploads::ParsedForm) -> DisplayOptions {
 /// `/academics/rank-holders` page, so an admin sets the look in one place.
 pub const RANK_HOLDERS_KEY: &str = "rank_holders";
 
-/// The six display columns, in the order [`DisplayOptions::from_row`] wants.
+/// The display columns, in the order [`DisplayOptions::from_row`] wants.
 pub const COLUMNS: &str =
-    "layout, grid_columns, image_align, text_align, photo_shape, photo_size";
+    "layout, grid_columns, image_align, text_align, photo_shape, photo_size, photo_position";
 
 /// Read one `layout, columns, ...` row into [`DisplayOptions`].
 async fn read_opts(db: &PgPool, sql: &str) -> Res<Option<DisplayOptions>> {
-    let row: Option<(String, i32, String, String, String, String)> =
+    let row: Option<(String, i32, String, String, String, String, String)> =
         sqlx::query_as(sql).fetch_optional(db).await?;
-    Ok(row.map(|(l, c, ia, ta, ps, pz)| {
-        DisplayOptions::from_row(&l, c, &ia, &ta, &ps, &pz)
+    Ok(row.map(|(l, c, ia, ta, ps, pz, pp)| {
+        DisplayOptions::from_row(&l, c, &ia, &ta, &ps, &pz, &pp)
     }))
 }
 
@@ -314,18 +408,20 @@ pub async fn defaults(db: &PgPool) -> Res<DisplayOptions> {
 
 /// Write the site's default choices.
 pub async fn save_defaults(db: &PgPool, opts: &DisplayOptions) -> Res<()> {
-    let (layout, columns, image_align, text_align, photo_shape, photo_size) = opts.to_row();
+    let (layout, columns, image_align, text_align, photo_shape, photo_size, photo_position) =
+        opts.to_row();
     sqlx::query(
         r#"INSERT INTO section_display_defaults
-             (id, layout, grid_columns, image_align, text_align, photo_shape, photo_size)
-           VALUES (1, $1, $2, $3, $4, $5, $6)
+             (id, layout, grid_columns, image_align, text_align, photo_shape, photo_size, photo_position)
+           VALUES (1, $1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (id) DO UPDATE SET
                layout = EXCLUDED.layout,
                grid_columns = EXCLUDED.grid_columns,
                image_align = EXCLUDED.image_align,
                text_align = EXCLUDED.text_align,
                photo_shape = EXCLUDED.photo_shape,
-               photo_size = EXCLUDED.photo_size"#,
+               photo_size = EXCLUDED.photo_size,
+               photo_position = EXCLUDED.photo_position"#,
     )
     .bind(layout)
     .bind(columns)
@@ -333,6 +429,7 @@ pub async fn save_defaults(db: &PgPool, opts: &DisplayOptions) -> Res<()> {
     .bind(text_align)
     .bind(photo_shape)
     .bind(photo_size)
+    .bind(photo_position)
     .execute(db)
     .await?;
     Ok(())
@@ -341,15 +438,37 @@ pub async fn save_defaults(db: &PgPool, opts: &DisplayOptions) -> Res<()> {
 /// The rank holders list's display choices, falling back to the site defaults
 /// when the home section has no row of its own.
 pub async fn rank_holders_options(db: &PgPool) -> Res<DisplayOptions> {
-    let row: Option<(String, i32, String, String, String, String)> = sqlx::query_as(&format!(
+    let row: Option<(String, i32, String, String, String, String, String)> = sqlx::query_as(&format!(
         "SELECT {COLUMNS} FROM home_sections WHERE section_key = $1"
     ))
     .bind(RANK_HOLDERS_KEY)
     .fetch_optional(db)
     .await?;
 
-    if let Some((l, c, ia, ta, ps, pz)) = row {
-        return Ok(DisplayOptions::from_row(&l, c, &ia, &ta, &ps, &pz));
+    if let Some((l, c, ia, ta, ps, pz, pp)) = row {
+        return Ok(DisplayOptions::from_row(&l, c, &ia, &ta, &ps, &pz, &pp));
     }
     defaults(db).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The placement is cleaned on the way in and survives a round trip through
+    /// the seven stored columns, falling back to the historical "above".
+    #[test]
+    fn the_photo_placement_is_cleaned_and_round_trips() {
+        assert_eq!(clean_photo_position("below"), PhotoPosition::Below);
+        assert_eq!(clean_photo_position("left"), PhotoPosition::Left);
+        assert_eq!(clean_photo_position("right"), PhotoPosition::Right);
+        assert_eq!(clean_photo_position("inline"), PhotoPosition::Inline);
+        // Anything unrecognised draws the photo the way it always was.
+        assert_eq!(clean_photo_position("sideways"), PhotoPosition::Above);
+
+        let opts = DisplayOptions::from_row("paragraphs", 3, "left", "left", "circle", "md", "inline");
+        assert!(opts.position_is_inline());
+        assert!(!opts.position_is_block());
+        assert_eq!(opts.to_row().6, "inline");
+    }
 }

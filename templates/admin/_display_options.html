@@ -17,7 +17,7 @@
    class built in code would never reach static/css/tailwind.css. #}
 <fieldset class="mt-4 rounded border border-ink/15 p-4">
   <legend class="px-1 font-semibold">How this section is displayed</legend>
-  <p class="mt-1 text-sm text-ink/70">Choose between cards and paragraphs, how many cards sit in a row, and where the photo and text line up.</p>
+  <p class="mt-1 text-sm text-ink/70">Choose between cards and paragraphs, how many cards sit in a row, where the photo sits, and how the photo and text line up.</p>
 
   <div class="mt-4 grid gap-4 sm:grid-cols-2">
     <label class="block">
@@ -40,12 +40,25 @@
     </label>
 
     <label class="block">
-      <span class="block font-semibold">Photo position</span>
+      <span class="block font-semibold">Photo placement</span>
+      <select name="photo_position" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
+        <option value="above" {% if opts.position_is_above() %}selected{% endif %}>Above the heading</option>
+        <option value="below" {% if opts.position_is_below() %}selected{% endif %}>Below the section</option>
+        <option value="left" {% if opts.position_is_left() %}selected{% endif %}>Beside the text, on the left</option>
+        <option value="right" {% if opts.position_is_right() %}selected{% endif %}>Beside the text, on the right</option>
+        <option value="inline" {% if opts.position_is_inline() %}selected{% endif %}>In the text, at a [photo] line</option>
+      </select>
+      <span class="mt-1 block text-sm text-ink/70">Where the photo sits in the section. For “In the text”, write a line containing only <code class="font-mono">[photo]</code> in the text where it should appear.</span>
+    </label>
+
+    <label class="block">
+      <span class="block font-semibold">Photo alignment</span>
       <select name="image_align" class="mt-1 w-full rounded border border-ink/40 bg-white px-3 py-2">
         <option value="left" {% if opts.photo_is_left() %}selected{% endif %}>Photo on the left</option>
         <option value="center" {% if opts.photo_is_centre() %}selected{% endif %}>Photo centred</option>
         <option value="right" {% if opts.photo_is_right() %}selected{% endif %}>Photo on the right</option>
       </select>
+      <span class="mt-1 block text-sm text-ink/70">Applies when the photo is above or below the text.</span>
     </label>
 
     <label class="block">

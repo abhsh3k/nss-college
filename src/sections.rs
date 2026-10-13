@@ -59,6 +59,7 @@ pub fn base_for(user: &AuthUser) -> &'static str {
 }
 
 /// One entry inside a section: a page the user can open, and why they would.
+#[derive(Clone)]
 pub struct Link {
     pub label: &'static str,
     /// The canonical `/admin`-rooted path; see [`Link::url`].
@@ -91,6 +92,7 @@ const fn link(label: &'static str, href: &'static str, desc: &'static str) -> Li
 
 /// A management area: what the dashboard card leads to, and what the sidebar
 /// groups its links under.
+#[derive(Clone)]
 pub struct Area {
     /// URL slug for the section index page: `/admin/manage/{key}`.
     pub key: &'static str,
@@ -447,6 +449,41 @@ pub const HOD: &[Area] = &[
     ),
 ];
 
+// --------------------------------------------------------- IT admin, reduced --
+
+/// The timetable as the IT administrator sees it.
+///
+/// The IT admin keeps the timetable because keeping the grid clash-free is a
+/// job for a hand that reaches every department: two departments booking the
+/// same teacher, room or class period is exactly what it is there to prevent.
+/// It is deliberately narrower than [`ADMIN`]'s entry of the same name — a
+/// substitution is a head of department's, so no card is offered for a page
+/// that would refuse its reader.
+const ADMIN_TIMETABLE: Area = area(
+    "timetable",
+    "Timetable & Scheduling",
+    "Keep the class grid clash-free across departments.",
+    &[link(
+        "Timetable",
+        "/admin/timetable",
+        "Add and remove periods per day; clashes on teacher, room or class are refused.",
+    )],
+);
+
+/// The attendance area as the IT administrator sees it: the report and its CSV
+/// export, never the correction of a register (which is the head of
+/// department's, at `/admin/departments/attendance`).
+const ADMIN_ATTENDANCE: Area = area(
+    "attendance",
+    "Attendance Management",
+    "Attendance figures for any period, and the CSV export.",
+    &[link(
+        "Attendance reports",
+        "/admin/attendance",
+        "Per-course and per-student percentages, low-attendance flags and the CSV export.",
+    )],
+);
+
 /// Look an area up by its slug.
 pub fn find<'a>(areas: &'a [Area], key: &str) -> Option<&'a Area> {
     areas.iter().find(|a| a.key == key)
@@ -458,6 +495,44 @@ pub fn find<'a>(areas: &'a [Area], key: &str) -> Option<&'a Area> {
 /// else's role (`403`): both are refused, but only one of them is a mistake.
 pub fn exists_any(key: &str) -> bool {
     [ADMIN, STAFF, HOD].iter().any(|list| find(list, key).is_some())
+}
+
+/// The area keys under which the full academic set is offered (courses,
+/// offerings, timetable, attendance, examinations). The IT administrator takes
+/// none of them from [`ADMIN`]: it gets its own narrower [`ADMIN_TIMETABLE`] and
+/// [`ADMIN_ATTENDANCE`] in their place, and nothing for the other three. The
+/// Principal and the heads of department own the curriculum, and the Super
+/// Admin, as the superset, keeps all of it.
+const ACADEMIC_KEYS: [&str; 5] = ["academic", "offerings", "timetable", "attendance", "exams"];
+
+/// The areas a role may actually reach, as its own overview and section index
+/// render them.
+///
+/// This mirrors — it does not replace — the guards on the target pages: a card
+/// is a shorter route to a page the caller could already open, and never a page
+/// that would refuse it. The IT admin gets [`ADMIN`]'s site areas plus the
+/// timetable (a college-wide hand keeps the grid clash-free, `Scheduler`) and
+/// the attendance report (read and exported, `AcademicOrAdmin`); the Super
+/// Admin gets all of it; the Principal and a head of department get [`HOD`];
+/// office staff get [`STAFF`]. Anyone else gets an empty list.
+pub fn areas_for(role: Role) -> Vec<Area> {
+    match role {
+        Role::SuperAdmin => ADMIN.to_vec(),
+        Role::Admin => ADMIN
+            .iter()
+            .filter_map(|a| match a.key {
+                // The two academic areas the IT admin keeps, in its own
+                // narrower form; the rest of the academic set is not here.
+                "timetable" => Some(ADMIN_TIMETABLE),
+                "attendance" => Some(ADMIN_ATTENDANCE),
+                key if ACADEMIC_KEYS.contains(&key) => None,
+                _ => Some(a.clone()),
+            })
+            .collect(),
+        Role::Principal => HOD.to_vec(),
+        Role::Staff => STAFF.to_vec(),
+        _ => Vec::new(),
+    }
 }
 
 /// A `Shell` with no session behind it, so the new pages can be rendered in a
@@ -481,6 +556,7 @@ pub(crate) fn test_shell_in(role_label: &'static str, base: &'static str) -> cra
         flash: None,
         site: crate::models::SiteInfo::default(),
         pending_approvals: 0,
+        has_profile: false,
     }
 }
 
@@ -510,6 +586,9 @@ mod tests {
         keys_are_unique(ADMIN);
         keys_are_unique(STAFF);
         keys_are_unique(HOD);
+        // The IT admin's reduced timetable and attendance entries are pages in
+        // their own right, so they are checked like the rest.
+        keys_are_unique(&[ADMIN_TIMETABLE, ADMIN_ATTENDANCE]);
     }
 
     /// A link an HOD could not open would 403 from the page behind it, so the
@@ -661,5 +740,49 @@ mod tests {
         for key in ["does-not-exist", "", "people"] {
             assert!(!exists_any(key), "{key} should be unknown");
         }
+    }
+
+    /// The IT administrator keeps the site areas, the timetable and the
+    /// attendance report; the rest of the academic set stays with the Principal
+    /// and the heads of department. Every card it is offered must open: no
+    /// substitution, no register correction and no course structure.
+    #[test]
+    fn the_it_admin_is_offered_the_site_and_the_two_areas_it_keeps() {
+        let admin = areas_for(Role::Admin);
+        for key in ["users", "website", "settings", "timetable", "attendance"] {
+            assert!(admin.iter().any(|a| a.key == key), "the IT admin lost {key}");
+        }
+        for key in ["academic", "offerings", "exams"] {
+            assert!(!admin.iter().any(|a| a.key == key), "the IT admin gained {key}");
+        }
+        // Two of the five academic keys are replaced by their narrower forms.
+        assert_eq!(admin.len(), ADMIN.len() - (ACADEMIC_KEYS.len() - 2));
+
+        let kept: Vec<&Area> = admin
+            .iter()
+            .filter(|a| ACADEMIC_KEYS.contains(&a.key))
+            .collect();
+        assert_eq!(kept.len(), 2, "the IT admin keeps the timetable and attendance");
+        for a in kept {
+            for l in a.items {
+                assert!(
+                    matches!(l.href, "/admin/timetable" | "/admin/attendance"),
+                    "the IT admin's {} area offers {}",
+                    a.key,
+                    l.href
+                );
+            }
+        }
+
+        let super_admin = areas_for(Role::SuperAdmin);
+        for key in ACADEMIC_KEYS {
+            assert!(
+                super_admin.iter().any(|a| a.key == key),
+                "the Super Admin lost the academic area {key}"
+            );
+        }
+        assert_eq!(areas_for(Role::Principal).len(), HOD.len());
+        assert_eq!(areas_for(Role::Staff).len(), STAFF.len());
+        assert!(areas_for(Role::Student).is_empty());
     }
 }

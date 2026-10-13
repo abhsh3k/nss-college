@@ -1,0 +1,16 @@
+{# One section photo, cropped and sized by that section's display options.
+
+   Callers bind `src` (the stored path) and `opts` (a DisplayOptions) before
+   including this, then wrap the image in whatever placement the section asked
+   for. The classes are written out in full because the CSS build scans
+   templates/ for class names; a class assembled in Rust would never reach
+   static/css/tailwind.css. `alt=""` is deliberate for these decorative section
+   pictures, as it is everywhere else a section photo is drawn. #}
+<img src="{{ src }}" alt="" loading="lazy" width="{{ opts.photo_px() }}" height="{{ opts.photo_px() }}"
+     class="bg-mist object-cover
+            {% if opts.size_is_small() %}h-16 w-16{% endif %}
+            {% if opts.size_is_large() %}h-40 w-40{% endif %}
+            {% if opts.size_is_medium() %}h-24 w-24{% endif %}
+            {% if opts.shape_is_circle() %}rounded-full{% endif %}
+            {% if opts.shape_is_rounded() %}rounded-2xl{% endif %}
+            {% if opts.shape_is_square() %}rounded-none{% endif %}">

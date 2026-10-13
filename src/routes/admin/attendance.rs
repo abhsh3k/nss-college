@@ -1,5 +1,11 @@
-//! Attendance reporting for the IT administrator: one row per student and one row
-//! per session over a chosen period, with a CSV export of the same figures.
+//! Attendance reporting: one row per student and one row per session over a
+//! chosen period, with a CSV export of the same figures.
+//!
+//! Who reads it is wider than who may change it. The report is `AcademicOrAdmin`
+//! — the Principal and the Super Admin, and the IT administrator, which reads
+//! the figures and hands the export to the office. Correcting a register is a
+//! write: it stays with a head of department, at
+//! `/departments/attendance`.
 
 use askama::Template;
 use axum::{
@@ -12,7 +18,7 @@ use tower_sessions::Session;
 
 use super::parse_i64;
 use crate::{
-    auth::AdminOnly,
+    auth::AcademicOrAdmin,
     error::AppError,
     services::{
         academics::{self, ProgrammeOption, TeacherOption},
@@ -102,7 +108,7 @@ async fn gather(
 pub async fn report(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    AcademicOrAdmin(user): AcademicOrAdmin,
     Query(q): Query<ReportQuery>,
 ) -> Result<ReportPage, AppError> {
     let filter = read_filter(&s.db, &q).await?;
@@ -128,7 +134,7 @@ pub async fn report(
 
 pub async fn csv(
     State(s): State<AppState>,
-    AdminOnly(_user): AdminOnly,
+    AcademicOrAdmin(_user): AcademicOrAdmin,
     Query(q): Query<ReportQuery>,
 ) -> Result<Response, AppError> {
     let filter = read_filter(&s.db, &q).await?;

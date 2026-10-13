@@ -261,13 +261,27 @@ macro_rules! role_guard {
     };
 }
 
-// IT administrator only (users, academics, timetable, settings). The Super
-// Admin is a superset of the IT admin, so it is allowed wherever the IT admin
-// is — the difference is the extra `SuperAdminOnly` powers below, not fewer.
+// IT administrator only (site settings, accounts, the CMS). The Super Admin is
+// a superset of the IT admin, so it is allowed wherever the IT admin is — plus
+// the root authority below. The IT admin is not an academic role: the course
+// structure, offerings, marks and results belong to the Principal and the heads
+// of department (`AcademicOnly`/`Manager`). Two academic tools are widened to it
+// on their own guards — the timetable (`Scheduler`, so one hand can keep the
+// grid clash-free) and the attendance report (`AcademicOrAdmin`, which reads and
+// exports, never corrects).
 #[allow(dead_code)]
 mod guards {
     use super::*;
     role_guard!(AdminOnly, &[Role::Admin, Role::SuperAdmin]);
+    // Institution-wide *academic* authority — the course structure. Deliberately
+    // excludes the IT admin, whose workspace is the site and its accounts, not
+    // the curriculum.
+    role_guard!(AcademicOnly, &[Role::SuperAdmin, Role::Principal]);
+    // The college-wide attendance report and its CSV export: the academic
+    // authority *and* the IT administrator, which reads the figures and hands
+    // the export to the office. Correcting a register stays with the head of
+    // department (`Manager`), so this grants no write.
+    role_guard!(AcademicOrAdmin, &[Role::Admin, Role::SuperAdmin, Role::Principal]);
     // The Principal signs off academic appointments, so they share the
     // appointments screen with the IT admin.
     role_guard!(AdminOrPrincipal, &[Role::Admin, Role::SuperAdmin, Role::Principal]);
@@ -287,14 +301,14 @@ mod guards {
     role_guard!(SuperAdminOnly, &[Role::SuperAdmin]);
 }
 pub use guards::{
-    AdminDashboard, AdminOnly, AdminOrPrincipal, OfficeOrAdmin, PrincipalOnly, StaffOnly,
-    StudentOnly, SuperAdminOnly, TeacherOnly,
+    AcademicOnly, AcademicOrAdmin, AdminDashboard, AdminOnly, AdminOrPrincipal, OfficeOrAdmin,
+    PrincipalOnly, StaffOnly, StudentOnly, SuperAdminOnly, TeacherOnly,
 };
 
 /// How far across the college a manager may reach.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
-    /// IT admin: every department.
+    /// The Principal (and the Super Admin): every department.
     All,
     /// Head of (or approved for) one department. `None` when the teacher has
     /// no department set yet, which grants nothing to manage.
@@ -303,8 +317,10 @@ pub enum Scope {
 
 /// A user allowed to manage academic records.
 ///
-/// This is the IT admin, or a teacher who heads their department, or a teacher
-/// the IT admin has approved to act for the HOD. Everyone else is refused.
+/// This is the Principal, or a teacher who heads their department, or a teacher
+/// the IT admin has approved to act for the HOD. Everyone else is refused —
+/// including the IT admin, whose authority is over the site and its accounts,
+/// not the curriculum.
 ///
 /// Unlike the role guards this one is not decided by `users.role` alone: the
 /// HOD powers live on the `faculty` row, so it is read per request.
@@ -314,7 +330,8 @@ pub struct Manager {
 }
 
 impl Manager {
-    /// The department this manager is confined to; `None` for the IT admin.
+    /// The department this manager is confined to; `None` for the academic
+    /// authority, which reaches every one.
     pub fn department(&self) -> Option<i64> {
         match self.scope {
             Scope::All => None,
@@ -322,10 +339,32 @@ impl Manager {
         }
     }
 
-    /// True for the IT admin, who is not confined to one department.
+    /// True for the college-wide academic authority (the Principal, and the
+    /// Super Admin as the superset).
     pub fn is_admin(&self) -> bool {
         matches!(self.scope, Scope::All)
     }
+}
+
+/// The scope a signed-in user brings to the academic tools, or `None` when they
+/// bring none.
+///
+/// Institution-wide authority is the Principal's (and the Super Admin's, as the
+/// superset). For a teacher it is decided by the appointment/delegation model,
+/// which keeps the legacy faculty flags in step for accounts created before it
+/// and respects effective dates (an expired appointment denies). A missing
+/// department must deny, never mean "all departments".
+async fn academic_scope(state: &AppState, user: &AuthUser) -> Result<Option<Scope>, Response> {
+    if matches!(user.role, Role::SuperAdmin | Role::Principal) {
+        return Ok(Some(Scope::All));
+    }
+    if user.role != Role::Faculty {
+        return Ok(None);
+    }
+    let department_id = crate::services::appointments::effective_department(&state.db, user.id)
+        .await
+        .map_err(|e| AppError::from(e).into_response())?;
+    Ok(department_id.map(|id| Scope::Department(Some(id))))
 }
 
 #[axum::async_trait]
@@ -337,40 +376,71 @@ impl FromRequestParts<AppState> for Manager {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let Ready(user) = Ready::from_request_parts(parts, state).await?;
+        // The IT admin is deliberately not a manager: it runs the site, its
+        // accounts and its content, and has no cross-department reach over the
+        // courses, the marks or the attendance register.
+        match academic_scope(state, &user).await? {
+            Some(scope) => Ok(Manager { user, scope }),
+            None => Err(AppError::Forbidden.into_response()),
+        }
+    }
+}
 
-        // The IT admin keeps every power and is not confined to a department;
-        // the Super Admin, being a superset, likewise. The Principal has
-        // institution-wide *academic* authority — the same cross-department
-        // scope — but not the technical powers, which stay behind `AdminOnly`.
-        if matches!(user.role, Role::Admin | Role::SuperAdmin | Role::Principal) {
-            return Ok(Manager {
+/// A user allowed to build the college timetable.
+///
+/// This is deliberately wider than [`Manager`]: it adds the IT administrator,
+/// whose college-wide hand is what keeps the grid clash-free when two
+/// departments compete for the same teacher, room or class period. It narrows
+/// nothing — a head of department still schedules only their own department's
+/// periods.
+///
+/// It is not a licence for the rest of the academic tools: the course
+/// structure, marks and results stay behind [`Manager`] and `AcademicOnly`.
+pub struct Scheduler {
+    pub user: AuthUser,
+    pub scope: Scope,
+}
+
+impl Scheduler {
+    /// The department this scheduler is confined to; `None` when their hand
+    /// reaches every department.
+    pub fn department(&self) -> Option<i64> {
+        match self.scope {
+            Scope::All => None,
+            Scope::Department(id) => id,
+        }
+    }
+
+    /// True for the college-wide hand: the IT administrator, the Principal and
+    /// the Super Admin.
+    pub fn reaches_all(&self) -> bool {
+        matches!(self.scope, Scope::All)
+    }
+}
+
+#[axum::async_trait]
+impl FromRequestParts<AppState> for Scheduler {
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let Ready(user) = Ready::from_request_parts(parts, state).await?;
+
+        // The IT administrator keeps the timetable, so it is a scheduler on
+        // top of the academic authority and the department heads.
+        if user.role == Role::Admin {
+            return Ok(Scheduler {
                 user,
                 scope: Scope::All,
             });
         }
 
-        if user.role != Role::Faculty {
-            return Err(AppError::Forbidden.into_response());
+        match academic_scope(state, &user).await? {
+            Some(scope) => Ok(Scheduler { user, scope }),
+            None => Err(AppError::Forbidden.into_response()),
         }
-
-        // Authority is decided by the appointment/delegation model, which keeps
-        // the legacy faculty flags in step for accounts created before it and
-        // respects effective dates (an expired appointment denies).
-        let department_id =
-            crate::services::appointments::effective_department(&state.db, user.id)
-                .await
-                .map_err(|e| AppError::from(e).into_response())?;
-
-        // No effective appointment, or one without a department: nothing to
-        // manage. A missing department must deny, never mean "all departments".
-        let Some(department_id) = department_id else {
-            return Err(AppError::Forbidden.into_response());
-        };
-
-        Ok(Manager {
-            user,
-            scope: Scope::Department(Some(department_id)),
-        })
     }
 }
 

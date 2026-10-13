@@ -26,20 +26,36 @@ Styling is compiled Tailwind CSS. Build it once before the first run (see the ne
 
 ## Admin tools (Phase 4b-1)
 
-Sign in as the IT admin, then use the sidebar:
+The management area is split by role. The **IT admin** runs the site: accounts, the public website's
+content and settings (People, Notices/News/Events, Documents, Pages, Rank holders, Settings), plus the two
+academic tools it is the right hand for — the **timetable** (one hand that reaches every department is what
+keeps the grid clash-free when two of them book the same teacher, room or class period, `Scheduler`) and the
+**attendance report** with its CSV export (`AcademicOrAdmin`, a read: correcting a register stays with a head
+of department). The rest of the **academic** set below (courses and programmes, the course catalogue,
+offerings, marks and exams, the work queue) belongs to the **Principal** and to a head of department, so the
+IT admin is still meaningfully less than the Super Admin (which keeps everything plus `/admin/roles`). The
+sidebar and the dashboard cards show every role only what its guards allow.
 
-- **People**: add students, teachers and office staff; edit them; issue a new temporary password; deactivate an account.
-  "Import students" accepts a pasted class list (comma- or tab-separated, so Excel rows work).
-  Temporary passwords are shown once on a printable page.
+Sign in as the IT admin or the Principal, then use the sidebar:
+
+- **People**: add students, teachers and office staff; edit them; issue a new temporary password; deactivate an account;
+  promote one student or a whole programme's semester to the next semester, and archive selected accounts in bulk.
+  "Import students" takes an uploaded class list (`.csv`/`.tsv`, or an Excel `.xlsx`/`.xls`/`.ods` workbook; header
+  `admission_no,prn,name,email,phone`) into an editable review table, and creates the accounts only on confirmation.
+  Temporary passwords are shown once, and downloadable as a CSV.
 - **Courses and programmes**: add the courses of each semester and assign a teacher. New students are enrolled in their
   semester's courses automatically; use "Enroll students" after adding courses later.
-- **Timetable**: choose programme and semester, then add periods per day. Clashes (same teacher, room or class at overlapping
-  times) are refused with an explanation. Everything updates without reloading the page.
+- **Timetable**: choose programme and semester, then add periods per day. Clashes (same teacher or room, or the class already
+  having a period, at overlapping times) are refused with an explanation. Everything updates without reloading the page.
+  This is one of the two academic pages the IT admin keeps: a clash between two departments needs one hand that reaches both.
   A period must name a validated teacher or be explicitly marked **teacher to be assigned**: the missing teacher
   is then a recorded gap, shown in the work queue, never a silently incomplete row.
   A published course offering is scheduled from the same page (the offering picker): the panel lists that
   offering's periods and adds or removes them in place, with the same clash rules — the offering page's
   "add period" form stays as the secondary path.
+- **Attendance reports** (`/admin/attendance`): per-course and per-student percentages over a period you choose, lowest
+  first, with a CSV export of the same figures. The IT admin reads and exports it exactly as the Principal does; changing
+  what a teacher recorded is a head of department's job ("Department attendance" in `/hod`).
 - **Work queue** (`/admin/work-queue` in the management workspace, `/hod/work-queue` for a head of
   department — see "Three workspaces" below): the real work in one list —
   pending external offering approvals, unanswered change requests, cohort decisions that are not finalised,
@@ -59,11 +75,11 @@ After pulling this update, rebuild the CSS (new classes were added) and restart:
 ## Teacher tools and attendance (Phase 4c)
 
 - **Today** and **Mark attendance**: a teacher sees their periods (and any they are covering), taps one, and marks each
-  student present, absent or on leave. Saving happens in place, without reloading. Periods can be taken or corrected up to
+  student present, absent or **Special** (stored as `leave`). Saving happens in place, without reloading. Periods can be taken or corrected up to
   5 days after the class date (setting `attendance_edit_window_days`).
 - **My timetable** and **Attendance reports**: weekly timetable, classes being covered, and a per-course table with each
   student's percentage. Below 75% is flagged; e-grants students are also checked for the current month.
-- **Substitutions** (IT admin): choose a date and an absent teacher, assign a substitute for each period. Only the substitute
+- **Substitutions** (head of department, Principal): choose a date and an absent teacher, assign a substitute for each period. Only the substitute
   can then take that period's attendance. Overlaps with the substitute's own classes are refused.
 - A teacher account needs a teacher profile. Create teachers under People (not with the command line) so the profile exists.
 - "Today" always means the college's local date (India time), not the server's UTC date.
@@ -107,10 +123,14 @@ emergency reopening of a finalized result are reachable only on the loopback lis
 set a second time grants nothing: the guards run per request, so a caller who is not allowed is refused
 wherever they try.
 
-The **Principal** (`create-user principal ...`) holds institution-wide *academic* authority — the same
-cross-department reach as the IT admin on the academic tools, but no technical powers. The IT admin
-creates each account and **requests** an HOD appointment at `/admin/appointments`; the Principal
-**approves** it before it takes effect, and a person cannot approve their own appointment.
+The **Principal** (`create-user principal ...`) holds institution-wide *academic* authority — full
+cross-department reach over courses, offerings, the timetable, marks and results — but no site or account
+powers. That academic reach is **not** shared with the IT admin, whose workspace is the site and its
+accounts; it is only shared with the Super Admin, as the superset. The two exceptions are the timetable and
+the attendance report described above, each widened to the IT admin by its own guard rather than by the
+`Manager` one. The IT admin creates each account and
+**requests** an HOD appointment at `/admin/appointments`; the Principal **approves** it before it takes
+effect, and a person cannot approve their own appointment.
 
 The **Super Admin** is the root account role and is only reachable on the loopback management listener.
 It holds every IT-admin power plus `/admin/roles`, where it gives or removes the `admin` and
@@ -134,12 +154,44 @@ Rules built in: five wrong passwords lock an account for 15 minutes; sessions la
 every form carries a CSRF token; passwords are stored with Argon2.
 The management listener is hard-bound to loopback by the application and must not be exposed by a reverse proxy. The management area is now also served on the public listener for the IT admin, the Principal and office staff — never for root authority — so the loopback listener is the boundary that keeps `/admin/roles` off the network. In production set `COOKIE_SECURE=true`, serve the public site over HTTPS, and proxy management access only through a controlled local administration path.
 
+### Seeing the site from the management port
+
+The loopback listener serves the whole public website as well as the management tools, so an
+administrator can open `http://127.0.0.1:3001/` and browse the site exactly as a visitor sees it before
+changing anything. This does not move the boundary: the listener is still bound to `127.0.0.1`, and
+management remains reachable on the public listener exactly as before (root authority excepted).
+
+One caveat worth knowing: browsers scope a cookie to a **host**, not a port, so a management session
+started on `:3000` is also presented to `:3001` and vice versa. The loopback bind — not the port — is the
+security boundary; running the site on the loopback port adds no exposure, but it does mean the two ports
+share a session.
+
+### Staff profiles
+
+A teacher edits the card the staff page draws at `/profile`. It writes their own `faculty` row — name,
+designation, qualification, contact address, biography and an optional photo — and leaves the department,
+the HOD flag and the account untouched, because the timetable and courses depend on those. The Principal
+and office staff have no `faculty` row, so their profile is kept in `staff_profiles`, keyed by their
+account; it appears on `/about/staff` only once they save one, under a **Principal** or **Office staff**
+heading. The link sits in the sidebar beside *Change password* for those three roles, and a profile photo
+is served through the same authorization-aware `/uploads` route as every other uploaded image.
+
+### Where a section's photo goes
+
+A page section, a home-page block and the site default each carry a **photo placement** — above the
+heading, below the section, beside the text on the left or the right, or inline at a `[photo]` line the
+author writes into the body. It is stored in the `photo_position` column beside the other display choices,
+so an editor decides where the picture goes rather than the template deciding for them. The two pages whose
+body is generated from a table with its own screen — `/about/staff` and `/academics/rank-holders` — are
+left out of the Pages screen, which keeps the faculty and rank-holder screens the single place to manage
+them.
+
 ## Tests
 
     docker compose up -d          # the tests need PostgreSQL
     DATABASE_URL=postgres://nss:nss@localhost:5432/nss_college cargo test
 
-Three layers run:
+Four layers run:
 
 - **Unit tests** (`cargo test --lib`): pure rules — appointment expiry, date validation, input limits,
   the login limiter, CSV parsing, the navigation model. No database needed.
@@ -149,6 +201,8 @@ Three layers run:
   appointment/delegation services. The role needs `CREATEDB` (the `nss` role has it).
 - **End-to-end tests** (`tests/app.rs`): requests are sent through the real layered router with `tower::oneshot`, so
   routing, sessions, CSRF, templates and the response headers are all exercised without a socket.
+- **JS hook tests** (`cargo test --test js_hooks`): loads the real `static/js/app.js` into a fake DOM and fires
+  each `data-*` hook, asserting its effect. Skips with a note where Node is not installed.
 
 The database tests are the slow ones (each test creates and migrates a database); `cargo test --lib` is instant.
 
@@ -397,7 +451,7 @@ Previously flagged bugs that have since been fixed:
   query-string URL that no route matched and has been corrected to a path.)
 - `src/cli.rs` `create-user` no longer double-logs `user_created_cli`, and `prompt_new_password` returns
   its error instead of panicking.
-- Study materials now have a service, routes and UI: a head of department (or the IT admin) uploads a
+- Study materials now have a service, routes and UI: a head of department (or the Principal) uploads a
   file for a course at `/admin/materials`, and an enrolled student downloads published material from
   `/hub/materials` (gated at the upload-serving boundary too).
 
@@ -415,12 +469,10 @@ Attendance
   internal name as an implementation detail.
 
 Still to build (from the dashboard rework request)
-- Teaching staff page (`/about/staff`): cards generated from existing faculty
-  data, grouped by department, HOD listed first, with the rank-holders style
-  options.
-- Non-teaching staff page: manual data with an admin edit UI and staff profile
-  photo upload; also add the profile-photo capability for students at the
-  model/service level only (no student UI yet).
+- Non-teaching staff page: the self-service profile and photo upload are now
+  built (`/profile`, `staff_profiles`, shown on `/about/staff`); what remains is
+  the profile-photo capability for students at the model/service level only (no
+  student UI yet).
 - CSV student upload: header `admissionno,prn,email,phone` — uploaded rows are
   sent as a verification request to the student's HOD (or an approved approver)
   who reviews and confirms before the accounts are created.
@@ -429,6 +481,9 @@ Still to build (from the dashboard rework request)
   migration.
 
 Already done in this pass
+- Teaching staff page (`/about/staff`): published faculty cards generated from
+  the faculty data, grouped by department with the HOD first, through
+  `services::faculty`.
 - Home page hero: crossfading slideshow of `static/img/carousel` photos
   (WebP slides generated as `slide-1..5.webp`), fixed stacking order.
 - Pages admin: site menu is database-driven (nav group/label/order per page),

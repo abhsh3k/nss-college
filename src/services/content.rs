@@ -176,21 +176,21 @@ pub async fn page_sections(db: &PgPool, page_id: i64) -> Res<Vec<PageSection>> {
     // Sections the admin has taken offline are not read at all.
     let sql = format!(
         r#"SELECT heading, body, photo_path, photo_caption,
-                  layout, grid_columns, image_align, text_align, photo_shape, photo_size
+                  layout, grid_columns, image_align, text_align, photo_shape, photo_size, photo_position
            FROM page_sections WHERE page_id = $1 AND published
            ORDER BY sort_order, id"#
     );
-    let rows: Vec<(String, String, Option<String>, String, String, i32, String, String, String, String)> =
+    let rows: Vec<(String, String, Option<String>, String, String, i32, String, String, String, String, String)> =
         sqlx::query_as(&sql).bind(page_id).fetch_all(db).await?;
 
     Ok(rows
         .into_iter()
-        .map(|(heading, body, photo, caption, l, c, ia, ta, ps, pz)| PageSection {
+        .map(|(heading, body, photo, caption, l, c, ia, ta, ps, pz, pp)| PageSection {
             heading,
             body,
             photo,
             caption,
-            opts: DisplayOptions::from_row(&l, c, &ia, &ta, &ps, &pz),
+            opts: DisplayOptions::from_row(&l, c, &ia, &ta, &ps, &pz, &pp),
         })
         .collect())
 }
@@ -317,22 +317,22 @@ pub fn current_year() -> i32 {
 pub async fn home_copy(db: &PgPool) -> Res<HomeCopy> {
     let sql = format!(
         r#"SELECT section_key, heading, body, photo_path, photo_caption, published,
-                  layout, grid_columns, image_align, text_align, photo_shape, photo_size
+                  layout, grid_columns, image_align, text_align, photo_shape, photo_size, photo_position
            FROM home_sections ORDER BY sort_order, section_key"#
     );
-    let raw: Vec<(String, String, String, Option<String>, String, bool, String, i32, String, String, String, String)> =
+    let raw: Vec<(String, String, String, Option<String>, String, bool, String, i32, String, String, String, String, String)> =
         sqlx::query_as(&sql).fetch_all(db).await?;
     let rows: Vec<HomeSection> = raw
         .into_iter()
         .map(
-            |(section_key, heading, body, photo, caption, published, l, c, ia, ta, ps, pz)| HomeSection {
+            |(section_key, heading, body, photo, caption, published, l, c, ia, ta, ps, pz, pp)| HomeSection {
                 section_key,
                 heading,
                 body,
                 photo,
                 caption,
                 published,
-                opts: DisplayOptions::from_row(&l, c, &ia, &ta, &ps, &pz),
+                opts: DisplayOptions::from_row(&l, c, &ia, &ta, &ps, &pz, &pp),
             },
         )
         .collect();

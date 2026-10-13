@@ -284,6 +284,14 @@ pub fn clean_nav_sort(value: &str) -> i32 {
     value.trim().parse::<i32>().ok().filter(|n| (0..=999).contains(n)).unwrap_or(0)
 }
 
+/// Pages whose body is generated from a table that has its own management
+/// screen: the teaching-staff directory (the `faculty` records) and the rank
+/// holders list. They stay working pages and keep their `pages` row — their
+/// title and lede still head the public page — but they are left out of the
+/// Pages screen, so the faculty and rank-holder screens remain the single place
+/// to manage them.
+pub const MANAGED_ELSEWHERE: [&str; 2] = ["/about/staff", "/academics/rank-holders"];
+
 /// Paths the router answers itself. Editing the title of one of these still
 /// works, but the editor is warned that the path is fixed.
 const LIST_PAGES: [&str; 5] = [
@@ -325,9 +333,11 @@ pub async fn pages(db: &PgPool, status: &str) -> Res<Vec<PageRow>> {
                   (SELECT count(*) FROM page_sections s WHERE s.page_id = p.id)
            FROM pages p
            WHERE ($1 = '' OR p.status = $1)
+             AND NOT (p.path = ANY($2))
            ORDER BY p.path"#,
     )
     .bind(status)
+    .bind(MANAGED_ELSEWHERE.to_vec())
     .fetch_all(db)
     .await?;
 
@@ -468,21 +478,21 @@ pub struct SectionRow {
 
 pub async fn sections(db: &PgPool, page_id: i64) -> Res<Vec<SectionRow>> {
     let sql = "SELECT id, heading, body, photo_path, photo_caption, published,
-                      layout, grid_columns, image_align, text_align, photo_shape, photo_size
+                      layout, grid_columns, image_align, text_align, photo_shape, photo_size, photo_position
                FROM page_sections WHERE page_id = $1 ORDER BY sort_order, id";
-    let rows: Vec<(i64, String, String, Option<String>, String, bool, String, i32, String, String, String, String)> =
+    let rows: Vec<(i64, String, String, Option<String>, String, bool, String, i32, String, String, String, String, String)> =
         sqlx::query_as(sql).bind(page_id).fetch_all(db).await?;
 
     Ok(rows
         .into_iter()
-        .map(|(id, heading, body, photo, caption, published, l, c, ia, ta, ps, pz)| SectionRow {
+        .map(|(id, heading, body, photo, caption, published, l, c, ia, ta, ps, pz, pp)| SectionRow {
             id,
             heading,
             body,
             photo,
             caption,
             published,
-            opts: DisplayOptions::from_row(&l, c, &ia, &ta, &ps, &pz),
+            opts: DisplayOptions::from_row(&l, c, &ia, &ta, &ps, &pz, &pp),
         })
         .collect())
 }
@@ -511,15 +521,16 @@ pub async fn create_section(
     published: bool,
     opts: &DisplayOptions,
 ) -> Res<i64> {
-    let (layout, columns, image_align, text_align, photo_shape, photo_size) = opts.to_row();
+    let (layout, columns, image_align, text_align, photo_shape, photo_size, photo_position) =
+        opts.to_row();
     sqlx::query_scalar(
         r#"INSERT INTO page_sections
              (page_id, heading, body, sort_order, photo_path, photo_caption, published,
-              layout, grid_columns, image_align, text_align, photo_shape, photo_size)
+              layout, grid_columns, image_align, text_align, photo_shape, photo_size, photo_position)
            VALUES ($1, $2, $3,
                    COALESCE((SELECT max(sort_order) + 1 FROM page_sections WHERE page_id = $1), 1),
                    NULLIF($4, ''), $5, $6,
-                   $7, $8, $9, $10, $11, $12)
+                   $7, $8, $9, $10, $11, $12, $13)
            RETURNING id"#,
     )
     .bind(page_id)
@@ -534,6 +545,7 @@ pub async fn create_section(
     .bind(text_align)
     .bind(photo_shape)
     .bind(photo_size)
+    .bind(photo_position)
     .fetch_one(db)
     .await
 }
@@ -549,13 +561,15 @@ pub async fn update_section(
     published: bool,
     opts: &DisplayOptions,
 ) -> Res<()> {
-    let (layout, columns, image_align, text_align, photo_shape, photo_size) = opts.to_row();
+    let (layout, columns, image_align, text_align, photo_shape, photo_size, photo_position) =
+        opts.to_row();
     sqlx::query(
         r#"UPDATE page_sections
            SET heading = $3, body = $4, photo_path = NULLIF($5, ''),
                photo_caption = $6, published = $7,
                layout = $8, grid_columns = $9, image_align = $10,
-               text_align = $11, photo_shape = $12, photo_size = $13
+               text_align = $11, photo_shape = $12, photo_size = $13,
+               photo_position = $14
            WHERE id = $1 AND page_id = $2"#,
     )
     .bind(id)
@@ -571,6 +585,7 @@ pub async fn update_section(
     .bind(text_align)
     .bind(photo_shape)
     .bind(photo_size)
+    .bind(photo_position)
     .execute(db)
     .await?;
     Ok(())
@@ -775,22 +790,22 @@ pub struct HomeSectionRow {
 
 pub async fn home_sections(db: &PgPool) -> Res<Vec<HomeSectionRow>> {
     let sql = "SELECT section_key, heading, body, photo_path, photo_caption, published,
-                      layout, grid_columns, image_align, text_align, photo_shape, photo_size
+                      layout, grid_columns, image_align, text_align, photo_shape, photo_size, photo_position
                FROM home_sections ORDER BY sort_order, section_key";
-    let rows: Vec<(String, String, String, Option<String>, String, bool, String, i32, String, String, String, String)> =
+    let rows: Vec<(String, String, String, Option<String>, String, bool, String, i32, String, String, String, String, String)> =
         sqlx::query_as(sql).fetch_all(db).await?;
 
     Ok(rows
         .into_iter()
         .map(
-            |(section_key, heading, body, photo, caption, published, l, c, ia, ta, ps, pz)| HomeSectionRow {
+            |(section_key, heading, body, photo, caption, published, l, c, ia, ta, ps, pz, pp)| HomeSectionRow {
                 section_key,
                 heading,
                 body,
                 photo,
                 caption,
                 published,
-                opts: DisplayOptions::from_row(&l, c, &ia, &ta, &ps, &pz),
+                opts: DisplayOptions::from_row(&l, c, &ia, &ta, &ps, &pz, &pp),
             },
         )
         .collect())
@@ -820,13 +835,15 @@ pub async fn update_home_section(
     published: bool,
     opts: &DisplayOptions,
 ) -> Res<bool> {
-    let (layout, columns, image_align, text_align, photo_shape, photo_size) = opts.to_row();
+    let (layout, columns, image_align, text_align, photo_shape, photo_size, photo_position) =
+        opts.to_row();
     let updated = sqlx::query(
         r#"UPDATE home_sections
            SET heading = $2, body = $3, photo_path = NULLIF($4, ''),
                photo_caption = $5, published = $6,
                layout = $7, grid_columns = $8, image_align = $9,
-               text_align = $10, photo_shape = $11, photo_size = $12
+               text_align = $10, photo_shape = $11, photo_size = $12,
+               photo_position = $13
            WHERE section_key = $1"#,
     )
     .bind(key)
@@ -841,6 +858,7 @@ pub async fn update_home_section(
     .bind(text_align)
     .bind(photo_shape)
     .bind(photo_size)
+    .bind(photo_position)
     .execute(db)
     .await?;
     Ok(updated.rows_affected() > 0)

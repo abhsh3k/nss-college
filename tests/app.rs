@@ -446,25 +446,163 @@ async fn a_teacher_with_no_appointment_cannot_reach_the_academic_tools(pool: PgP
 }
 
 #[sqlx::test]
-async fn the_it_admin_may_act_for_any_programme(pool: PgPool) {
+async fn the_principal_may_act_for_any_programme_but_the_it_admin_may_not(pool: PgPool) {
     init_session_store(&pool).await;
     let dept_b = department(&pool, "beta").await;
     let prog_b = programme(&pool, dept_b, "beta-ug").await;
-    let _admin = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+    let _it = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+    let _principal = make_user(&pool, "principal@example.com", "principal", "Password123!").await;
 
     let app = management_app(&pool);
-    let cookie = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+
+    // The IT administrator runs the site and its accounts; the academic tools
+    // refuse it outright.
+    let it = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+    let (status, _) = get_with(app.clone(), &format!("/admin/marks?programme={prog_b}"), &it).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "the IT admin must not open the marks grid"
+    );
+
+    // The Principal holds institution-wide academic authority, so the other
+    // department's programme is not refused (the submission may still be
+    // redirected for a missing course, but never 403).
+    let cookie = sign_in(app.clone(), "principal@example.com", "Password123!").await;
     let (status, body) = get_with(app.clone(), &format!("/admin/marks?programme={prog_b}"), &cookie).await;
     assert_eq!(status, StatusCode::OK);
     let csrf = extract_csrf(&body);
 
-    // The admin is not refused for the other department's programme (the
-    // submission may still be redirected for a missing course, but never 403).
     let form = format!(
         "csrf_token={csrf}&programme={prog_b}&semester=1&course=1&kind=coursework&assessment=internal&exam_name=&max=100"
     );
     let (status, _) = post_form(app, "/admin/marks/save", &cookie, form).await;
     assert_ne!(status, StatusCode::FORBIDDEN);
+}
+
+/// The IT administrator is a site/accounts role with two academic tools of its
+/// own: the timetable (a hand that reaches every department keeps the grid
+/// clash-free) and the attendance report (which it reads and exports). The rest
+/// of the academic set refuses it. This is the split that separates it from the
+/// Super Admin (and the Principal).
+#[sqlx::test]
+async fn the_it_admin_keeps_the_timetable_and_the_attendance_report(pool: PgPool) {
+    init_session_store(&pool).await;
+    let _admin = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+    let app = management_app(&pool);
+    let cookie = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+
+    for page in [
+        "/admin/marks",
+        "/admin/exams",
+        "/admin/courses",
+        "/admin/courses/offerings",
+        "/admin/departments",
+        "/admin/substitutions",
+        "/admin/materials",
+        "/admin/work-queue",
+    ] {
+        let (status, _) = get_with(app.clone(), page, &cookie).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{page} must refuse the IT admin");
+    }
+
+    // Its own pages — accounts, settings, the CMS, the timetable and the
+    // attendance report — keep working.
+    for page in [
+        "/admin",
+        "/admin/people",
+        "/admin/settings",
+        "/admin/notices",
+        "/admin/pages",
+        "/admin/timetable",
+        "/admin/attendance",
+    ] {
+        let (status, _) = get_with(app.clone(), page, &cookie).await;
+        assert_eq!(status, StatusCode::OK, "{page} must still load for the IT admin");
+    }
+
+    // The report's export is the reason it is offered: the IT admin downloads
+    // the same CSV the Principal does.
+    let (status, headers, body) = get_with_headers(app, "/admin/attendance.csv", &cookie).await;
+    assert_eq!(status, StatusCode::OK, "the IT admin must be able to export the report");
+    assert!(
+        headers
+            .get("content-disposition")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .contains("attachment"),
+        "the export should download"
+    );
+    assert!(
+        body.contains("Admission no") && body.contains("Attendance %"),
+        "the export should carry the report's header row"
+    );
+}
+
+/// The IT administrator's timetable is a working grid, not a read-only view: it
+/// may schedule a period — the college-wide hand that untangles two departments
+/// competing for the same teacher, room or class — and the period is stored.
+#[sqlx::test]
+async fn the_it_admin_can_schedule_a_period(pool: PgPool) {
+    init_session_store(&pool).await;
+    let dept = department(&pool, "alpha").await;
+    let prog = programme(&pool, dept, "alpha-ug").await;
+    let course_id: i64 = sqlx::query_scalar(
+        "INSERT INTO courses (programme_id, department_id, code, title, credits, category, semester)
+         VALUES ($1, $2, 'ALP110', 'Alpha course', 4, 'MAJOR', 3) RETURNING id",
+    )
+    .bind(prog)
+    .bind(dept)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let _admin = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+
+    let app = management_app(&pool);
+    let cookie = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+
+    let (status, body) = get_with(
+        app.clone(),
+        &format!("/admin/timetable?programme={prog}&semester=3"),
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "the IT admin must open the timetable");
+    let csrf = extract_csrf(&body);
+
+    let form = format!(
+        "csrf_token={csrf}&programme_id={prog}&semester=3&weekday=1&start_at=09:00&end_at=10:00&course_id={course_id}&faculty_id=&teacher_tbd=1&room="
+    );
+    let (status, _) = post_form(app.clone(), "/admin/timetable/slots", &cookie, form).await;
+    assert_eq!(status, StatusCode::OK, "the scheduler should answer with the panel");
+
+    let entries: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM timetable_entries WHERE course_id = $1 AND weekday = 1",
+    )
+    .bind(course_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(entries, 1, "the IT admin's period was not stored");
+
+    // A clash is still refused, which is the point of giving it the grid.
+    let (status, body) = get_with(
+        app.clone(),
+        &format!("/admin/timetable?programme={prog}&semester=3"),
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let csrf = extract_csrf(&body);
+    let form = format!(
+        "csrf_token={csrf}&programme_id={prog}&semester=3&weekday=1&start_at=09:30&end_at=10:30&course_id={course_id}&faculty_id=&teacher_tbd=1&room="
+    );
+    let (status, _, body) = post_form_with_headers(app, "/admin/timetable/slots", &cookie, form).await;
+    assert_eq!(status, StatusCode::OK, "a clash is reported on the panel, not as an error");
+    assert!(
+        body.contains("Clash"),
+        "the IT admin's overlapping period should be refused as a clash"
+    );
 }
 
 #[sqlx::test]
@@ -483,10 +621,10 @@ async fn a_course_wise_sheet_files_through_the_review_with_its_own_maximum(pool:
         .await
         .unwrap();
     let _st2 = student(&pool, s2, "2502", prog).await;
-    let _admin = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+    let _principal = make_user(&pool, "principal@example.com", "principal", "Password123!").await;
 
     let app = management_app(&pool);
-    let cookie = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+    let cookie = sign_in(app.clone(), "principal@example.com", "Password123!").await;
 
     // The blank form: the key, the name and every course of the semester, one
     // line per student, with the mark cells empty.
@@ -658,10 +796,10 @@ async fn a_one_row_per_result_sheet_carries_its_name_and_maximum_into_the_review
     let bca101 = course_row(&pool, prog, "BCA101", 1).await;
     let s1 = make_user(&pool, "s1@example.com", "student", "Password123!").await;
     student(&pool, s1, "2501", prog).await;
-    let _admin = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+    let _principal = make_user(&pool, "principal@example.com", "principal", "Password123!").await;
 
     let app = management_app(&pool);
-    let cookie = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+    let cookie = sign_in(app.clone(), "principal@example.com", "Password123!").await;
     let (_, page) = get_with(
         app.clone(),
         &format!("/admin/marks?programme={prog}&semester=1&course={bca101}&kind=internal&assessment=internal&exam_name=&max="),
@@ -936,9 +1074,9 @@ async fn a_timetable_period_can_be_left_for_a_teacher_to_be_assigned(pool: PgPoo
     .fetch_one(&pool)
     .await
     .unwrap();
-    let _admin = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+    let _principal = make_user(&pool, "principal@example.com", "principal", "Password123!").await;
     let app = management_app(&pool);
-    let cookie = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+    let cookie = sign_in(app.clone(), "principal@example.com", "Password123!").await;
 
     // The form offers the explicit "to be assigned" choice instead of forcing a
     // teacher for every period.
@@ -995,9 +1133,9 @@ async fn every_request_gets_its_own_audit_correlation_id(pool: PgPool) {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let _admin = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+    let _principal = make_user(&pool, "principal@example.com", "principal", "Password123!").await;
     let app = management_app(&pool);
-    let cookie = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+    let cookie = sign_in(app.clone(), "principal@example.com", "Password123!").await;
 
     let (_, body) = get_with(
         app.clone(),
@@ -1508,9 +1646,11 @@ async fn a_department_action_redirects_inside_the_department_workspace(pool: PgP
         .to_string();
     assert_eq!(location, "/hod/departments", "an HOD must not be sent into /admin");
 
-    // The same action from the management workspace stays in `/admin`.
+    // The same action from the management workspace stays in `/admin`. The
+    // Principal holds the academic authority now, not the IT administrator.
+    let _principal = make_user(&pool, "principal@example.com", "principal", "Password123!").await;
     let app = management_app(&pool);
-    let admin_cookie = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+    let admin_cookie = sign_in(app.clone(), "principal@example.com", "Password123!").await;
     let (_, body) = get_with(app.clone(), "/admin/departments", &admin_cookie).await;
     let csrf = extract_csrf(&body);
     let (status, headers, _) = post_form_with_headers(
@@ -1520,7 +1660,7 @@ async fn a_department_action_redirects_inside_the_department_workspace(pool: PgP
         format!("csrf_token={csrf}&department_id={dept}"),
     )
     .await;
-    assert!(status.is_redirection(), "the IT admin's placement should redirect");
+    assert!(status.is_redirection(), "the placement should redirect");
     assert_eq!(
         headers.get("location").and_then(|v| v.to_str().ok()),
         Some("/admin/departments")
@@ -1589,12 +1729,22 @@ async fn an_it_admin_works_on_the_public_listener_but_root_authority_does_not(po
         StatusCode::OK,
         "the IT admin must reach /admin on the public listener"
     );
-    let (status, _) = get_with(app.clone(), "/admin/people", &admin).await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "the IT admin's tools are served on the public listener"
-    );
+    // Its own tools, including the two academic ones it keeps, are served on
+    // the listener it signs in to.
+    for page in [
+        "/admin/people",
+        "/admin/timetable",
+        "/admin/attendance",
+        "/admin/manage/timetable",
+        "/admin/manage/attendance",
+    ] {
+        let (status, _) = get_with(app.clone(), page, &admin).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{page} is served to the IT admin on the public listener"
+        );
+    }
 
     let root = sign_in(app.clone(), "root@example.com", "Password123!").await;
     let (status, _) = get_with(app.clone(), "/admin", &root).await;
@@ -1622,5 +1772,224 @@ async fn office_staff_work_from_the_staff_workspace_on_the_public_listener(pool:
         let (status, _) = get_with(app.clone(), page, &cookie).await;
         assert_eq!(status, StatusCode::OK, "{page} did not load for office staff");
     }
+}
+
+/// The loopback management listener also serves the whole public website, so an
+/// administrator can see exactly what a visitor sees without leaving the
+/// management port.
+#[sqlx::test]
+async fn the_loopback_listener_serves_the_whole_public_site(pool: PgPool) {
+    init_session_store(&pool).await;
+    let app = management_app(&pool);
+    for page in [
+        "/",
+        "/academics",
+        "/departments",
+        "/notices",
+        "/about/staff",
+    ] {
+        let (status, _, _) = get(app.clone(), page).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{page} must be served on the loopback management listener"
+        );
+    }
+}
+
+/// The two pages whose body is generated from a table with its own screen —
+/// the teaching-staff directory and the rank holders list — are left out of the
+/// Pages screen, so those screens remain the single place to manage them.
+#[sqlx::test]
+async fn the_pages_screen_leaves_the_separately_managed_lists_out(pool: PgPool) {
+    init_session_store(&pool).await;
+    let _admin = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+    let app = management_app(&pool);
+    let cookie = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+
+    let (status, body) = get_with(app, "/admin/pages", &cookie).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !body.contains("/about/staff"),
+        "the teaching-staff page must not be listed on the Pages screen"
+    );
+    assert!(
+        !body.contains("/academics/rank-holders"),
+        "the rank holders page must not be listed on the Pages screen"
+    );
+    // An ordinary CMS page is still listed, so the screen was not blanked.
+    assert!(
+        body.contains("/about/organogram"),
+        "an ordinary page is still listed"
+    );
+}
+
+/// The Principal and office staff have no `faculty` row, so they keep their
+/// public card on `/profile`; it appears on the staff page beside the teaching
+/// departments. A role with no public profile is refused.
+#[sqlx::test]
+async fn a_principal_and_office_staff_keep_a_public_profile(pool: PgPool) {
+    init_session_store(&pool).await;
+    let _principal = make_user(&pool, "principal@example.com", "principal", "Password123!").await;
+    let _staff = make_user(&pool, "staff@example.com", "staff", "Password123!").await;
+    let _admin = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+
+    let app = public_app(&pool, false);
+
+    let principal = sign_in(app.clone(), "principal@example.com", "Password123!").await;
+    let (status, body) = get_with(app.clone(), "/profile", &principal).await;
+    assert_eq!(status, StatusCode::OK, "the Principal has a profile page");
+    let csrf = extract_csrf(&body);
+    let (status, _) = post_multipart(
+        app.clone(),
+        "/profile",
+        &principal,
+        &[
+            ("csrf_token", csrf.as_str()),
+            ("name", "Dr Asha Menon"),
+            ("designation", "Principal"),
+            ("qualification", "Ph.D."),
+            ("email", "principal@example.com"),
+            ("bio", "Leads the college."),
+        ],
+    )
+    .await;
+    assert!(status.is_redirection(), "saving a profile redirects, got {status}");
+
+    let staff = sign_in(app.clone(), "staff@example.com", "Password123!").await;
+    let (_, body) = get_with(app.clone(), "/profile", &staff).await;
+    let csrf = extract_csrf(&body);
+    let (status, _) = post_multipart(
+        app.clone(),
+        "/profile",
+        &staff,
+        &[
+            ("csrf_token", csrf.as_str()),
+            ("name", "Ravi Kumar"),
+            ("designation", "Office Superintendent"),
+            ("qualification", "B.Com."),
+            ("email", ""),
+            ("bio", ""),
+        ],
+    )
+    .await;
+    assert!(status.is_redirection());
+
+    let (status, _, body) = get(app.clone(), "/about/staff").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Dr Asha Menon"), "the Principal's card is missing");
+    assert!(body.contains("Ravi Kumar"), "the office staff card is missing");
+    assert!(body.contains("Office staff"), "the office staff heading is missing");
+    assert!(body.contains("Principal"), "the Principal heading is missing");
+
+    // A role with no public profile opens nothing here.
+    let admin = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+    let (status, _) = get_with(app, "/profile", &admin).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+/// A teacher's profile edits their own `faculty` row in place, and the result is
+/// the card the staff page draws.
+#[sqlx::test]
+async fn a_teacher_profile_shows_on_the_staff_page(pool: PgPool) {
+    init_session_store(&pool).await;
+    let dept = department(&pool, "alpha").await;
+    let teacher = make_user(&pool, "teacher@example.com", "faculty", "Password123!").await;
+    sqlx::query(
+        "INSERT INTO faculty (user_id, department_id, name, designation, is_hod)
+         VALUES ($1, $2, 'Old Name', '', false)",
+    )
+    .bind(teacher)
+    .bind(dept)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let app = public_app(&pool, false);
+    let cookie = sign_in(app.clone(), "teacher@example.com", "Password123!").await;
+    let (status, body) = get_with(app.clone(), "/profile", &cookie).await;
+    assert_eq!(status, StatusCode::OK, "a teacher has a profile page");
+    let csrf = extract_csrf(&body);
+    let (status, _) = post_multipart(
+        app.clone(),
+        "/profile",
+        &cookie,
+        &[
+            ("csrf_token", csrf.as_str()),
+            ("name", "Asha Teacher"),
+            ("designation", "Assistant Professor"),
+            ("qualification", "M.Sc."),
+            ("email", ""),
+            ("bio", "Teaches electronics."),
+        ],
+    )
+    .await;
+    assert!(status.is_redirection());
+
+    let (status, _, body) = get(app, "/about/staff").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Asha Teacher"), "the saved name is on the staff page");
+    assert!(
+        body.contains("Assistant Professor"),
+        "the saved designation is on the staff page"
+    );
+}
+
+/// A page section stores the photo placement the editor chose, so an author can
+/// put the picture where they want it rather than always above the heading.
+#[sqlx::test]
+async fn a_page_section_keeps_the_chosen_photo_placement(pool: PgPool) {
+    init_session_store(&pool).await;
+    let _admin = make_user(&pool, "admin@example.com", "admin", "Password123!").await;
+    let app = management_app(&pool);
+    let cookie = sign_in(app.clone(), "admin@example.com", "Password123!").await;
+
+    // Create a page with the ordinary page form.
+    let (_, body) = get_with(app.clone(), "/admin/pages/new", &cookie).await;
+    let csrf = extract_csrf(&body);
+    let form = format!(
+        "csrf_token={csrf}&path=/about/photo-test&title=Photo test&lede=&status=published\
+         &nav_group=none&nav_label=&nav_sort=0&publish_at=&unpublish_at="
+    );
+    let (status, _) = post_form(app.clone(), "/admin/pages", &cookie, form).await;
+    assert!(status.is_redirection(), "creating a page redirects, got {status}");
+    let page_id: i64 =
+        sqlx::query_scalar("SELECT id FROM pages WHERE path = '/about/photo-test'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    // Add a section whose photo sits beside the text on the right.
+    let (_, body) = get_with(app.clone(), &format!("/admin/pages/{page_id}"), &cookie).await;
+    let csrf = extract_csrf(&body);
+    let (status, _) = post_multipart(
+        app.clone(),
+        &format!("/admin/pages/{page_id}/sections"),
+        &cookie,
+        &[
+            ("csrf_token", csrf.as_str()),
+            ("heading", "Our story"),
+            ("body", "First paragraph.\n\nSecond paragraph."),
+            ("photo_caption", ""),
+            ("published", "1"),
+            ("layout", "paragraphs"),
+            ("grid_columns", "3"),
+            ("image_align", "left"),
+            ("text_align", "left"),
+            ("photo_shape", "circle"),
+            ("photo_size", "md"),
+            ("photo_position", "right"),
+        ],
+    )
+    .await;
+    assert!(status.is_redirection(), "adding a section redirects, got {status}");
+
+    let placement: String =
+        sqlx::query_scalar("SELECT photo_position FROM page_sections WHERE page_id = $1")
+            .bind(page_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(placement, "right", "the chosen photo placement was not stored");
 }
 

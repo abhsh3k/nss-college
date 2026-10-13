@@ -133,8 +133,8 @@ async fn render(
     Ok(page)
 }
 
-/// The selected programme, forced to one this manager may act for (an admin
-/// manages every programme; a head only their department's).
+/// The selected programme, forced to one this manager may act for (the
+/// Principal manages every programme; a head only their department's).
 pub(super) async fn selected_programme(
     s: &AppState,
     department: Option<i64>,

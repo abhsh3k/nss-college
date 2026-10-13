@@ -54,6 +54,9 @@
           <p class="font-medium">{{ shell.user_name }}</p>
           <ul class="mt-3 space-y-1 text-sm">
             <li><a class="underline underline-offset-4 hover:text-accent" href="/account/password">Change password</a></li>
+            {% if shell.has_profile %}
+            <li><a class="underline underline-offset-4 hover:text-accent" href="/profile">Your profile</a></li>
+            {% endif %}
             <li><a class="underline underline-offset-4 hover:text-accent" href="/">Public website</a></li>
           </ul>
           <form method="post" action="/logout" class="mt-4">

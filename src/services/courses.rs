@@ -435,7 +435,7 @@ pub async fn offerings_for_department(db: &PgPool, department: Option<i64>) -> R
 }
 
 /// Published offerings whose periods a manager may schedule right now: their
-/// own department's, or every department's for the IT admin. Drives the
+/// own department's, or every department's for the college-wide manager. Drives
 /// timetable page's offering picker.
 #[derive(Debug, FromRow)]
 pub struct SchedulableOffering {
@@ -700,7 +700,7 @@ pub struct Approval {
 }
 
 /// External offerings aimed at this department, for the receiving HOD's view.
-/// `department` is `None` for the IT admin, who sees every department's
+/// `department` is `None` for the college-wide manager, who sees every department's
 /// worklist. The offering department's own rows are never listed here: you do
 /// not approve your own course for yourself.
 pub async fn external_offerings_for(db: &PgPool, department: Option<i64>) -> Res<Vec<Approval>> {

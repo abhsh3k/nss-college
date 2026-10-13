@@ -3,7 +3,8 @@
 //! An HOD manages their own department's catalogue courses and offerings,
 //! approves other departments' offerings aimed at their students, reviews
 //! student selections, decides change requests and finalises cohort
-//! specializations. The IT admin (`Manager` with `Scope::All`) sees everything.
+//! specializations. The Principal and the Super Admin (`Manager` with
+//! `Scope::All`) see everything; the IT admin is not a manager.
 //! Every write re-checks the department server-side; the id in a form proves
 //! nothing.
 
@@ -74,7 +75,7 @@ pub async fn catalogue(
             None => courses::catalogue_courses(&s.db, None).await?,
         },
         department_name: department_name(&s, &manager).await?,
-        // Authoring courses is a department act: the IT admin may read every
+        // Authoring courses is a department act: the Principal reads every
         // department's catalogue but does not add or retire courses in it.
         can_edit: department.is_some(),
         categories: &courses::CATEGORIES,
@@ -266,7 +267,7 @@ pub struct OfferingsTemplate {
     catalogue: Vec<CatalogueCourse>,
     years: Vec<courses::AcademicYear>,
     department_name: String,
-    /// Only a department head creates offerings; the IT admin reads them all.
+    /// Only a department head creates offerings; the Principal reads them all.
     can_create: bool,
 }
 
@@ -279,7 +280,8 @@ pub async fn offerings(
     Ok(OfferingsTemplate {
         shell: Shell::build(&manager.user, &session, &s.db).await?,
         offerings: courses::offerings_for_department(&s.db, department).await?,
-        // An HOD offers courses from their own catalogue; the admin sees every department's.
+        // An HOD offers courses from their own catalogue; the Principal sees
+        // every department's.
         catalogue: match department {
             Some(id) => courses::department_courses(&s.db, id).await?,
             None => courses::catalogue_courses(&s.db, None).await?,
@@ -847,7 +849,7 @@ pub async fn external(
     session: Session,
     manager: Manager,
 ) -> Result<ExternalTemplate, AppError> {
-    // A receiving HOD sees their own worklist; the IT admin sees them all.
+    // A receiving HOD sees their own worklist; the Principal sees them all.
     let department = manager.department();
     Ok(ExternalTemplate {
         shell: Shell::build(&manager.user, &session, &s.db).await?,
@@ -1063,7 +1065,7 @@ pub async fn set_selection_state(
         _ => return Err(AppError::BadRequest("Unknown state.".into())),
     };
     // The selection must be confirmed or locked, and belong to this
-    // department's student (the IT admin reaches all of them).
+    // department's student (the Principal reaches all of them).
     let owned = sqlx::query_scalar::<_, bool>(
         r#"SELECT EXISTS (
                SELECT 1
@@ -1160,7 +1162,7 @@ pub async fn finalize_cohort(
     let department = manager.department();
     let cohort_id: i64 = f.cohort_id.trim().parse().map_err(|_| AppError::NotFound)?;
     let offering_id: i64 = f.offering_id.trim().parse().map_err(|_| AppError::NotFound)?;
-    // The cohort must belong to a programme of this department (the IT admin
+    // The cohort must belong to a programme of this department (the Principal
     // may finalize for any cohort).
     let owner: Option<i64> = sqlx::query_scalar(
         "SELECT p.department_id FROM cohorts cb JOIN programmes p ON p.id = cb.programme_id WHERE cb.id = $1",

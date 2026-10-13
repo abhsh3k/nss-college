@@ -5,6 +5,7 @@ mod dashboards;
 mod htmx;
 mod hub_courses;
 mod hub_pages;
+mod profile;
 mod public;
 mod teacher;
 
@@ -64,6 +65,9 @@ fn signed_in_public_routes() -> Router<AppState> {
             get(teacher::materials_page).post(teacher::materials_upload),
         )
         .route("/teacher/sheet", get(dashboards::teacher))
+        // The self-service staff profile, for a teacher, the Principal or
+        // office staff — whichever listener they signed in on.
+        .route("/profile", get(profile::show).post(profile::save))
         .route("/hub", get(dashboards::student))
         .route("/hub/timetable", get(hub_pages::timetable))
         .route("/hub/results", get(hub_pages::results))
@@ -116,12 +120,14 @@ fn staff_routes() -> Router<AppState> {
         ))
 }
 
-/// Routes reachable on the public listener. The administrative management
-/// router is bound separately to loopback by `main`, but its pages are also
-/// served here for the roles that work on the public listener — root authority
-/// excepted.
-pub fn public_router() -> Router<AppState> {
-    let site = Router::new()
+/// The public informational site: the home page, the academic and content
+/// pages, uploads, and the database-backed page fallback.
+///
+/// It is a separate router because both listeners serve it: the public one for
+/// visitors, and the loopback management one so an administrator can see
+/// exactly what a visitor sees without leaving the management port.
+fn site_routes() -> Router<AppState> {
+    Router::new()
         .route("/", get(public::home))
         .route("/academics", get(public::programmes))
         .route("/academics/rank-holders", get(public::rank_holders))
@@ -145,9 +151,16 @@ pub fn public_router() -> Router<AppState> {
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-cache"),
-        ));
+        ))
+}
 
-    site.merge(auth_routes())
+/// Routes reachable on the public listener. The administrative management
+/// router is bound separately to loopback by `main`, but its pages are also
+/// served here for the roles that work on the public listener — root authority
+/// excepted.
+pub fn public_router() -> Router<AppState> {
+    site_routes()
+        .merge(auth_routes())
         .merge(signed_in_public_routes())
         // The management area is served here too, for the roles whose home is
         // `/admin` (the IT administrator and the Principal) and for office
@@ -167,8 +180,18 @@ pub fn public_router() -> Router<AppState> {
 /// Routes for the loopback-only management listener. Keeping this router
 /// separate makes the network boundary independent of navigation and role
 /// checks.
+///
+/// The whole public website is served here as well — the loopback copy of
+/// `site_routes` — so an administrator on the management port can browse the
+/// site as a visitor before changing it. The management routes are layered on
+/// top; `/admin/roles` and the other root-only screens stay reachable only on
+/// this listener.
 pub fn management_router() -> Router<AppState> {
-    auth_routes()
+    site_routes()
+        // `/profile` is a signed-in page for a teacher, the Principal or office
+        // staff, and those roles sign in on either listener.
+        .merge(signed_in_public_routes())
+        .merge(auth_routes())
         // The role landing page for IT admin and office staff (`Role::home`).
         // It is `AdminDashboard`, so all four management roles reach it; the
         // cards it lists are narrowed to the content area for office staff.

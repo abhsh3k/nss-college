@@ -14,6 +14,7 @@ pub mod maintenance;
 pub mod materials;
 pub mod result_import;
 pub mod people;
+pub mod profiles;
 pub mod rank_holders;
 pub mod reports;
 pub mod site_admin;

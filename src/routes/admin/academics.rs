@@ -9,7 +9,7 @@ use tower_sessions::Session;
 
 use super::{parse_i32, parse_i64};
 use crate::{
-    auth::{csrf, AdminOnly, Manager},
+    auth::{csrf, AcademicOnly, Manager},
     error::{is_foreign_key_violation, is_unique_violation, AppError},
     services::{
         academics::{self, CourseDetail, CourseInput, CourseRow, ProgrammeOption, ProgrammeSummary, TeacherOption},
@@ -54,8 +54,8 @@ pub struct ProgrammeTemplate {
     semesters: Vec<SemesterView>,
     teachers: Vec<TeacherOption>,
     semester_numbers: Vec<i32>,
-    /// Course create/edit/delete stays with the IT admin; an HOD may still
-    /// enroll students and read the page.
+    /// Course create/edit/delete is `AcademicOnly` (the Principal or the Super
+    /// Admin); an HOD may still enroll students and read the page.
     can_edit_courses: bool,
 }
 
@@ -136,7 +136,7 @@ fn check_course(f: &CourseForm) -> Result<CheckedCourse, &'static str> {
 pub async fn add_course(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    AcademicOnly(user): AcademicOnly,
     Path(programme_id): Path<i64>,
     Form(f): Form<CourseForm>,
 ) -> Result<Redirect, AppError> {
@@ -176,7 +176,7 @@ pub struct CourseEditTemplate {
 pub async fn course_form(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    AcademicOnly(user): AcademicOnly,
     Path(id): Path<i64>,
 ) -> Result<CourseEditTemplate, AppError> {
     Ok(CourseEditTemplate {
@@ -189,7 +189,7 @@ pub async fn course_form(
 pub async fn course_update(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    AcademicOnly(user): AcademicOnly,
     Path(id): Path<i64>,
     Form(f): Form<CourseForm>,
 ) -> Result<Redirect, AppError> {
@@ -230,7 +230,7 @@ pub struct TokenForm {
 pub async fn course_delete(
     State(s): State<AppState>,
     session: Session,
-    AdminOnly(user): AdminOnly,
+    AcademicOnly(user): AcademicOnly,
     Path(id): Path<i64>,
     Form(f): Form<TokenForm>,
 ) -> Result<Redirect, AppError> {

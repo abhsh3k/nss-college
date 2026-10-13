@@ -116,6 +116,75 @@ pub async fn faculty_groups(db: &PgPool) -> Res<Vec<DepartmentGroup>> {
     Ok(groups)
 }
 
+// ---------- A teacher's own profile ----------
+
+/// A teacher's own profile row, addressed by their account, for the
+/// self-service profile page. It is a narrower view than [`FacultyRow`]: the
+/// department and the HOD flags are the IT admin's to set, not the teacher's.
+#[derive(Debug, sqlx::FromRow)]
+pub struct TeacherProfile {
+    pub name: String,
+    pub designation: String,
+    pub qualification: String,
+    pub email: Option<String>,
+    pub bio: String,
+    pub photo_path: Option<String>,
+}
+
+/// The teacher's own `faculty` row, if their account has one.
+pub async fn profile_for_user(db: &PgPool, user_id: i64) -> Res<Option<TeacherProfile>> {
+    sqlx::query_as::<_, TeacherProfile>(
+        r#"SELECT name, designation, qualification, email, bio, photo_path
+             FROM faculty WHERE user_id = $1"#,
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await
+}
+
+/// The photo a teacher's own profile currently points at, so a rejected
+/// replacement upload can be undone without dropping the file still in use.
+pub async fn photo_for_user(db: &PgPool, user_id: i64) -> Res<Option<String>> {
+    sqlx::query_scalar::<_, Option<String>>("SELECT photo_path FROM faculty WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_optional(db)
+        .await
+        .map(|inner| inner.flatten())
+}
+
+/// Update the teacher's own profile. Returns false when the account has no
+/// `faculty` row, so the caller can fall back to a `staff_profiles` row.
+///
+/// The designation, qualification, biography and photo are the teacher's own;
+/// the department, the HOD flag and the account are deliberately not touched.
+pub async fn save_profile(
+    db: &PgPool,
+    user_id: i64,
+    name: &str,
+    designation: &str,
+    qualification: &str,
+    email: &str,
+    bio: &str,
+    photo: &str,
+) -> Res<bool> {
+    let done = sqlx::query(
+        r#"UPDATE faculty
+              SET name = $2, designation = $3, qualification = $4,
+                  email = NULLIF($5, ''), bio = $6, photo_path = NULLIF($7, '')
+            WHERE user_id = $1"#,
+    )
+    .bind(user_id)
+    .bind(name.trim())
+    .bind(designation.trim())
+    .bind(qualification.trim())
+    .bind(email.trim())
+    .bind(bio.trim())
+    .bind(photo)
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected() > 0)
+}
+
 /// A compact public-facing initials fallback for a faculty photo, using the
 /// first two words of the name.
 pub fn initials(card: &FacultyCard) -> String {

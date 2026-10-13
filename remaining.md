@@ -17,7 +17,7 @@ Companion documents, and what each one is for:
 | `README.md` | how to run it, the feature tour, and the known limitations list |
 | `remaining.md` | this file: architecture, what is left, how to implement it, how to operate |
 
-Current state: **`cargo test --no-fail-fast` → exit 0**; 83 unit + 40 database + 31 end-to-end + 1 Node
+Current state: **`cargo test --no-fail-fast` → exit 0**; 84 unit + 40 database + 32 end-to-end + 1 Node
 test, 0 failures.
 
 ---
@@ -67,21 +67,25 @@ and the dashboard chrome have no database handle of their own) and refreshes it 
 public_router()                    management_router()
 ├── public site pages              ├── /admin dashboard (AdminDashboard)
 ├── auth_routes()                  ├── admin::routes()
-├── signed_in_public_…             │   ├── technical routes   /admin/…      (AdminOnly, OfficeOrAdmin, …)
+├── signed_in_public_…             │   ├── site/admin routes  /admin/…      (AdminOnly, AcademicOnly, OfficeOrAdmin, …)
 │   /teacher* /hub* …              │   └── .nest("/admin", manager_routes().merge(content_routes()))
 ├── /admin + /staff                ├── /staff  (admin::staff_routes())
 │   + /hod  (from `routes/mod.rs`) └── /hod    (department_routes())
 └── wrapped by `auth::management_area_on_public`
 ```
 
-- `admin::routes()` (`src/routes/admin/mod.rs`) holds the **technical** pages — People, Settings, the
-  college-wide attendance report, appointments, root authority — at their absolute `/admin/...` paths, plus
+- `admin::routes()` (`src/routes/admin/mod.rs`) holds the **site-administration** pages — People, Settings,
+  the course structure (`AcademicOnly`), the college-wide attendance report (`AcademicOrAdmin`), appointments
+  and root authority — at their absolute `/admin/...` paths, plus
   `.nest("/admin", manager_routes().merge(content_routes()))`.
 - `admin::manager_routes()` holds every **department** page whose handler takes `Manager` — the work queue,
-  the section index (`/manage/:key`), departments + attendance, academics/enrol, timetable, substitutions,
+  the section index (`/manage/:key`), departments + attendance, academics/enrol, substitutions,
   courses/offerings/external/selections, exams, marks + corrections + imports, materials — plus the
-  per-user notification feed, written with **relative** paths. It is mounted at `/admin` and, via
-  `routes::department_routes()`, at `/hod` on both listeners.
+  per-user notification feed, written with **relative** paths. The timetable lives here too, but takes
+  `Scheduler`. It is mounted at `/admin` and, via `routes::department_routes()`, at `/hod` on both
+  listeners. The IT admin is **not** a `Manager`, so these pages are the Principal's and the HODs' — except
+  the timetable, which `Scheduler` opens to it; its own catalogue (`sections::areas_for`) offers that page
+  and the attendance report in a reduced form and omits the rest.
 - `admin::content_routes()` holds the CMS tools (notices, news, events), also with **relative** paths, so
   the same handlers serve `/admin/notices` for the IT admin and `/staff/notices` for office staff.
 - `admin::staff_routes()` is the `/staff` office-staff workspace: the dashboard, the section index, the
@@ -117,23 +121,27 @@ guard is impossible to forget on a handler that takes it:
 | --- | --- | --- |
 | `AuthUser` | anyone signed in | session → `users` row; a `session_version` mismatch flushes the session (role change, password reset, deactivation) |
 | `Ready` | a signed-in user who replaced their temporary password | otherwise redirects to `/account/password` |
-| `AdminOnly` | `admin`, `super_admin` | the IT admin's technical powers |
+| `AdminOnly` | `admin`, `super_admin` | site administration: accounts (People), settings, the CMS (documents/pages/rank holders), appointments |
+| `AcademicOnly` | `super_admin`, `principal` | the *academic* structure (add/edit/delete a course); the IT admin is deliberately excluded |
+| `AcademicOrAdmin` | `admin`, `super_admin`, `principal` | the college-wide attendance report and its CSV export — read and export only; a head of department corrects their own register through `Manager` |
 | `AdminOrPrincipal` | + `principal` | the appointments screen |
 | `AdminDashboard` | + `staff` | the `/admin` overview |
 | `OfficeOrAdmin` | `admin`, `super_admin`, `staff` | CMS authoring (notices, news, events) — create, edit, publish, archive, delete |
 | `StaffOnly` | `staff` | the `/staff` workspace overview |
 | `PrincipalOnly`, `TeacherOnly`, `StudentOnly`, `SuperAdminOnly` | one role each | `SuperAdminOnly` is root authority: `/admin/roles`, recovery, reopening finalized marks |
-| `Manager` | `admin`, `super_admin`, `principal` → `Scope::All`; a `faculty` account with an **effective** HOD appointment or delegation → `Scope::Department(id)` | resolved per request from `services::appointments`, not from a session flag; no appointment (or no department) is a denial |
+| `Manager` | `super_admin`, `principal` → `Scope::All`; a `faculty` account with an **effective** HOD appointment or delegation → `Scope::Department(id)` | resolved per request from `services::appointments`, not from a session flag; no appointment (or no department) is a denial. The IT admin is deliberately **not** a manager: the courses, the offerings, the marks and the results belong to the Principal and the HODs |
+| `Scheduler` | `admin`, `super_admin`, `principal` → `Scope::All`; a `faculty` account with an **effective** HOD appointment or delegation → `Scope::Department(id)` | the timetable alone, widened to the IT admin so one hand can keep the grid clash-free across departments; it grants nothing else |
 | `management_area_on_public` (middleware) | `admin`, `principal`, `staff` | mounted only on the public `/admin` and `/staff` mounts; refuses a `faculty` account and root authority, using the role recorded in the session at sign-in |
 
 Rules that hold everywhere: authorization is server-side and derived from the session, never from a
 form field; a department-scoped write re-checks that the row belongs to the guard's department (the id in
-the form is never trusted); `Manager::department()` returning `None` means "the whole college" *only* for
-the IT admin, while a missing department on an appointment is a denial.
+the form is never trusted); `Manager::department()` and `Scheduler::department()` returning `None` means
+"the whole college" — for the Principal and the Super Admin in both, and for the IT admin in `Scheduler`
+alone — while a missing department on an appointment is a denial.
 
 ### 1.5 Data layer
 
-- **Migrations**: `migrations/NNNN_name.sql`, 33 of them, applied by `migrator()` (`sqlx::migrate!`) at
+- **Migrations**: `migrations/NNNN_name.sql`, 35 of them, applied by `migrator()` (`sqlx::migrate!`) at
   startup and by every `#[sqlx::test]`. **Never edit an applied migration** — SQLx checksums them and
   startup fails with the applied set printed. Add a new numbered file instead.
 - **Services** (`src/services/*.rs`) own every SQL statement and the business rules; route handlers are thin:
@@ -189,7 +197,7 @@ src/
     admin/                  mod.rs (route sets) + one file per screen
   services/                 all SQL and business rules, one file per domain
 templates/   layouts, partials, public, auth, account, dashboard, teacher, hub, admin
-migrations/  33 SQL files        static/  css (tailwind), js, img        tests/  app, database, js_hooks, js/
+migrations/  35 SQL files        static/  css (tailwind), js, img        tests/  app, database, js_hooks, js/
 ```
 
 ---
@@ -319,13 +327,14 @@ department workspace following Part 3's recipe, and account creation only on con
 (`services/people.rs`). *Verify:* database tests for request→confirm→account, an authorization test that
 another department's HOD cannot confirm it, and an e2e test of the HOD screen.
 
-**17. Non-teaching staff page + profile photos (README "still to build").** A CMS-managed staff page
-(cards from existing faculty data, grouped by department, HOD first, with the rank-holders display options
-reused), a manual non-teaching staff section with photo upload, and `students.photo_path` at model/service
-level. *Where:* `services/faculty.rs` exists for the teaching list; photos ride the existing `uploads`
-service and `content_admin`-style admin forms; `uploads` authorization in `routes/public.rs` must cover the
-new folders. *Verify:* an e2e upload test (the file is written, the row points at it, the public route
-serves it only when it should) and a public render test.
+**17. Student profile photos (README "still to build").** *Resolved for staff.* The teaching staff page
+(`/about/staff`, `src/routes/about.rs` + `services/faculty.rs`) renders published faculty cards grouped by
+department with the HOD first; the self-service profile at `/profile` now lets a teacher, the Principal and
+office staff set their own card and photo (migration `0037`, `services/profiles.rs`, shown on the same
+page). What remains is the profile-photo capability for **students** at the model/service level only (no
+student UI yet), riding `students.photo_path` and the same `uploads` service. *Verify:* an e2e upload test
+(the file is written, the row points at it, the public route serves it only when it should) and a public
+render test.
 
 **18. Housekeeping migrations.** Drop the unused `egrants` / `import_rows.egrants` columns once no read
 path mentions them; keep `fixes.md`'s remaining items in view. *Verify:* grep, then the full suite.
@@ -346,9 +355,11 @@ listener design that a reader is most likely to trip over; whatever you decide t
 The shape is always the same five steps. Example: "the department's substitution history" at
 `/hod/substitutions/history`.
 
-1. **Pick the guard first.** Ask what the *narrowest* authority is: `Manager` if a head of department and
-   the IT admin both use it, `AdminOnly` if it is technical. The guard is an extractor, so nothing renders
-   or runs before it passes.
+1. **Pick the guard first.** Ask what the *narrowest* authority is: `Manager` if a head of department (or
+   the Principal) uses it, `Scheduler` if it is the timetable (which the IT admin shares), `AdminOnly` if it
+   is site administration (accounts, settings, the CMS), `AcademicOnly` if it is the course structure,
+   `AcademicOrAdmin` if it is read-only figures the IT admin also reports on. The guard is an
+   extractor, so nothing renders or runs before it passes.
 2. **Choose the router.** A `Manager` page goes in `src/routes/admin/mod.rs::manager_routes()` with a
    **relative** path (`/substitutions/history`) — it then exists at `/admin/...` and `/hod/...` with the
    same guards. A technical page goes in `routes()` with its absolute `/admin/...` path.
@@ -441,7 +452,7 @@ SEED_DEMO_USERS=true SEED_CREDENTIALS_FILE=/run/secrets/demo-credentials.txt car
 
 ### 4.3 Migrations
 
-Add `migrations/NNNN_short_name.sql` (next number; 33 exist today). They are applied automatically at
+Add `migrations/NNNN_short_name.sql` (next number; 35 exist today). They are applied automatically at
 startup and by every `#[sqlx::test]`; there is no separate migrate command. Two rules: **never edit an
 applied migration** (SQLx checksums the files — startup fails and prints the applied set with the
 mismatched checksum), and a destructive change needs a `--` comment at the top saying why, because this is
@@ -485,7 +496,7 @@ bash build-css.sh --watch                                   # or watch while edi
 | startup panics on migrations and prints the applied set | an applied migration was edited, or the database is ahead of the code. Restore the file, or add a new migration. |
 | `could not connect to PostgreSQL` | `docker compose up -d` (the tests and the server share the dev database) |
 | `MANAGEMENT_HOST must resolve to a loopback address` | the management listener was pointed at a non-local address; that boundary is deliberate — change the deployment, not this line |
-| a page 404s only for one role | check the workspace: `/admin` is served on the management listener only, `/hod` on both. A management role on `:3000` sees no `/admin` (Part 2, item 3) |
+| a page 404s only for one role | check the workspace and the listener: `/admin`, `/staff` and `/hod` are served on both listeners, but a `faculty` account is refused at the public `/admin` (it uses `/hod`), and root authority is refused on the public listener altogether (Part 2, item 3) |
 | an HOD is refused (403) on a department page | they have no *effective* appointment: `Manager` reads `role_assignments`/`delegations`, so an expired appointment denies. Grant or renew it at `/admin/appointments` |
 | "the scheduled backup task fails" in the log | `pg_dump` is not on PATH; set `BACKUP_DOCKER_SERVICE=db` (Part 2, item 4) |
 | classes missing from the CSS | the class exists only in Rust (`src/ui.rs`) or a fresh template: rebuild the CSS; `tailwind.config.js` scans `src/**/*.rs` for exactly that reason |

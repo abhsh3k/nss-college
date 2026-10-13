@@ -23,7 +23,8 @@ pub async fn programme_options(db: &PgPool) -> Res<Vec<ProgrammeOption>> {
 }
 
 /// Programmes in one department, for the HOD's timetable picker.
-/// `None` means the IT admin, who sees every programme.
+/// `None` means the college-wide manager (the Principal or Super Admin), who
+/// sees every programme.
 pub async fn programme_options_for(
     db: &PgPool,
     department: Option<i64>,
@@ -63,9 +64,9 @@ pub async fn programme_department(db: &PgPool, id: i64) -> Res<Option<i64>> {
 
 /// Whether a manager may act on this programme.
 ///
-/// The IT admin (`department` is `None`) may touch any programme. An HOD or an
-/// approved teacher may only touch programmes in their own department, and a
-/// teacher whose department is not set yet may touch nothing.
+/// The college-wide manager (`department` is `None`) may touch any programme.
+/// An HOD or an approved teacher may only touch programmes in their own
+/// department, and a teacher whose department is not set yet may touch nothing.
 pub async fn may_manage_programme(
     db: &PgPool,
     programme_id: i64,
@@ -100,7 +101,8 @@ pub async fn programme_summaries(db: &PgPool) -> Res<Vec<ProgrammeSummary>> {
 }
 
 /// Programme summaries limited to one department, for the HOD's own view.
-/// `None` means the IT admin, who sees every programme.
+/// `None` means the college-wide manager (the Principal or Super Admin), who
+/// sees every programme.
 pub async fn programme_summaries_for(
     db: &PgPool,
     department: Option<i64>,
@@ -205,7 +207,7 @@ pub async fn teacher_options_for(
 }
 
 /// Whether a manager may act on this teacher, for substitutions and timetable
-/// assignment. The IT admin may act on anyone.
+/// assignment. The college-wide manager may act on anyone.
 pub async fn may_manage_teacher(
     db: &PgPool,
     faculty_id: i64,
@@ -646,7 +648,8 @@ impl TbdPeriod {
 
 /// The teacher-less periods this manager is responsible for. A programme's
 /// periods belong to the programme's department; an offering's periods belong
-/// to the offering's department. `None` is the IT admin, who sees every one.
+/// to the offering's department. `None` is the college-wide manager, who sees
+/// every one.
 pub async fn tbd_periods(db: &PgPool, department: Option<i64>) -> Res<Vec<TbdPeriod>> {
     sqlx::query_as::<_, TbdPeriod>(
         r#"SELECT t.id, t.weekday,

@@ -83,6 +83,14 @@ pub async fn record_login(db: &PgPool, id: i64) -> Res<()> {
     Ok(())
 }
 
+/// The account's email address, for a form that starts from it.
+pub async fn email(db: &PgPool, id: i64) -> Res<Option<String>> {
+    sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_optional(db)
+        .await
+}
+
 pub async fn password_hash(db: &PgPool, id: i64) -> Res<String> {
     sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
         .bind(id)

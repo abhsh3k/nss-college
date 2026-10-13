@@ -25,10 +25,17 @@ use crate::{
 pub struct AdminTemplate {
     shell: Shell,
     is_admin: bool,
+    /// Whether this caller may open the `Manager`-guarded work queue. True for
+    /// the Super Admin (and a head of department, whose dashboard is `/hod`);
+    /// false for the IT admin, whose role is the site rather than the curriculum.
+    work_queue: bool,
     counts: Counts,
-    /// The management-area cards. Office staff only ever see the content area,
-    /// because that is all they are guarded for.
-    areas: &'static [Area],
+    /// The management-area cards for this role: accounts, content and settings,
+    /// plus — for the IT admin — the timetable it keeps clash-free and the
+    /// attendance report it exports; the Super Admin sees all of it; the
+    /// Principal and office staff get the department and content catalogues
+    /// respectively.
+    areas: Vec<Area>,
 }
 
 pub async fn admin(
@@ -41,14 +48,9 @@ pub async fn admin(
         // The Super Admin holds every IT-admin power, so it gets the same
         // overview cards and the same extra panels.
         is_admin: matches!(user.role, Role::Admin | Role::SuperAdmin),
+        work_queue: user.role == Role::SuperAdmin,
         counts: users::overview_counts(&s.db).await?,
-        areas: match user.role {
-            Role::Admin | Role::SuperAdmin => sections::ADMIN,
-            // The Principal oversees the academic areas; the content cards stay
-            // with the roles that may actually publish.
-            Role::Principal => sections::HOD,
-            _ => sections::STAFF,
-        },
+        areas: sections::areas_for(user.role),
     })
 }
 
@@ -65,8 +67,9 @@ pub async fn staff(
     Ok(AdminTemplate {
         shell: Shell::build(&user, &session, &s.db).await?,
         is_admin: false,
+        work_queue: false,
         counts: users::overview_counts(&s.db).await?,
-        areas: sections::STAFF,
+        areas: sections::STAFF.to_vec(),
     })
 }
 
@@ -79,8 +82,9 @@ pub(crate) fn tests_render_shell(nav: Vec<crate::shell::NavGroup>) -> String {
     AdminTemplate {
         shell,
         is_admin: true,
+        work_queue: false,
         counts: Counts { students: 0, teachers: 0, programmes: 0, news: 0 },
-        areas: sections::ADMIN,
+        areas: sections::areas_for(Role::Admin),
     }
     .render()
     .expect("the overview renders")
@@ -390,10 +394,11 @@ pub async fn student(
 mod tests {
     use super::*;
 
-    fn overview(is_admin: bool, areas: &'static [crate::sections::Area]) -> String {
+    fn overview(is_admin: bool, areas: Vec<crate::sections::Area>) -> String {
         AdminTemplate {
             shell: crate::sections::test_shell(if is_admin { "IT administrator" } else { "Office staff" }),
             is_admin,
+            work_queue: false,
             counts: Counts { students: 3, teachers: 4, programmes: 5, news: 6 },
             areas,
         }
@@ -403,12 +408,28 @@ mod tests {
 
     #[test]
     fn the_admin_overview_is_a_grid_of_management_areas() {
-        let html = overview(true, crate::sections::ADMIN);
+        let areas = crate::sections::areas_for(Role::Admin);
+        let html = overview(true, areas.clone());
         assert!(html.contains("Management areas"));
-        for a in crate::sections::ADMIN {
+        for a in &areas {
             assert!(html.contains(&format!("/admin/manage/{}", a.key)), "no card for {}", a.key);
             let title = a.title.replace('&', "&amp;");
             assert!(html.contains(&title), "no title for {}", a.key);
+        }
+        // The course structure, the offerings and the examinations are the
+        // Principal's and the HOD's; the timetable and the attendance report are
+        // the two academic cards the IT admin keeps.
+        for key in ["academic", "offerings", "exams"] {
+            assert!(
+                !html.contains(&format!("/admin/manage/{key}")),
+                "the IT admin overview still links the academic area {key}"
+            );
+        }
+        for key in ["timetable", "attendance"] {
+            assert!(
+                html.contains(&format!("/admin/manage/{key}")),
+                "the IT admin overview lost the {key} card"
+            );
         }
     }
 
@@ -417,8 +438,9 @@ mod tests {
     /// department workspace for a head of department.
     #[test]
     fn the_principals_overview_lists_the_department_areas_in_the_admin_workspace() {
-        let html = overview(false, crate::sections::HOD);
-        for a in crate::sections::HOD {
+        let areas = crate::sections::areas_for(Role::Principal);
+        let html = overview(false, areas.clone());
+        for a in &areas {
             assert!(
                 html.contains(&format!("/admin/manage/{}", a.key)),
                 "no card for {}",
@@ -430,7 +452,7 @@ mod tests {
 
     #[test]
     fn office_staff_only_see_the_content_area() {
-        let html = overview(false, crate::sections::STAFF);
+        let html = overview(false, crate::sections::areas_for(Role::Staff));
         assert!(html.contains("/admin/manage/website"));
         assert!(!html.contains("/admin/manage/users"));
         assert!(!html.contains("/admin/manage/academic"));
@@ -458,20 +480,36 @@ mod sidebar_tests {
     #[test]
     fn the_sidebar_renders_the_group_headings_and_the_links() {
         let html = super::tests_render_shell(test_nav_for(&admin()));
+        // The IT admin's rail: accounts, the CMS, settings, and the two academic
+        // groups whose pages do admit it. The rest of the academic set is not
+        // there, because those handlers would refuse it.
         for heading in [
             "User &amp; accounts",
-            "Academic management",
-            "Course operations",
-            "Timetable &amp; scheduling",
-            "Attendance",
-            "Examinations &amp; results",
             "Website &amp; content",
             "Settings",
+            "Timetable &amp; scheduling",
+            "Attendance",
         ] {
             assert!(html.contains(heading), "the sidebar is missing the {heading} group");
         }
-        for href in ["/admin/people", "/admin/marks", "/admin/rank-holders", "/admin/work-queue"] {
+        assert!(
+            !html.contains("Academic management") && !html.contains("Examinations &amp; results"),
+            "the IT admin sidebar must not offer academic groups"
+        );
+        for href in [
+            "/admin/people",
+            "/admin/rank-holders",
+            "/admin/settings",
+            "/admin/timetable",
+            "/admin/attendance",
+        ] {
             assert!(html.contains(&format!("href=\"{href}\"")), "the sidebar lost {href}");
+        }
+        for href in ["/admin/substitutions", "/admin/departments/attendance", "/admin/marks"] {
+            assert!(
+                !html.contains(&format!("href=\"{href}\"")),
+                "the IT admin sidebar gained {href}, which would refuse it"
+            );
         }
     }
 }

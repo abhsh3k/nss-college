@@ -64,6 +64,8 @@ pub async fn upload(
                              WHERE r.photo_path = u.path AND r.status = 'published')
                  OR EXISTS (SELECT 1 FROM faculty f
                              WHERE f.photo_path = u.path AND f.status = 'published')
+                 OR EXISTS (SELECT 1 FROM staff_profiles sp
+                             WHERE sp.photo_path = u.path AND sp.published)
                  OR EXISTS (SELECT 1 FROM home_sections h
                              WHERE h.photo_path = u.path AND h.published)
                  OR EXISTS (SELECT 1 FROM page_sections ps

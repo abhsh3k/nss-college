@@ -1,8 +1,8 @@
 //! Head-of-department tools: placing students in a department, and the
 //! whole-department attendance report that an HOD may correct.
 //!
-//! Every handler here takes `Manager`, so the IT admin can use them too. An HOD
-//! is confined to their own department: each write re-checks that the row being
+//! Every handler here takes `Manager`, so the Principal and the Super Admin can
+//! use them too. An HOD is confined to their own department: each write re-checks that the row being
 //! touched really belongs to the department the guard reported, rather than
 //! trusting the id that arrived in the form.
 
@@ -134,7 +134,7 @@ pub async fn place(
     csrf::verify(&session, &f.csrf_token).await?;
     let target = parse_i64(&f.department_id).filter(|v| *v > 0).ok_or(AppError::NotFound)?;
 
-    // The IT admin may place a student anywhere; an HOD only in their own
+    // The Principal may place a student anywhere; an HOD only in their own
     // department, whatever the form claims.
     if let Some(own) = manager.department() {
         if target != own {
