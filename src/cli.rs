@@ -45,6 +45,13 @@ pub async fn run(args: &[String], db: &PgPool) -> bool {
             }
             true
         }
+        Some("set-all-passwords") => {
+            if let Err(msg) = set_all_passwords(&args[1..], db).await {
+                eprintln!("error: {msg}");
+                std::process::exit(1);
+            }
+            true
+        }
         Some("seed-demo-users") => {
             match seed_demo_users(db).await {
                 Ok(lines) => match credentials_destination(&args[1..]) {
@@ -246,6 +253,7 @@ async fn set_password(args: &[String], db: &PgPool) -> Result<(), String> {
     let [email] = args else {
         return Err("usage: cargo run -- set-password <email>".into());
     };
+
     let id: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE lower(email) = lower($1)")
         .bind(email.trim())
         .fetch_optional(db)
@@ -267,6 +275,60 @@ async fn set_password(args: &[String], db: &PgPool) -> Result<(), String> {
     let _ = users::audit(db, None, "password_set_cli", "user", Some(id)).await;
 
     println!("Password updated for {email}.");
+    Ok(())
+}
+
+/// Replace the password on **every** account with the one given.
+///
+/// Intended for local/test databases where a known password is wanted across
+/// the whole user table at once (a bulk reset). The password is taken as the
+/// single argument — the same automation-only escape hatch `create-user` uses
+/// — so it runs with no TTY. Every account goes through [`users::set_password`],
+/// so the hash is Argon2 like any other, `must_change_password` is cleared, and
+/// `session_version` is bumped, which signs every live session out at once.
+/// Each change is written to the audit log.
+async fn set_all_passwords(args: &[String], db: &PgPool) -> Result<(), String> {
+    let [pw] = args else {
+        return Err("usage: cargo run -- set-all-passwords <password>".into());
+    };
+    let pw = pw.trim();
+    if pw.chars().count() < password::MIN_LENGTH {
+        return Err(format!("password must be at least {} characters", password::MIN_LENGTH));
+    }
+
+    let ids: Vec<(i64, String)> = sqlx::query_as("SELECT id, email FROM users ORDER BY id")
+        .fetch_all(db)
+        .await
+        .map_err(|e| e.to_string())?;
+    if ids.is_empty() {
+        println!("No accounts to update.");
+        return Ok(());
+    }
+
+    // Hash once and reuse it: every account ends up with the same password, and
+    // Argon2 is deliberately slow, so hashing per account would just burn time.
+    let hash = password::hash_blocking(pw.to_string())
+        .await
+        .map_err(|_| "could not hash password".to_string())?;
+
+    for (id, email) in &ids {
+        users::set_password(db, *id, &hash)
+            .await
+            .map_err(|e| e.to_string())?;
+        // Clear any lockout so the new password works at once.
+        sqlx::query("UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = $1")
+            .bind(id)
+            .execute(db)
+            .await
+            .map_err(|e| e.to_string())?;
+        let _ = users::audit(db, None, "password_set_cli", "user", Some(*id)).await;
+        println!("  updated {email}");
+    }
+
+    println!(
+        "Password updated for all {} account(s); every live session was signed out.",
+        ids.len()
+    );
     Ok(())
 }
 
